@@ -1,0 +1,32 @@
+[project]
+name = "mikanarr"
+version = "0.1.0"
+description = "番剧订阅下载管理系统 — Mikan 订阅 + qBittorrent 下载 + 虚拟番剧库"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlalchemy>=2.0",
+    "pydantic-settings>=2.6",
+    "apscheduler>=3.10,<4",
+    "httpx[socks]>=0.28",
+    "qbittorrent-api>=2024.12",
+    "anitopy>=2.1",
+    "feedparser>=6.0",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
+    "cryptography>=42.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]

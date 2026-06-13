@@ -1,0 +1,225 @@
+<script setup>
+import { computed, onMounted, ref } from 'vue'
+import { api } from '../api'
+
+const items = ref([])
+const filter = ref('all')   // all | airing | finished
+const keyword = ref('')
+const loading = ref(true)
+const manageMode = ref(false)
+const selected = ref(new Set())
+const delConfirm = ref(null)
+const delFiles = ref(false)
+const busy = ref(false)
+
+const SEASON_ORDER = { '秋': 4, '夏': 3, '春': 2, '冬': 1 }
+
+const groups = computed(() => {
+  let list = items.value
+  if (filter.value !== 'all') list = list.filter(b => b.airing_status === filter.value)
+  const kw = keyword.value.trim().toLowerCase()
+  if (kw) list = list.filter(b =>
+    b.title.toLowerCase().includes(kw) || (b.studio || '').toLowerCase().includes(kw))
+
+  const map = new Map()
+  for (const b of list) {
+    const key = b.season || (b.year ? `${b.year}年` : '未知季度')
+    if (!map.has(key)) map.set(key, [])
+    map.get(key).push(b)
+  }
+  return [...map.entries()]
+    .map(([season, list]) => ({
+      season, list,
+      _sort: (list[0].year || 0) * 10 + (SEASON_ORDER[season.slice(-1)] || 0),
+    }))
+    .sort((a, b) => b._sort - a._sort)
+})
+
+const visibleIds = computed(() => groups.value.flatMap(g => g.list.map(b => b.id)))
+const allSelected = computed(() =>
+  visibleIds.value.length > 0 && visibleIds.value.every(id => selected.value.has(id)))
+
+function isSel(id) { return selected.value.has(id) }
+function toggleSel(id) {
+  const s = new Set(selected.value)
+  s.has(id) ? s.delete(id) : s.add(id)
+  selected.value = s
+}
+function selectAll() { selected.value = new Set(visibleIds.value) }
+function clearSel() { selected.value = new Set() }
+function toggleManage() {
+  manageMode.value = !manageMode.value
+  if (!manageMode.value) clearSel()
+}
+function onCard(b, e) {
+  if (!manageMode.value) return     // 正常模式:RouterLink 跳转
+  e.preventDefault()
+  toggleSel(b.id)
+}
+
+async function reload() {
+  items.value = await api.get('/api/bangumi')
+  const ids = new Set(items.value.map(b => b.id))
+  selected.value = new Set([...selected.value].filter(id => ids.has(id)))
+}
+
+async function doDelete() {
+  busy.value = true
+  try {
+    await api.post('/api/bangumi/batch-delete',
+      { ids: delConfirm.value.ids, delete_files: delFiles.value })
+    delConfirm.value = null; delFiles.value = false; clearSel()
+    await reload()
+  } finally { busy.value = false }
+}
+
+onMounted(async () => {
+  await reload()
+  loading.value = false
+})
+</script>
+
+<template>
+  <div class="page">
+    <div class="row" style="margin-bottom: 18px; flex-wrap: wrap;">
+      <div class="page-title" style="margin: 0;">番剧库</div>
+      <div class="spacer" />
+      <input v-model="keyword" class="input search-box" placeholder="🔍 搜索标题 / 制作公司" />
+      <div class="filters">
+        <button v-for="f in [['all','全部'],['airing','连载中'],['finished','已完结']]" :key="f[0]"
+                class="btn sm" :class="{ primary: filter === f[0] }" @click="filter = f[0]">
+          {{ f[1] }}
+        </button>
+      </div>
+      <button class="btn sm" :class="{ primary: manageMode }" @click="toggleManage">
+        {{ manageMode ? '完成' : '✓ 管理' }}
+      </button>
+    </div>
+
+    <div v-if="manageMode" class="batch-bar card">
+      <button class="btn sm" @click="allSelected ? clearSel() : selectAll()">
+        {{ allSelected ? '取消全选' : '全选' }}
+      </button>
+      <button class="btn sm" :disabled="!selected.size" @click="clearSel">清空选择</button>
+      <span class="muted" style="font-size: 12.5px;">已选 {{ selected.size }} 部</span>
+      <div class="spacer" />
+      <button class="btn sm danger" :disabled="!selected.size || busy"
+              @click="delConfirm = { ids: [...selected] }">🗑 批量删除</button>
+    </div>
+
+    <div v-if="loading" class="muted">加载中…</div>
+    <div v-else-if="!groups.length" class="empty card">
+      {{ keyword ? '没有匹配的番剧' : '番剧库还是空的 — 去订阅管理添加第一部番剧吧' }}
+    </div>
+
+    <section v-for="g in groups" :key="g.season" class="season-group">
+      <h3 class="season-title">{{ g.season }} <span class="muted">{{ g.list.length }} 部</span></h3>
+      <div class="grid">
+        <component :is="manageMode ? 'div' : 'RouterLink'" v-for="b in g.list" :key="b.id"
+                   :to="manageMode ? undefined : `/bangumi/${b.id}`"
+                   class="poster-card" :class="{ manage: manageMode, sel: isSel(b.id) }"
+                   @click="onCard(b, $event)">
+          <div class="poster">
+            <img v-if="b.poster" :src="b.poster" loading="lazy" :alt="b.title" />
+            <div v-else class="poster-fallback">{{ b.title.slice(0, 2) }}</div>
+            <span v-if="b.airing_status === 'airing'" class="airing-badge">连载中</span>
+            <div class="ep-badge" v-if="b.eps_total">{{ b.eps_downloaded }}/{{ b.eps_total }}</div>
+            <div v-if="manageMode" class="sel-check" :class="{ on: isSel(b.id) }">
+              {{ isSel(b.id) ? '✓' : '' }}
+            </div>
+          </div>
+          <div class="info">
+            <div class="title" :title="b.title">{{ b.title }}</div>
+            <div class="meta muted">
+              <span v-if="b.score" class="score">★ {{ b.score }}</span>
+              <span class="studio" v-if="b.studio" :title="b.studio">{{ b.studio }}</span>
+            </div>
+          </div>
+        </component>
+      </div>
+    </section>
+
+    <div v-if="delConfirm" class="modal-mask" @click.self="delConfirm = null">
+      <div class="modal" style="width: 440px;">
+        <h3 style="margin-bottom: 10px;">删除 {{ delConfirm.ids.length }} 部番剧</h3>
+        <p class="muted" style="font-size: 12.5px;">
+          将移除番剧及其订阅/剧集/任务记录(虚拟库视图)。
+        </p>
+        <label class="row" style="margin: 16px 0; cursor: pointer;">
+          <input type="checkbox" v-model="delFiles" />
+          同时删除已下载的文件
+        </label>
+        <div class="row" style="justify-content: flex-end;">
+          <button class="btn" @click="delConfirm = null">取消</button>
+          <button class="btn danger" :disabled="busy" @click="doDelete">确认删除</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.search-box { width: 240px; }
+.season-group { margin-bottom: 26px; }
+.season-title {
+  font-size: 15px; margin-bottom: 12px; color: var(--accent);
+  border-left: 3px solid var(--accent); padding-left: 10px;
+}
+.season-title .muted { font-size: 12px; font-weight: 400; margin-left: 6px; }
+.grid {
+  display: grid; gap: 18px;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+}
+.poster-card {
+  border-radius: var(--radius); overflow: hidden; background: var(--bg-card);
+  border: 1px solid var(--border); transition: all .2s;
+}
+.poster-card:hover { transform: translateY(-3px); border-color: var(--accent-dim); }
+.poster-card.manage { cursor: pointer; }
+.poster-card.sel { border-color: var(--accent); }
+.poster-card.sel .poster { outline: 2px solid var(--accent); outline-offset: -2px; }
+.sel-check {
+  position: absolute; top: 8px; right: 8px; width: 22px; height: 22px; border-radius: 50%;
+  border: 2px solid #fff; background: rgba(0,0,0,.45); display: flex;
+  align-items: center; justify-content: center; font-size: 13px; font-weight: 700; color: #fff;
+}
+.sel-check.on { background: var(--accent); border-color: var(--accent); color: #1a1207; }
+.batch-bar {
+  display: flex; align-items: center; gap: 8px; padding: 10px 16px; margin-bottom: 16px;
+  position: sticky; top: 8px; z-index: 10; border-color: var(--accent-dim);
+}
+.poster { position: relative; aspect-ratio: 5/7; background: #0b0e14; }
+.poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.poster-fallback {
+  width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+  font-size: 38px; color: var(--text-dim);
+}
+.airing-badge {
+  position: absolute; top: 8px; left: 8px;
+  background: var(--green); color: #06130a; font-size: 11px; font-weight: 700;
+  padding: 1px 8px; border-radius: 10px;
+}
+.ep-badge {
+  position: absolute; bottom: 0; right: 0;
+  background: rgba(0,0,0,.75); font-size: 11px; padding: 2px 8px;
+  border-top-left-radius: 8px; color: var(--accent);
+}
+.info { padding: 10px 12px 12px; }
+.title {
+  font-weight: 600; font-size: 13.5px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.meta { display: flex; gap: 8px; font-size: 12px; margin-top: 2px; align-items: center; }
+.score { color: var(--accent); flex-shrink: 0; }
+.studio { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; }
+.empty { text-align: center; padding: 60px; color: var(--text-dim); }
+.filters { display: flex; gap: 6px; }
+
+@media (max-width: 768px) {
+  .grid { grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); gap: 10px; }
+  .search-box { width: 100%; order: 3; }
+  .info { padding: 7px 9px 9px; }
+  .title { font-size: 12.5px; }
+  .studio { display: none; }
+}
+</style>

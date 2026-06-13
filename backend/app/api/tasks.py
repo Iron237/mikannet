@@ -1,0 +1,114 @@
+"""下载任务查询与控制(P1:查询+基本控制;P3 接 WebSocket 实时)。"""
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.clients.downloader import downloader
+from app.database import get_db
+from app.models import Torrent, TorrentStatus
+from app.schemas import TorrentOut
+
+log = logging.getLogger(__name__)
+router = APIRouter(prefix="/api/tasks", tags=["tasks"])
+
+
+@router.get("", response_model=list[TorrentOut])
+def list_tasks(status: str | None = None, db: Session = Depends(get_db)):
+    q = select(Torrent).order_by(Torrent.created_at.desc())
+    if status:
+        q = q.where(Torrent.status == TorrentStatus(status))
+    rows = db.execute(q).scalars().all()
+
+    # 合并 qB 实时快照
+    live: dict[str, dict] = {}
+    try:
+        live = {t.hash: t for t in downloader.list_tasks()}
+    except Exception:  # noqa: BLE001 — 下载器不可达时退化为 DB 快照
+        log.warning("下载器不可达,返回 DB 快照")
+
+    out = []
+    for t in rows:
+        lt = live.get(t.info_hash) if t.info_hash else None
+        out.append(TorrentOut(
+            id=t.id, subscription_id=t.subscription_id, title_raw=t.title_raw,
+            status=t.status.value, is_batch=t.is_batch, version=t.version,
+            episodes=(t.parsed_json or {}).get("episodes") or [],
+            size=lt.size if lt else t.size,
+            progress=lt.progress if lt else t.progress,
+            dlspeed=lt.dlspeed if lt else t.dlspeed,
+            error_message=t.error_message, published_at=t.published_at,
+            created_at=t.created_at))
+    return out
+
+
+def _get_with_hash(db: Session, task_id: int) -> Torrent:
+    t = db.get(Torrent, task_id)
+    if not t:
+        raise HTTPException(404)
+    if not t.info_hash:
+        raise HTTPException(409, "任务未提交到 qB(无 info_hash)")
+    return t
+
+
+@router.post("/{task_id}/postprocess", status_code=202)
+def retry_postprocess(task_id: int, db: Session = Depends(get_db)):
+    """探测失败后手动重试后处理。"""
+    from app.services.postprocess import enqueue
+    t = db.get(Torrent, task_id)
+    if not t:
+        raise HTTPException(404)
+    enqueue(t.id)
+    return {"queued": t.id}
+
+
+@router.post("/batch")
+def batch(payload: dict, db: Session = Depends(get_db)):
+    """批量操作下载任务。payload: {ids:[...], action:'pause'|'resume'|'delete', delete_files?:bool}。
+    delete 对无 info_hash 的任务也能处理(仅标记 DB SKIPPED),不像单条接口会 409。"""
+    ids = payload.get("ids") or []
+    action = payload.get("action")
+    delete_files = bool(payload.get("delete_files"))
+    if action not in ("pause", "resume", "delete"):
+        raise HTTPException(400, "未知操作")
+    done: list[int] = []
+    failed: list[int] = []
+    for tid in ids:
+        t = db.get(Torrent, tid)
+        if not t:
+            failed.append(tid)
+            continue
+        try:
+            if action == "delete":
+                if t.info_hash:
+                    downloader.delete(t.info_hash, delete_files=delete_files)
+                t.status = TorrentStatus.SKIPPED
+                t.error_message = "手动删除"
+            elif t.info_hash:               # pause/resume 仅对已提交任务有意义
+                (downloader.pause if action == "pause" else downloader.resume)(t.info_hash)
+            done.append(tid)
+        except Exception:  # noqa: BLE001 — 单条失败不阻断其余
+            log.warning("批量 %s 失败 task=%s", action, tid, exc_info=True)
+            failed.append(tid)
+    db.commit()
+    return {"done": done, "failed": failed}
+
+
+@router.post("/{task_id}/pause", status_code=204)
+def pause(task_id: int, db: Session = Depends(get_db)):
+    downloader.pause(_get_with_hash(db, task_id).info_hash)
+
+
+@router.post("/{task_id}/resume", status_code=204)
+def resume(task_id: int, db: Session = Depends(get_db)):
+    downloader.resume(_get_with_hash(db, task_id).info_hash)
+
+
+@router.delete("/{task_id}", status_code=204)
+def delete(task_id: int, delete_files: bool = False, db: Session = Depends(get_db)):
+    t = _get_with_hash(db, task_id)
+    downloader.delete(t.info_hash, delete_files=delete_files)
+    t.status = TorrentStatus.SKIPPED
+    t.error_message = "手动删除"
+    db.commit()

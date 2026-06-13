@@ -1,0 +1,64 @@
+# Mikanarr — app + qBittorrent
+#
+# 迁移到 NAS 本机 Docker 时:只需把 downloads 卷的来源从 CIFS 改为本地路径,
+# 容器内路径(/downloads、/config)保持不变,数据库记录的相对路径不失效。
+#
+# 注意(P0 探针结论):qB 5.x 强制 Host 头端口校验,
+# WEBUI_PORT 必须与宿主映射端口一致(此处统一 18080)。
+services:
+  mikanarr:
+    build:
+      context: .
+      dockerfile: docker/app.Dockerfile
+      # 构建期 apt/pip 默认用清华镜像直连(见 Dockerfile ARG,可覆盖)
+    container_name: mikanarr
+    ports:
+      - "8008:8008"
+    environment:
+      MIKANARR_PROXY_URL: ${PROXY_URL:-}
+      MIKANARR_TMDB_API_KEY: ${TMDB_API_KEY:-}
+      # 下载器后端:bitcomet | qb(改 .env 的 DOWNLOADER + 重启即切换)
+      MIKANARR_DOWNLOADER: ${DOWNLOADER:-bitcomet}
+      # qB 连接目标:容器内用 qbittorrent:18080;接桌面 qB 则用 host.docker.internal:<端口>
+      MIKANARR_QB_HOST: ${QB_HOST:-qbittorrent}
+      MIKANARR_QB_PORT: "${QB_PORT:-18080}"
+      MIKANARR_QB_USERNAME: ${QB_USER:-admin}
+      MIKANARR_QB_PASSWORD: ${QB_PASS:-adminadmin}
+      # 下载器写盘根目录(接桌面 qB 时改成 NAS 的 Windows 路径;mikanarr 仍从 /downloads 读同一份)
+      MIKANARR_DOWNLOAD_ROOT: ${DOWNLOAD_ROOT:-/downloads}
+      MIKANARR_POLL_INTERVAL_MIN: ${POLL_INTERVAL_MIN:-15}
+    volumes:
+      - ./data/mikanarr:/config
+      - downloads:/downloads
+      # 本地番剧导入源目录(把你的旧番剧文件夹路径填到 .env 的 LOCAL_IMPORT_PATH)
+      - ${LOCAL_IMPORT_PATH:-./import}:/import
+    depends_on:
+      - qbittorrent
+    restart: unless-stopped
+
+  qbittorrent:
+    image: linuxserver/qbittorrent:latest
+    container_name: mikanarr-qbittorrent
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: Asia/Shanghai
+      WEBUI_PORT: "18080"
+    ports:
+      - "18080:18080"       # WebUI(内外端口必须一致)
+      - "${QB_BT_PORT:-51413}:${QB_BT_PORT:-51413}"
+      - "${QB_BT_PORT:-51413}:${QB_BT_PORT:-51413}/udp"
+    volumes:
+      - ./data/qbittorrent:/config
+      - downloads:/downloads
+    restart: unless-stopped
+
+volumes:
+  downloads:
+    # 当前阶段:Win PC Docker 直写 NAS 的 SMB 共享(CIFS)
+    # 迁移 NAS 后:删掉 driver_opts,换成 driver: local + 本地路径绑定
+    driver: local
+    driver_opts:
+      type: cifs
+      o: "username=${NAS_USER},password=${NAS_PASS},uid=1000,gid=1000,iocharset=utf8,vers=3.0,noserverino"
+      device: "${NAS_SMB_PATH}"
