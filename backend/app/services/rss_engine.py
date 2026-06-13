@@ -171,14 +171,15 @@ def _submit(db: Session, sub: Subscription, torrent: Torrent) -> None:
 
 
 MANUAL_SKIP_REASON = "手动删除"
+DEAD_SKIP_REASON = "坏种自动清理"   # 坏种被移除后标记,不再复活(否则会循环重下死种)
 
 
 def reevaluate_skipped(db: Session, sub: Subscription) -> int:
-    """过滤规则变更后,重新评估本订阅被过滤/去重淘汰的条目(手动删除的不复活)。"""
+    """过滤规则变更/坏种换源后,重新评估本订阅被淘汰的条目(手动删除、坏种的不复活)。"""
     rows = db.execute(select(Torrent).where(
         Torrent.subscription_id == sub.id,
         Torrent.status == TorrentStatus.SKIPPED,
-        Torrent.error_message != MANUAL_SKIP_REASON)).scalars().all()
+        Torrent.error_message.notin_([MANUAL_SKIP_REASON, DEAD_SKIP_REASON]))).scalars().all()
     revived = 0
     for t in rows:
         parsed = ParsedTitle.from_dict(t.parsed_json or {})

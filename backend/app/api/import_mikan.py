@@ -100,17 +100,60 @@ def import_status():
     return _state
 
 
+@router.post("/mikan-all")
+def import_mikan_all(payload: dict):
+    """批量导入「我的番组」全部历史订阅(需 cookie;粘贴的 cookie 会存进设置)。"""
+    from app.services import mikan_full_import as mfi
+    if mfi.state["running"]:
+        raise HTTPException(409, "已有全量导入在进行中")
+    cookie = (payload.get("cookie") or "").strip() or None
+    if not cookie and not settings.mikan_cookie:
+        raise HTTPException(400, "请提供蜜柑登录 cookie")
+    mfi.start(cookie)
+    return {"started": True}
+
+
+@router.get("/mikan-all/status")
+def import_mikan_all_status():
+    from app.services import mikan_full_import as mfi
+    return mfi.state
+
+
+# ---- 番剧库扫描(就地识别下载根目录里已整理的视频)----------------------------
+
+@router.post("/library-scan")
+def library_scan():
+    """扫描下载根目录,把已摆好的视频就地登记进库(不移动文件)。"""
+    from app.services import library_scan as ls
+    if ls.state["running"]:
+        raise HTTPException(409, "已有库扫描在进行中")
+    ls.start()
+    return {"started": True}
+
+
+@router.get("/library-scan/status")
+def library_scan_status():
+    from app.services import library_scan as ls
+    return ls.state
+
+
 # ---- 本地番剧导入 --------------------------------------------------------------
 
 @router.post("/local/scan")
 def local_scan(payload: dict):
-    """扫描容器内目录(需挂载),返回识别分组预览,不动文件。"""
-    from app.services.local_import import scan
+    """异步扫描容器内目录(需挂载),立即返回;进度走 /local/scan/status。"""
+    from app.services.local_import import scan_state, start_scan
+    if scan_state["running"]:
+        raise HTTPException(409, "已有扫描在进行中")
     path = (payload.get("path") or "/import").strip()
-    try:
-        return scan(path)
-    except FileNotFoundError as e:
-        raise HTTPException(400, str(e)) from e
+    start_scan(path)
+    return {"started": True}
+
+
+@router.get("/local/scan/status")
+def local_scan_status():
+    from app.services.local_import import scan_state
+    return scan_state
 
 
 @router.post("/local/run")

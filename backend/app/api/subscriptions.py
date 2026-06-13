@@ -39,6 +39,8 @@ def create_subscription(payload: SubscriptionCreate, background: BackgroundTasks
         db.add(bangumi)
         db.flush()
         enrich_bangumi(db, bangumi)   # 三级降级,失败不抛、不阻塞创建
+        from app.services.organize import detect_season
+        bangumi.season_number = detect_season(bangumi.title)   # 续作季号自动猜,详情页可改
 
     existing = db.execute(select(Subscription).where(
         Subscription.bangumi_id == bangumi.id,
@@ -69,7 +71,9 @@ def create_subscription(payload: SubscriptionCreate, background: BackgroundTasks
 
 @router.get("", response_model=list[SubscriptionOut])
 def list_subscriptions(db: Session = Depends(get_db)):
-    subs = db.execute(select(Subscription)).scalars().all()
+    # 排除「本地导入/番剧库」容器订阅(它们只是挂就地视频的载体,不是 RSS 订阅)
+    subs = db.execute(select(Subscription).where(
+        Subscription.mikan_subgroup_id != "local")).scalars().all()
     return [_to_out(s, s.bangumi.title) for s in subs]
 
 

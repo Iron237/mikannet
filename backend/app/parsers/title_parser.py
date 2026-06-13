@@ -25,17 +25,20 @@ class ParsedTitle:
     is_batch: bool = False
     resolution: str | None = None
     group: str | None = None
+    source: str | None = None      # "Web" | "BD"(片源,见 _detect_source)
     confidence: float = 0.0
 
     def to_dict(self) -> dict:
         return {"episodes": self.episodes, "version": self.version, "is_batch": self.is_batch,
-                "resolution": self.resolution, "group": self.group, "confidence": self.confidence}
+                "resolution": self.resolution, "group": self.group, "source": self.source,
+                "confidence": self.confidence}
 
     @classmethod
     def from_dict(cls, d: dict) -> "ParsedTitle":
         return cls(episodes=d.get("episodes") or [], version=d.get("version", 1),
                    is_batch=d.get("is_batch", False), resolution=d.get("resolution"),
-                   group=d.get("group"), confidence=d.get("confidence", 0.0))
+                   group=d.get("group"), source=d.get("source"),
+                   confidence=d.get("confidence", 0.0))
 
 
 # ---- 预处理 ----------------------------------------------------------------
@@ -66,8 +69,16 @@ _SEASON_PACK = re.compile(r"\bS(\d{1,2})(?:v(\d))?\b(?!E\d)", re.I)
 _CN_EP = re.compile(r"第\s*(\d{1,4}(?:\.\d)?)\s*[话話集]|[\[\s](\d{1,4}(?:\.\d)?)\s*[话話][\]\s]")
 # 分辨率
 _RESOLUTION = re.compile(r"(\d{3,4})[pP]\b|(?:1920|2560|3840)\s*[xX×]\s*(\d{3,4})|(4K)", re.I)
+# 片源:BD(蓝光,更具体先判)/ Web(网络流媒体平台)
+_SOURCE_BD = re.compile(r"BD-?Rip|BD-?MV|Blu-?Ray|\bBD(?:\d|\b)|REMUX|UHD-?BD", re.I)
+_SOURCE_WEB = re.compile(
+    r"WEB-?DL|WEB-?Rip|\bWEB\b|Baha|Bilibili|B-?Global|BGlobal|B站|哔哩|"
+    r"Crunchyroll|\bCR\b|AMZN|Amazon|Netflix|\bNF\b|ABEMA|Sentai|Viu|iQIYI|爱奇艺|Funimation",
+    re.I)
 # 字幕组兜底:首个方括号内容
 _FIRST_BRACKET = re.compile(r"^\[([^\]]{2,40})\]")
+# 方括号内的独立集号:[02]/[04]/[123](括号内只有 1-3 位数字)
+_BRACKET_EP = re.compile(r"\[(\d{1,3})\]")
 
 # 范围误判保护:看起来像日期(2016.12.31)/分辨率的数字对不算集数范围
 _DATE_LIKE = re.compile(r"\d{4}\.\d{1,2}\.\d{1,2}")
@@ -89,10 +100,20 @@ def _detect_version(t: str) -> int:
     return int(m.group(1)) if m else 1
 
 
-def parse(title: str) -> ParsedTitle:
+def _detect_source(t: str) -> str | None:
+    """片源:蓝光 → "BD";各网络平台/WEB → "Web";判不出 → None。BD 更具体,先判。"""
+    if _SOURCE_BD.search(t):
+        return "BD"
+    if _SOURCE_WEB.search(t):
+        return "Web"
+    return None
+
+
+def _parse_rules(title: str) -> ParsedTitle:
     raw = title
     t = _preprocess(raw)
-    result = ParsedTitle(resolution=_detect_resolution(t), version=_detect_version(t))
+    result = ParsedTitle(resolution=_detect_resolution(t), version=_detect_version(t),
+                         source=_detect_source(t))
 
     # 字幕组:先用 anitopy,后面兜底
     ani = anitopy.parse(t) or {}
@@ -124,6 +145,15 @@ def parse(title: str) -> ParsedTitle:
     if m := (_PART.search(t) or _SUB_EP.search(t)):
         result.episodes = [float(m.group(1))]
         result.confidence = 0.7
+        return result
+
+    # 2.5) 方括号内独立集号 [02]/[04]/[12]:字幕组"标题 N [集]"命名(如 Sakurato 续作季)里,
+    #      anitopy 常把裸的季号 N 误当集号,而方括号里的裸数字才是真集号 → 优先采信。
+    #      排除常见分辨率裸数字;范围 [01-12]/版本 [v2]/PART 不是纯数字方括号,不会命中。
+    brackets = [x for x in _BRACKET_EP.findall(t) if x not in ("480", "720", "1080", "2160")]
+    if len(brackets) == 1:
+        result.episodes = [float(brackets[0])]
+        result.confidence = 0.95
         return result
 
     # 3) anitopy 主解析
@@ -161,6 +191,37 @@ def parse(title: str) -> ParsedTitle:
 
     result.confidence = 0.2
     return result
+
+
+def parse(title: str) -> ParsedTitle:
+    """规则解析;低置信度时(<0.5)尝试 LLM 兜底(需在设置里启用)。"""
+    result = _parse_rules(title)
+    if result.confidence < 0.5:
+        try:
+            from app.clients.llm import parse_title as _llm
+            data = _llm(title)
+            if data:
+                _merge_llm(result, data)
+        except Exception:  # noqa: BLE001 — 兜底失败不影响规则结果
+            pass
+    return result
+
+
+def _merge_llm(r: ParsedTitle, d: dict) -> None:
+    eps = d.get("episodes")
+    if eps and not r.episodes:
+        try:
+            r.episodes = [float(x) for x in eps if isinstance(x, (int, float))]
+        except (TypeError, ValueError):
+            pass
+    if d.get("is_batch"):
+        r.is_batch = True
+    if d.get("resolution") and not r.resolution:
+        r.resolution = str(d["resolution"])
+    if d.get("group") and not r.group:
+        r.group = str(d["group"])
+    if r.episodes:
+        r.confidence = max(r.confidence, 0.8)
 
 
 # ---- 显示用 chips:语言/字幕标签 + 集数标签(搜索页) -------------------------

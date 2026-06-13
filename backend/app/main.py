@@ -10,21 +10,23 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import scheduler
-from app.api import (bangumi, files, import_mikan, notifications, search, subscriptions,
-                     system, tasks, ws)
+from app.api import (bangumi, config, files, import_mikan, logs, notifications, search,
+                     subscriptions, system, tasks, ws)
 from app.clients.downloader import downloader
 from app.config import settings
 from app.database import init_db
+from app.services import logbuf
 from app.services.download_tracker import tracker_loop
 
-logging.basicConfig(level=logging.INFO,
-                    format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logbuf.setup()
 log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     init_db()
+    from app.services import settings_service
+    settings_service.load_overrides()   # DB 设置覆盖 .env(在连下载器之前)
     try:
         downloader.ensure_ready()
         log.info("下载器[%s]连接正常: %s", downloader.name, downloader.healthy())
@@ -51,6 +53,8 @@ app.include_router(ws.router)
 app.include_router(files.router)
 app.include_router(notifications.router)
 app.include_router(import_mikan.router)
+app.include_router(config.router)
+app.include_router(logs.router)
 
 (settings.data_dir / "images").mkdir(parents=True, exist_ok=True)
 app.mount("/data", StaticFiles(directory=settings.data_dir), name="data")

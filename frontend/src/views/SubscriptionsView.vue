@@ -14,6 +14,11 @@ const importUrl = ref('')
 const importBackfill = ref(false)
 const importStatus = ref(null)
 const importError = ref('')
+const showImportAll = ref(false)
+const cookieInput = ref('')
+const allStatus = ref(null)
+const allError = ref('')
+let allTimer = null
 const selected = ref(new Set())
 const delConfirm = ref(null)     // { ids: [...] } 待确认删除
 const delFiles = ref(false)
@@ -52,6 +57,19 @@ async function doDelete() {
   } finally { busy.value = false }
 }
 
+async function startImportAll() {
+  allError.value = ''
+  try {
+    await api.post('/api/import/mikan-all', { cookie: cookieInput.value.trim() })
+    pollImportAll()
+  } catch (e) { allError.value = e.message }
+}
+async function pollImportAll() {
+  allStatus.value = await api.get('/api/import/mikan-all/status')
+  await load()
+  if (allStatus.value.running) allTimer = setTimeout(pollImportAll, 2000)
+}
+
 async function startImport() {
   importError.value = ''
   try {
@@ -69,7 +87,7 @@ async function pollImport() {
 }
 
 onMounted(load)
-onUnmounted(() => clearTimeout(pollTimer))
+onUnmounted(() => { clearTimeout(pollTimer); clearTimeout(allTimer) })
 </script>
 
 <template>
@@ -82,6 +100,7 @@ onUnmounted(() => clearTimeout(pollTimer))
       </button>
       <button v-if="subs.length" class="btn sm" :disabled="!selected.size" @click="clearSel">清空选择</button>
       <button class="btn" @click="showLocalImport = true">📂 导入本地番剧</button>
+      <button class="btn" @click="showImportAll = true">🗂 蜜柑订阅入库</button>
       <button class="btn" @click="showImport = true">⇪ 导入蜜柑订阅</button>
       <button class="btn primary" @click="showWizard = true">＋ 添加订阅</button>
     </div>
@@ -138,6 +157,38 @@ onUnmounted(() => clearTimeout(pollTimer))
         <div class="row" style="justify-content: flex-end;">
           <button class="btn" @click="delConfirm = null">取消</button>
           <button class="btn danger" :disabled="busy" @click="doDelete">确认删除</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="showImportAll" class="modal-mask" @click.self="showImportAll = false">
+      <div class="modal" style="width: 580px;">
+        <h3 style="margin-bottom: 8px;">导入蜜柑全部订阅到番剧库(含历史季度)</h3>
+        <p class="muted" style="font-size: 12.5px; margin-bottom: 12px;">
+          用你的蜜柑登录 cookie 抓「我的番组」,遍历**所有季度**,把订阅过的番剧
+          <strong>只加入番剧库</strong>(补元数据,已在库的跳过)——<strong>不建 RSS 订阅、不下载</strong>。
+          想追更新的番剧,之后在番剧库/订阅页手动选字幕组和画质再订阅。
+          cookie 会存进设置(打码),过期后重新粘贴即可。<br>
+          取法:登录 mikanani.me → F12 → 网络 → 任意请求的 <code>Cookie</code> 整行;
+          或 应用→Cookies 里 <code>.AspNetCore.Identity.Application</code> 的值。
+        </p>
+        <textarea v-model="cookieInput" class="input" rows="3"
+                  placeholder="粘贴 cookie(留空则用已保存的)"></textarea>
+        <p v-if="allError" style="color: var(--red); font-size: 12.5px; margin-top: 8px;">{{ allError }}</p>
+        <div v-if="allStatus" class="card" style="margin: 10px 0; padding: 12px; font-size: 12.5px;">
+          <div>{{ allStatus.running ? allStatus.phase + '…' : '完成' }}
+            {{ allStatus.done }}/{{ allStatus.total }} ·
+            入库 {{ allStatus.created.length }} · 跳过 {{ allStatus.skipped }}
+            <span v-if="allStatus.errors"> · 失败 {{ allStatus.errors }}</span>
+          </div>
+          <div v-if="allStatus.error" style="color: var(--red);">{{ allStatus.error }}</div>
+          <div v-for="c in allStatus.created" :key="c" class="muted">✓ {{ c }}</div>
+        </div>
+        <div class="row" style="justify-content: flex-end; margin-top: 10px;">
+          <button class="btn" @click="showImportAll = false">关闭</button>
+          <button class="btn primary" :disabled="allStatus?.running" @click="startImportAll">
+            {{ allStatus?.running ? '导入中…' : '开始导入' }}
+          </button>
         </div>
       </div>
     </div>

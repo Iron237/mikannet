@@ -9,6 +9,7 @@ export default createRouter({
     { path: '/calendar', name: 'calendar', component: () => import('./views/CalendarView.vue') },
     { path: '/subscriptions', name: 'subscriptions', component: () => import('./views/SubscriptionsView.vue') },
     { path: '/downloads', name: 'downloads', component: () => import('./views/DownloadsView.vue') },
+    { path: '/logs', name: 'logs', component: () => import('./views/LogView.vue') },
     { path: '/settings', name: 'settings', component: () => import('./views/SettingsView.vue') },
   ],
 })

@@ -23,6 +23,7 @@ onMounted(() => {
           <span v-if="tasksStore.active.filter(t => t.status === 'downloading').length"
                 class="badge">{{ tasksStore.active.filter(t => t.status === 'downloading').length }}</span>
         </RouterLink>
+        <RouterLink to="/logs" class="nav-item">📜 日志</RouterLink>
         <RouterLink to="/settings" class="nav-item">⚙️ 设置</RouterLink>
       </nav>
       <div class="spacer" />

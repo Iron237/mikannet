@@ -27,31 +27,21 @@ services:
       # 下载器写盘根目录(接桌面 qB 时改成 NAS 的 Windows 路径;mikanarr 仍从 /downloads 读同一份)
       MIKANARR_DOWNLOAD_ROOT: ${DOWNLOAD_ROOT:-/downloads}
       MIKANARR_POLL_INTERVAL_MIN: ${POLL_INTERVAL_MIN:-15}
+      # 本地导入源的主机路径前缀(用于把粘贴的 Win/NAS 路径翻译成容器内 /import、/import-nas)
+      MIKANARR_IMPORT_WIN_HOST: ${LOCAL_IMPORT_PATH:-./import}
+      MIKANARR_IMPORT_NAS_HOST: ${NAS_IMPORT_PATH:-//192.168.2.4/Minecraft 独行侠/番剧}
+      # mikanarr 下载目录的 NAS 路径;若在 NAS_IMPORT_PATH 之下,NAS→NAS 导入走服务器端 rename
+      MIKANARR_NAS_SMB_PATH: ${NAS_SMB_PATH}
     volumes:
       - ./data/mikanarr:/config
       - downloads:/downloads
-      # 本地番剧导入源目录(把你的旧番剧文件夹路径填到 .env 的 LOCAL_IMPORT_PATH)
+      # 本地番剧导入源:/import = Windows 本机磁盘(.env LOCAL_IMPORT_PATH,可填 G:/Anime 等)
       - ${LOCAL_IMPORT_PATH:-./import}:/import
-    depends_on:
-      - qbittorrent
+      # /import-nas = NAS 上的旧番剧目录(.env NAS_IMPORT_PATH,CIFS 挂载)
+      - nas_import:/import-nas
     restart: unless-stopped
-
-  qbittorrent:
-    image: linuxserver/qbittorrent:latest
-    container_name: mikanarr-qbittorrent
-    environment:
-      PUID: "1000"
-      PGID: "1000"
-      TZ: Asia/Shanghai
-      WEBUI_PORT: "18080"
-    ports:
-      - "18080:18080"       # WebUI(内外端口必须一致)
-      - "${QB_BT_PORT:-51413}:${QB_BT_PORT:-51413}"
-      - "${QB_BT_PORT:-51413}:${QB_BT_PORT:-51413}/udp"
-    volumes:
-      - ./data/qbittorrent:/config
-      - downloads:/downloads
-    restart: unless-stopped
+  # 下载器已迁移到桌面 qBittorrent(host.docker.internal:19897),
+  # 原 Docker qBittorrent 服务已移除(同 BitComet)。app 仍挂 downloads 卷读 NAS 上的成品文件。
 
 volumes:
   downloads:
@@ -62,3 +52,10 @@ volumes:
       type: cifs
       o: "username=${NAS_USER},password=${NAS_PASS},uid=1000,gid=1000,iocharset=utf8,vers=3.0,noserverino"
       device: "${NAS_SMB_PATH}"
+  # NAS 上的旧番剧导入源(CIFS,只读扫描用;NAS_IMPORT_PATH 指向你 NAS 上存旧番剧的目录)
+  nas_import:
+    driver: local
+    driver_opts:
+      type: cifs
+      o: "username=${NAS_USER},password=${NAS_PASS},uid=1000,gid=1000,iocharset=utf8,vers=3.0,noserverino"
+      device: "${NAS_IMPORT_PATH:-//192.168.2.4/Minecraft 独行侠/番剧}"

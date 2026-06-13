@@ -11,7 +11,8 @@ export const useTasksStore = defineStore('tasks', {
   }),
   getters: {
     active: (s) => s.tasks.filter(t => ['downloading', 'pending', 'completed'].includes(t.status)),
-    history: (s) => s.tasks.filter(t => !['downloading', 'pending'].includes(t.status)),
+    // 历史只显示已入库/出错;skipped(去重淘汰、坏种、已删除留痕)不在下载页展示
+    history: (s) => s.tasks.filter(t => ['archived', 'download_error', 'submit_failed'].includes(t.status)),
   },
   actions: {
     async load() {
@@ -31,6 +32,7 @@ export const useTasksStore = defineStore('tasks', {
           if (t) Object.assign(t, {
             status: u.status, progress: u.progress, dlspeed: u.dlspeed,
             size: u.size, eta: u.eta, state: u.state,
+            upspeed: u.upspeed, seeds: u.seeds, peers: u.peers,
           })
           else this.load()   // 出现未知任务,全量刷新
         }

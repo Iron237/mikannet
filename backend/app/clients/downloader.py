@@ -20,6 +20,9 @@ class DlTask:
     size: int            # 字节
     state: str           # 后端原始状态串(展示用)
     eta: int | None = None
+    upspeed: int = 0     # B/s
+    seeds: int = 0       # 已连接做种数
+    peers: int = 0       # 已连接下载者数
     done: bool = False   # 已完成(可进入后处理)
     error: bool = False  # 出错
 
@@ -66,6 +69,10 @@ class Downloader:
 
     def set_global_dl_limit(self, bytes_per_sec: int) -> None:
         self._backend.set_global_dl_limit(bytes_per_sec)
+
+    def rename_file(self, info_hash: str, old_path: str, new_path: str) -> None:
+        """种子内文件原地重命名/移动(整理用,路径相对 save_path)。"""
+        self._backend.rename_file(info_hash, old_path, new_path)
 
 
 downloader = Downloader()

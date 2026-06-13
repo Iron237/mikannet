@@ -62,6 +62,7 @@ class Bangumi(Base):
     poster_path: Mapped[str | None] = mapped_column(String(512))    # 本地缓存相对路径
     backdrop_path: Mapped[str | None] = mapped_column(String(512))
     air_weekday: Mapped[int | None] = mapped_column(Integer)         # 0=周一 … 6=周日(放送日历)
+    season_number: Mapped[int] = mapped_column(Integer, default=1)    # 续作季号(Jellyfin Season N),可手改
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
@@ -143,6 +144,7 @@ class Torrent(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    stalled_since: Mapped[datetime | None] = mapped_column(DateTime)   # 坏种检测:开始无做种卡住的时刻
 
     subscription: Mapped[Subscription] = relationship(back_populates="torrents")
     episodes: Mapped[list[Episode]] = relationship(secondary="torrent_episode")
@@ -169,6 +171,8 @@ class VideoFile(Base):
     relative_path: Mapped[str] = mapped_column(String(1024))   # 相对 download_root
     size: Mapped[int | None] = mapped_column(Integer)
     resolution: Mapped[str | None] = mapped_column(String(32))
+    subgroup: Mapped[str | None] = mapped_column(String(128))   # 字幕组(从文件名解析)
+    source: Mapped[str | None] = mapped_column(String(32))      # 片源 Web/BD(从文件名解析)
     video_codec: Mapped[str | None] = mapped_column(String(32))
     bitrate: Mapped[int | None] = mapped_column(Integer)
     audio_tracks: Mapped[list] = mapped_column(JSON, default=list)

@@ -136,6 +136,7 @@ class BitCometClient:
                 hash=guid[3:], name=t.get("task_name", ""),
                 progress=permil / 1000.0, dlspeed=int(t.get("download_rate", 0) or 0),
                 size=int(t.get("total_size", 0) or 0), state=t.get("status", ""),
+                upspeed=int(t.get("upload_rate", 0) or 0),
                 done=permil >= 1000 or "seed" in status or "finish" in status,
                 error="error" in status or bool(t.get("error_code"))))
         return out
@@ -183,6 +184,10 @@ class BitCometClient:
     def set_global_dl_limit(self, bytes_per_sec: int) -> None:
         self._post("/api/config/connection/set",
                    {"connection_config.max_download_speed": bytes_per_sec})
+
+    def rename_file(self, info_hash: str, old_path: str, new_path: str) -> None:
+        # BitComet WebUI 改名能力未知,整理功能仅对 qB 保证(organize 会按 downloader 名跳过)
+        raise NotImplementedError("BitComet 不支持文件重命名整理")
 
 
 bitcomet_client = BitCometClient()

@@ -13,6 +13,17 @@ def _poster_url(b: Bangumi) -> str | None:
     return f"/data/{b.poster_path}" if b.poster_path else None
 
 
+def _file_out(f) -> dict:
+    """视频文件展示信息:分辨率 / 字幕组 / 片源(web/BD)/ 字幕轨 / 编码 / 码率。"""
+    from pathlib import PurePosixPath
+    return {
+        "id": f.id, "path": f.relative_path, "name": PurePosixPath(f.relative_path).name,
+        "size": f.size, "resolution": f.resolution, "subgroup": f.subgroup,
+        "source": f.source, "codec": f.video_codec, "bitrate": f.bitrate,
+        "audio_tracks": f.audio_tracks, "subtitle_tracks": f.subtitle_tracks,
+    }
+
+
 @router.get("")
 def library(db: Session = Depends(get_db)):
     rows = db.execute(select(Bangumi).order_by(Bangumi.created_at.desc())).scalars().all()
@@ -77,11 +88,7 @@ def detail(bangumi_id: int, db: Session = Depends(get_db)):
             "status": current.status.value if current else "missing",
             "version": current.version if current else None,
             "torrent_id": current.id if current else None,
-            "files": [{
-                "id": f.id, "path": f.relative_path, "size": f.size,
-                "resolution": f.resolution, "codec": f.video_codec, "bitrate": f.bitrate,
-                "audio_tracks": f.audio_tracks, "subtitle_tracks": f.subtitle_tracks,
-            } for f in (current.files if current else []) if f.is_active],
+            "files": [_file_out(f) for f in (current.files if current else []) if f.is_active],
         })
     # 缺集占位:已知总集数时,把库里没有的集号渲染为"未下载"(详情页补全入口的依据)
     if b.eps_total:
@@ -92,6 +99,14 @@ def detail(bangumi_id: int, db: Session = Depends(get_db)):
                                 "torrent_id": None, "files": []})
         eps_out.sort(key=lambda e: (e["number"] is None, e["number"]))
 
+    # 未匹配文件:登记进库但没解析到单集的视频(剧场版/合集/解析失败),也要展示,别让它隐身
+    from app.models import VideoFile
+    unmapped = db.execute(
+        select(VideoFile).join(Torrent).join(Subscription)
+        .where(Subscription.bangumi_id == b.id,
+               VideoFile.episode_id.is_(None), VideoFile.is_active.is_(True))
+        .order_by(VideoFile.relative_path)).scalars().all()
+
     subs = db.execute(select(Subscription).where(Subscription.bangumi_id == b.id)).scalars().all()
     return {
         "id": b.id, "mikan_bangumi_id": b.mikan_bangumi_id,
@@ -101,7 +116,9 @@ def detail(bangumi_id: int, db: Session = Depends(get_db)):
         "eps_total": b.eps_total, "poster": _poster_url(b),
         "backdrop": f"/data/{b.backdrop_path}" if b.backdrop_path else None,
         "bgmtv_subject_id": b.bgmtv_subject_id, "tmdb_id": b.tmdb_id,
+        "season_number": b.season_number or 1,
         "episodes": eps_out,
+        "unmapped_files": [_file_out(f) for f in unmapped],
         "subscriptions": [{
             "id": s.id, "subgroup_name": s.subgroup_name, "enabled": s.enabled,
             "exclude_batch": s.exclude_batch, "include_keywords": s.include_keywords,
@@ -169,6 +186,21 @@ def batch_delete(payload: dict, db: Session = Depends(get_db)):
         done.append(bid)
     db.commit()
     return {"done": done, "failed": failed}
+
+
+@router.patch("/{bangumi_id}")
+def update_bangumi(bangumi_id: int, payload: dict, db: Session = Depends(get_db)):
+    """编辑番剧元数据(目前:season_number 续作季号,整理重命名用)。"""
+    b = db.get(Bangumi, bangumi_id)
+    if not b:
+        raise HTTPException(404)
+    if "season_number" in payload:
+        try:
+            b.season_number = max(0, int(payload["season_number"]))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "season_number 非法") from None
+    db.commit()
+    return {"ok": True, "season_number": b.season_number}
 
 
 @router.post("/{bangumi_id}/rebind")

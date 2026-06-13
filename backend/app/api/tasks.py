@@ -31,6 +31,7 @@ def list_tasks(status: str | None = None, db: Session = Depends(get_db)):
     out = []
     for t in rows:
         lt = live.get(t.info_hash) if t.info_hash else None
+        b = t.subscription.bangumi if t.subscription else None
         out.append(TorrentOut(
             id=t.id, subscription_id=t.subscription_id, title_raw=t.title_raw,
             status=t.status.value, is_batch=t.is_batch, version=t.version,
@@ -38,6 +39,12 @@ def list_tasks(status: str | None = None, db: Session = Depends(get_db)):
             size=lt.size if lt else t.size,
             progress=lt.progress if lt else t.progress,
             dlspeed=lt.dlspeed if lt else t.dlspeed,
+            upspeed=lt.upspeed if lt else 0,
+            seeds=lt.seeds if lt else 0,
+            peers=lt.peers if lt else 0,
+            eta=lt.eta if lt else None,
+            bangumi_title=b.title if b else None,
+            season_number=(b.season_number or 1) if b else 1,
             error_message=t.error_message, published_at=t.published_at,
             created_at=t.created_at))
     return out

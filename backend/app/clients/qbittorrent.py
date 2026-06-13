@@ -60,6 +60,9 @@ class QbClient:
                 hash=t.hash, name=t.name, progress=float(t.progress),
                 dlspeed=int(t.dlspeed), size=int(t.size), state=t.state,
                 eta=getattr(t, "eta", None),
+                upspeed=int(getattr(t, "upspeed", 0) or 0),
+                seeds=int(getattr(t, "num_seeds", 0) or 0),
+                peers=int(getattr(t, "num_leechs", 0) or 0),
                 done=t.progress >= 1.0 or t.state in _QB_DONE_STATES,
                 error=t.state in _QB_ERROR_STATES))
         return out
@@ -87,6 +90,11 @@ class QbClient:
     def set_global_dl_limit(self, bytes_per_sec: int) -> None:
         """0 = 不限速。"""
         self.client.transfer.set_download_limit(bytes_per_sec)
+
+    def rename_file(self, info_hash: str, old_path: str, new_path: str) -> None:
+        """原地重命名/移动种子内文件(整理成 Jellyfin 结构;qB 仍按新路径做种)。"""
+        self.client.torrents.rename_file(torrent_hash=info_hash,
+                                         old_path=old_path, new_path=new_path)
 
 
 qb_client = QbClient()

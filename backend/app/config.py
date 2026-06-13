@@ -24,6 +24,8 @@ class Settings(BaseSettings):
 
     # Mikan(域名可配,镜像切换)
     mikan_base_url: str = "https://mikanani.me"
+    # 蜜柑登录 cookie(批量导入「我的番组」全部历史订阅用;WebUI 粘贴,DB 存,打码)
+    mikan_cookie: str = ""
     # 多源搜索:nyaa / dmhy 站点(域名可配)
     nyaa_base_url: str = "https://nyaa.si"
     dmhy_base_url: str = "https://share.dmhy.org"
@@ -50,11 +52,32 @@ class Settings(BaseSettings):
     # 本应用视角的同一目录(开发期 Windows 路径;容器内与 download_root 相同)
     download_root_local: Path = Path("/downloads")
 
+    # 本地导入源:主机路径前缀 → 容器挂载点(把用户粘贴的 Win/NAS 路径翻译成容器内可见路径)
+    import_win_host: str = ""     # = LOCAL_IMPORT_PATH(Windows 磁盘源,挂到 /import)
+    import_nas_host: str = ""     # = NAS_IMPORT_PATH(NAS 源 UNC,挂到 /import-nas)
+    # mikanarr 下载目录的 NAS 路径(= NAS_SMB_PATH);若它在 import_nas_host 之下,
+    # NAS→NAS 导入可经 /import-nas 同挂载做服务器端 rename(零网络传输)
+    nas_smb_path: str = ""
+
     # RSS 轮询间隔(分钟)
     poll_interval_min: int = 15
 
     # 元数据
     tmdb_api_key: str = ""
+
+    # 文件整理(qB 原地重命名成 Jellyfin 结构)+ NFO/封面落盘(改 ADR-0001)
+    organize_enabled: bool = True
+    nfo_enabled: bool = True
+
+    # 坏种清理:DOWNLOADING 且 0 做种 + 卡住无进度超过 N 小时 → 移除并换备选源
+    dead_torrent_enabled: bool = True
+    dead_torrent_hours: int = 6
+
+    # LLM 兜底解析(OpenAI 兼容;仅低置信度时调用)
+    llm_enabled: bool = False
+    llm_base_url: str = ""
+    llm_api_key: str = ""
+    llm_model: str = "gpt-4o-mini"
 
     @property
     def db_path(self) -> Path:

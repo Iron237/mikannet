@@ -101,6 +101,11 @@ def process_torrent(db: Session, torrent_id: int) -> None:
         if vf.episode_id:
             touched_eps.add(vf.episode_id)
 
+        if vf.subgroup is None and vf.source is None:   # 字幕组/片源:从文件名解析
+            pp = parse(PurePosixPath(rel_path).name)
+            vf.subgroup = pp.group or (t.subscription.subgroup_name if t.subscription else None)
+            vf.source = pp.source
+
         if vf.probed_at is None:
             local = settings.download_root_local / rel_path
             try:
@@ -122,6 +127,12 @@ def process_torrent(db: Session, torrent_id: int) -> None:
     if failures:
         t.error_message = f"{failures} 个文件探测失败,可重试"
     else:
+        # 整理:qB 原地重命名成 Jellyfin 结构 + 写 NFO/封面(可开关,改 ADR-0001)
+        try:
+            from app.services.organize import organize_torrent
+            organize_torrent(db, t)
+        except Exception as e:  # noqa: BLE001 — 整理失败不阻断入库
+            log.warning("整理 #%s 异常: %s", t.id, e)
         t.status = TorrentStatus.ARCHIVED
         t.error_message = None
     db.flush()

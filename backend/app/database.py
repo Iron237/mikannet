@@ -68,7 +68,11 @@ def _migrate_columns() -> None:
                          ("episode_offset", "INTEGER DEFAULT 0"),
                          ("last_poll_ok", "BOOLEAN DEFAULT 1"),
                          ("last_poll_error", "TEXT")],
-        "bangumi": [("air_weekday", "INTEGER")],
+        "bangumi": [("air_weekday", "INTEGER"),
+                    ("season_number", "INTEGER DEFAULT 1")],
+        "torrent": [("stalled_since", "DATETIME")],
+        "video_file": [("subgroup", "VARCHAR(128)"),
+                       ("source", "VARCHAR(32)")],
     }
     with engine.connect() as conn:
         for table, cols in additions.items():

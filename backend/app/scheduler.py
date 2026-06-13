@@ -23,6 +23,13 @@ def start() -> None:
     scheduler.start()
 
 
+def reschedule(minutes: int) -> None:
+    """RSS 间隔改动后即时重排(设置页 apply 钩子调用)。"""
+    if scheduler.running:
+        scheduler.reschedule_job("rss_poll", trigger="interval", minutes=minutes)
+        log.info("RSS 轮询间隔已改为 %s 分钟", minutes)
+
+
 def stop() -> None:
     if scheduler.running:
         scheduler.shutdown(wait=False)

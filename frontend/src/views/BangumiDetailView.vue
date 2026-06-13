@@ -40,6 +40,13 @@ async function redownload(ep) {
   await load()
 }
 
+const savingSeason = ref(false)
+async function saveSeason() {
+  savingSeason.value = true
+  try { await api.patch(`/api/bangumi/${b.value.id}`, { season_number: b.value.season_number }) }
+  finally { savingSeason.value = false }
+}
+
 onMounted(load)
 </script>
 
@@ -64,6 +71,14 @@ onMounted(load)
           <div class="row" style="margin-top: 10px; flex-wrap: wrap;">
             <span class="muted" style="font-size: 12px;" v-for="s in b.subscriptions" :key="s.id">
               📡 {{ s.subgroup_name }}{{ s.enabled ? '' : '(已停用)' }}
+            </span>
+          </div>
+          <div class="row" style="margin-top: 12px; gap: 8px; align-items: center;">
+            <span class="muted" style="font-size: 12.5px;">Jellyfin 季号 Season</span>
+            <input type="number" min="0" class="input" style="width: 64px;"
+                   v-model.number="b.season_number" @change="saveSeason" />
+            <span class="muted" style="font-size: 12px;">
+              {{ savingSeason ? '保存中…' : '整理重命名用(SxxExx)' }}
             </span>
           </div>
           <div class="row" style="margin-top: 14px;">
@@ -93,6 +108,8 @@ onMounted(load)
             <div class="muted path">{{ f.path }}</div>
             <div class="row" style="flex-wrap: wrap; gap: 6px; margin-top: 4px;">
               <span v-if="f.resolution" class="tag blue">{{ f.resolution }}</span>
+              <span v-if="f.source" class="tag" :class="f.source === 'BD' ? 'accent' : ''">{{ f.source }}</span>
+              <span v-if="f.subgroup" class="tag">🏷 {{ f.subgroup }}</span>
               <span v-if="f.codec" class="tag">{{ f.codec }}</span>
               <span v-if="f.bitrate" class="tag">{{ (f.bitrate / 1e6).toFixed(1) }} Mbps</span>
               <span class="tag">{{ fmtSize(f.size) }}</span>
@@ -102,6 +119,23 @@ onMounted(load)
           </div>
         </div>
       </div>
+
+      <template v-if="b.unmapped_files && b.unmapped_files.length">
+        <div class="page-title" style="margin-top: 22px;">其他文件
+          <span class="muted" style="font-size: 12px; font-weight: 400;">(已识别但未匹配到具体集 — 剧场版/合集/命名异常)</span>
+        </div>
+        <div v-for="f in b.unmapped_files" :key="f.id" class="card file unmapped">
+          <div class="path">{{ f.name }}</div>
+          <div class="row" style="flex-wrap: wrap; gap: 6px; margin-top: 4px;">
+            <span v-if="f.resolution" class="tag blue">{{ f.resolution }}</span>
+            <span v-if="f.source" class="tag" :class="f.source === 'BD' ? 'accent' : ''">{{ f.source }}</span>
+            <span v-if="f.subgroup" class="tag">🏷 {{ f.subgroup }}</span>
+            <span v-if="f.codec" class="tag">{{ f.codec }}</span>
+            <span class="tag">{{ fmtSize(f.size) }}</span>
+            <span v-for="(s, i) in f.subtitle_tracks" :key="'s' + i" class="tag green">💬 {{ s.lang || s.title || s.codec }}</span>
+          </div>
+        </div>
+      </template>
     </div>
 
     <SubscribeWizard v-if="showWizard"
@@ -160,5 +194,6 @@ onMounted(load)
 }
 .files { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 10px; }
 .file { margin-bottom: 8px; }
+.file.unmapped { padding: 10px 14px; }
 .path { font-size: 12px; word-break: break-all; }
 </style>

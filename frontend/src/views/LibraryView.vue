@@ -1,11 +1,13 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api } from '../api'
 
 const items = ref([])
 const filter = ref('all')   // all | airing | finished
 const keyword = ref('')
 const loading = ref(true)
+const scan = ref(null)       // 番剧库扫描状态
+let scanTimer = null
 const manageMode = ref(false)
 const selected = ref(new Set())
 const delConfirm = ref(null)
@@ -73,10 +75,28 @@ async function doDelete() {
   } finally { busy.value = false }
 }
 
+async function startScan() {
+  try {
+    await api.post('/api/import/library-scan', {})
+    pollScan()
+  } catch (e) { scan.value = { error: e.message } }
+}
+async function pollScan() {
+  scan.value = await api.get('/api/import/library-scan/status')
+  if (scan.value.running) {
+    scanTimer = setTimeout(pollScan, 1500)
+  } else {
+    await reload()   // 扫描完成,刷新封面墙(集数角标会更新)
+  }
+}
+
 onMounted(async () => {
   await reload()
   loading.value = false
+  const s = await api.get('/api/import/library-scan/status')
+  if (s.running) { scan.value = s; pollScan() }
 })
+onUnmounted(() => clearTimeout(scanTimer))
 </script>
 
 <template>
@@ -91,9 +111,26 @@ onMounted(async () => {
           {{ f[1] }}
         </button>
       </div>
+      <button class="btn sm" :disabled="scan?.running" @click="startScan"
+              title="扫描下载根目录,把已摆好的视频就地识别进库(不移动文件)">
+        {{ scan?.running ? '扫描中…' : '📥 扫描番剧库' }}
+      </button>
       <button class="btn sm" :class="{ primary: manageMode }" @click="toggleManage">
         {{ manageMode ? '完成' : '✓ 管理' }}
       </button>
+    </div>
+
+    <div v-if="scan" class="scan-bar card">
+      <template v-if="scan.error"><span style="color: var(--red);">扫描失败:{{ scan.error }}</span></template>
+      <template v-else>
+        <strong>{{ scan.running ? '扫描中' : '扫描完成' }}</strong>
+        <span class="muted">{{ scan.done }}/{{ scan.total }}</span>
+        <span class="muted" v-if="scan.current">· {{ scan.current }}</span>
+        <span>· 登记 {{ scan.registered }} 个文件 · 匹配 {{ scan.matched?.length || 0 }} 部</span>
+        <span class="muted" v-if="scan.unmatched?.length">· 未匹配 {{ scan.unmatched.length }}</span>
+        <div class="spacer" />
+        <button v-if="!scan.running" class="btn sm" @click="scan = null">×</button>
+      </template>
     </div>
 
     <div v-if="manageMode" class="batch-bar card">
@@ -187,6 +224,10 @@ onMounted(async () => {
 .batch-bar {
   display: flex; align-items: center; gap: 8px; padding: 10px 16px; margin-bottom: 16px;
   position: sticky; top: 8px; z-index: 10; border-color: var(--accent-dim);
+}
+.scan-bar {
+  display: flex; align-items: center; gap: 8px; padding: 9px 16px; margin-bottom: 16px;
+  font-size: 12.5px; border-color: var(--accent-dim); flex-wrap: wrap;
 }
 .poster { position: relative; aspect-ratio: 5/7; background: #0b0e14; }
 .poster img { width: 100%; height: 100%; object-fit: cover; display: block; }

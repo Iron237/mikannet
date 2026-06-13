@@ -53,6 +53,12 @@ class TorrentOut(BaseModel):
     size: int | None
     progress: float
     dlspeed: int
+    upspeed: int = 0
+    seeds: int = 0
+    peers: int = 0
+    eta: int | None = None
+    bangumi_title: str | None = None
+    season_number: int = 1
     error_message: str | None
     published_at: datetime | None
     created_at: datetime

@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
 from app.clients.downloader import downloader
+from app.config import settings
 from app.database import db_session
 from app.models import Torrent, TorrentStatus
 
@@ -58,6 +59,40 @@ def _emit(event: str, torrent) -> None:
     emit(event, torrent)
 
 
+def _check_dead(db, t, lt) -> bool:
+    """坏种检测:无做种 + 0 速 持续超过阈值 → 移除 + 标记 + 触发换备选源。返回是否已处理为坏种。"""
+    if not settings.dead_torrent_enabled:
+        t.stalled_since = None
+        return False
+    if lt.dlspeed == 0 and lt.seeds == 0:
+        now = datetime.utcnow()
+        if t.stalled_since is None:
+            t.stalled_since = now
+            return False
+        if now - t.stalled_since < timedelta(hours=settings.dead_torrent_hours):
+            return False
+        # 判定坏种
+        from app.services.rss_engine import DEAD_SKIP_REASON, reevaluate_skipped
+        try:
+            downloader.delete(t.info_hash, delete_files=True)
+        except Exception:  # noqa: BLE001
+            pass
+        t.status = TorrentStatus.SKIPPED
+        t.error_message = DEAD_SKIP_REASON
+        t.stalled_since = None
+        log.info("坏种自动清理 #%s %s", t.id, t.title_raw[:50])
+        _emit("on_fail", t)
+        db.flush()
+        try:
+            reevaluate_skipped(db, t.subscription)   # 自动换一个备选源
+        except Exception as e:  # noqa: BLE001
+            log.warning("坏种换源失败 #%s: %s", t.id, e)
+        return True
+    if t.stalled_since is not None:
+        t.stalled_since = None
+    return False
+
+
 def _sync_once() -> tuple[list[dict], bool]:
     """同步一轮:回写快照 + 状态迁移。返回 (广播数据, 是否有活动任务)。"""
     with db_session() as db:
@@ -84,10 +119,13 @@ def _sync_once() -> tuple[list[dict], bool]:
                     t.status = TorrentStatus.COMPLETED
                     t.completed_at = datetime.now(timezone.utc)
                     t.progress = 1.0
+                    t.stalled_since = None
                     log.info("下载完成 #%s %s", t.id, t.title_raw[:50])
                     _emit("on_complete", t)
                     from app.services.postprocess import enqueue
                     enqueue(t.id)
+                elif _check_dead(db, t, lt):
+                    pass            # 坏种已自动清理/换源,本轮不再计为活动
                 else:
                     active = True
             if lt is not None:
@@ -97,8 +135,11 @@ def _sync_once() -> tuple[list[dict], bool]:
             payload.append({
                 "id": t.id, "status": t.status.value, "title": t.title_raw,
                 "progress": round(t.progress, 4), "dlspeed": t.dlspeed,
-                "size": t.size, "eta": getattr(lt, "eta", None) if lt else None,
-                "state": getattr(lt, "state", None) if lt else None,
+                "size": t.size, "eta": lt.eta if lt else None,
+                "state": lt.state if lt else None,
+                "upspeed": lt.upspeed if lt else 0,
+                "seeds": lt.seeds if lt else 0,
+                "peers": lt.peers if lt else 0,
             })
         return payload, active
 
