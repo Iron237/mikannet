@@ -76,16 +76,17 @@ def enrich_bangumi(db: Session, bangumi: Bangumi,
                    bgmtv_subject_id: int | None = None) -> Bangumi:
     """拉取并填充番剧元数据。bgmtv_subject_id 显式传入时为手动绑定。"""
     detail = None
-    try:
-        detail = mikan_client.get_bangumi(bangumi.mikan_bangumi_id)
-        if not bangumi.title or bangumi.title.startswith("bangumi "):
-            bangumi.title = detail.title
-        if detail.cover_url and not bangumi.poster_path:
-            bangumi.poster_path = _cache_image(
-                "poster", f"mikan{bangumi.mikan_bangumi_id}",
-                mikan_client.download_image, detail.cover_url)
-    except Exception as e:  # noqa: BLE001
-        log.warning("Mikan 番剧页获取失败 %s: %s", bangumi.mikan_bangumi_id, e)
+    if bangumi.mikan_bangumi_id:   # 本地导入按 bgm.tv 匹配,可无蜜柑 ID → 跳过蜜柑页
+        try:
+            detail = mikan_client.get_bangumi(bangumi.mikan_bangumi_id)
+            if not bangumi.title or bangumi.title.startswith("bangumi "):
+                bangumi.title = detail.title
+            if detail.cover_url and not bangumi.poster_path:
+                bangumi.poster_path = _cache_image(
+                    "poster", f"mikan{bangumi.mikan_bangumi_id}",
+                    mikan_client.download_image, detail.cover_url)
+        except Exception as e:  # noqa: BLE001
+            log.warning("Mikan 番剧页获取失败 %s: %s", bangumi.mikan_bangumi_id, e)
 
     subject_id = bgmtv_subject_id or (detail.bgmtv_subject_id if detail else None) \
         or bangumi.bgmtv_subject_id

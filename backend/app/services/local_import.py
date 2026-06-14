@@ -76,9 +76,22 @@ def _resolve_source(p: str) -> str:
         f"NAS 源用 /import-nas(.env NAS_IMPORT_PATH);也可直接粘贴已配置的 Windows/NAS 路径。")
 
 
+def _match_bgm(title: str) -> dict | None:
+    """作品名 → bgm.tv 番剧。蜜柑搜索只认罗马音(中文/日文名 0 命中),本地文件夹多为中文 →
+    一律走 bgm.tv(原生索引中文 name_cn + 日文 name)。失败/未命中返回 None。"""
+    from app.clients.bgmtv import bgmtv_client
+    try:
+        hit = bgmtv_client.search_best(title)
+        if hit:
+            return {"bgmtv_subject_id": hit.subject_id,
+                    "title": hit.name_cn or hit.name, "name": hit.name}
+    except Exception as e:  # noqa: BLE001
+        log.warning("bgm.tv 匹配失败 %s: %s", title, e)
+    return None
+
+
 def scan(source: str) -> list[dict]:
-    """扫描目录,按作品分组并尝试匹配 Mikan。返回分组预览(不动文件)。"""
-    from app.clients.mikan import mikan_client
+    """扫描目录,按作品分组并尝试匹配 bgm.tv。返回分组预览(不动文件)。"""
     root = Path(_resolve_source(source))
     if not root.is_dir():
         raise FileNotFoundError(f"目录不存在或未挂载: {source}(容器内解析为 {root})")
@@ -93,25 +106,17 @@ def scan(source: str) -> list[dict]:
 
     out = []
     for title, files in groups.items():
-        mikan = None
-        try:
-            hit = mikan_client.search_best(title)
-            if hit:
-                mikan = {"mikan_bangumi_id": hit.mikan_bangumi_id, "title": hit.title}
-        except Exception as e:  # noqa: BLE001
-            log.warning("Mikan 匹配失败 %s: %s", title, e)
         out.append({
             "guess_title": title,
             "files": [str(f) for f in files],
             "episodes": sorted({e for f in files for e in parse(f.name).episodes}),
-            "mikan": mikan,
+            "bgm": _match_bgm(title),
         })
     return sorted(out, key=lambda g: -len(g["files"]))
 
 
 def _run_scan(source: str) -> None:
     """异步扫描,边走边更新 scan_state(供前端进度条轮询)。"""
-    from app.clients.mikan import mikan_client
     scan_state.update(running=True, phase="扫描文件", files_found=0, done=0, total=0,
                       current="", result=None, error=None)
     try:
@@ -127,22 +132,15 @@ def _run_scan(source: str) -> None:
                 groups.setdefault(_guess_series(p, root), []).append(p)
                 scan_state["files_found"] += 1
                 scan_state["current"] = p.name
-        scan_state.update(phase="匹配蜜柑", total=len(groups), done=0, current="")
+        scan_state.update(phase="匹配 bgm.tv", total=len(groups), done=0, current="")
         out = []
         for title, files in groups.items():
             scan_state["current"] = title
-            mikan = None
-            try:
-                hit = mikan_client.search_best(title)
-                if hit:
-                    mikan = {"mikan_bangumi_id": hit.mikan_bangumi_id, "title": hit.title}
-            except Exception as e:  # noqa: BLE001
-                log.warning("Mikan 匹配失败 %s: %s", title, e)
             out.append({
                 "guess_title": title,
                 "files": [str(f) for f in files],
                 "episodes": sorted({e for f in files for e in parse(f.name).episodes}),
-                "mikan": mikan,
+                "bgm": _match_bgm(title),
             })
             scan_state["done"] += 1
         scan_state["result"] = sorted(out, key=lambda g: -len(g["files"]))
@@ -205,23 +203,26 @@ def _safe_move(src: Path, dest: Path) -> None:
 
 def _import_group(group: dict) -> str:
     from app.services.metadata_service import enrich_bangumi
-    mid = group["mikan"]["mikan_bangumi_id"] if group.get("mikan") else None
-    if not mid:
-        raise ValueError(f"{group['guess_title']}: 未匹配到 Mikan 番剧,跳过")
+    bgm = group.get("bgm") or {}
+    subject_id = bgm.get("bgmtv_subject_id")
+    if not subject_id:
+        raise ValueError(f"{group['guess_title']}: 未匹配到 bgm.tv 番剧,跳过")
 
     with db_session() as db:
+        # 按 bgm.tv subject 归一:已存在的番剧(含蜜柑订阅建的)直接挂上,不建重复
         bangumi = db.execute(select(Bangumi).where(
-            Bangumi.mikan_bangumi_id == mid)).scalar_one_or_none()
+            Bangumi.bgmtv_subject_id == subject_id)).scalar_one_or_none()
         if bangumi is None:
-            bangumi = Bangumi(mikan_bangumi_id=mid, title=group["guess_title"])
+            bangumi = Bangumi(mikan_bangumi_id=None, bgmtv_subject_id=subject_id,
+                              title=bgm.get("title") or group["guess_title"])
             db.add(bangumi)
             db.flush()
-            enrich_bangumi(db, bangumi)
+            enrich_bangumi(db, bangumi, bgmtv_subject_id=subject_id)
 
         sub = db.execute(select(Subscription).where(
             Subscription.bangumi_id == bangumi.id,
             Subscription.mikan_subgroup_id == LOCAL_SUBGROUP_ID)).scalar_one_or_none()
-        safe = _ILLEGAL.sub(" ", bangumi.title).strip() or f"bangumi {mid}"
+        safe = _ILLEGAL.sub(" ", bangumi.title).strip() or f"bangumi {subject_id}"
         if sub is None:
             sub = Subscription(bangumi_id=bangumi.id, mikan_subgroup_id=LOCAL_SUBGROUP_ID,
                                subgroup_name="本地导入", enabled=False, backfill=False,
@@ -229,7 +230,7 @@ def _import_group(group: dict) -> str:
             db.add(sub)
             db.flush()
 
-        guid = f"local:{mid}:{datetime.now(timezone.utc):%Y%m%d%H%M%S}"
+        guid = f"local:{subject_id}:{datetime.now(timezone.utc):%Y%m%d%H%M%S}"
         torrent = Torrent(subscription_id=sub.id, guid=guid,
                           title_raw=f"[本地导入] {bangumi.title}({len(group['files'])} 个文件)",
                           parsed_json={}, torrent_url="", is_batch=True,

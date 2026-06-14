@@ -57,7 +57,9 @@ class Bangumi(Base):
     __tablename__ = "bangumi"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    mikan_bangumi_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    # 可空:本地导入按 bgm.tv 匹配(蜜柑搜索只索引罗马音标题,中文/日文文件夹名搜不到),
+    # 这类番剧无对应蜜柑 ID。唯一索引允许多个 NULL。
+    mikan_bangumi_id: Mapped[int | None] = mapped_column(Integer, unique=True, index=True)
     bgmtv_subject_id: Mapped[int | None] = mapped_column(Integer)
     tmdb_id: Mapped[int | None] = mapped_column(Integer)
     anidb_aid: Mapped[int | None] = mapped_column(Integer)   # AniDB anime id(剧集级元数据,ADR-0003)

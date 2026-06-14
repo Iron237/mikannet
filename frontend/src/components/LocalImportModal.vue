@@ -8,7 +8,7 @@ const emit = defineEmits(['close'])
 const path = ref('/import')
 const scanning = ref(false)
 const scanStatus = ref(null)
-const groups = ref(null)      // scan 结果 + checked + mikan_id_input
+const groups = ref(null)      // scan 结果 + checked + bgm_id_input
 const status = ref(null)
 const error = ref('')
 let pollTimer = null
@@ -40,7 +40,7 @@ async function pollScan() {
     if (s.error) { error.value = s.error; return }
     if (s.result) {
       groups.value = s.result.map(g => ({
-        ...g, checked: !!g.mikan, mikan_id_input: g.mikan?.mikan_bangumi_id ?? '',
+        ...g, checked: !!g.bgm, bgm_id_input: g.bgm?.bgmtv_subject_id ?? '',
       }))
     }
   } catch (e) { error.value = e.message; scanning.value = false }
@@ -55,8 +55,8 @@ async function run() {
   const selected = groups.value.filter(g => g.checked).map(g => ({
     guess_title: g.guess_title,
     files: g.files,
-    mikan: g.mikan_id_input
-      ? { mikan_bangumi_id: Number(g.mikan_id_input), title: g.mikan?.title ?? g.guess_title }
+    bgm: g.bgm_id_input
+      ? { bgmtv_subject_id: Number(g.bgm_id_input), title: g.bgm?.title ?? g.guess_title }
       : null,
   }))
   if (!selected.length) { error.value = '没有勾选任何分组'; return }
@@ -83,8 +83,8 @@ onUnmounted(() => { clearTimeout(pollTimer); clearTimeout(scanTimer) })
         <button class="btn sm" @click="emit('close')"><Icon name="close" :size="13" /></button>
       </div>
       <p class="muted" style="font-size: 12.5px; margin-bottom: 12px;">
-        扫描目录里的视频文件,按作品自动分组并匹配蜜柑番剧;确认后**移动**到
-        Mikanarr 管理目录(NAS)、提取文件信息并同步封面/元数据到番剧库。
+        扫描目录里的视频文件,按作品自动分组并匹配 bgm.tv 番剧(中文/日文名都能搜到);
+        确认后**移动**到 Mikanarr 管理目录(NAS)、提取文件信息并同步封面/元数据到番剧库。
         来源两种:<b>本机磁盘</b>(.env <code>LOCAL_IMPORT_PATH</code> → <code>/import</code>)、
         <b>NAS</b>(.env <code>NAS_IMPORT_PATH</code> → <code>/import-nas</code>)。
         可直接粘贴 Windows 路径(<code>G:\Anime\X</code>)或 NAS 路径(<code>\\192.168.2.4\…\X</code>),
@@ -133,11 +133,11 @@ onUnmounted(() => { clearTimeout(pollTimer); clearTimeout(scanTimer) })
               </span>
             </label>
             <div class="row" style="margin-top: 6px; padding-left: 26px;">
-              <span class="muted" style="font-size: 12px;">蜜柑匹配:</span>
-              <span v-if="g.mikan" class="tag green">{{ g.mikan.title }}</span>
+              <span class="muted" style="font-size: 12px;">bgm.tv 匹配:</span>
+              <span v-if="g.bgm" class="tag green">{{ g.bgm.title }}</span>
               <span v-else class="tag red">未匹配</span>
-              <input v-model="g.mikan_id_input" class="input" style="width: 130px;"
-                     placeholder="番剧 ID 手动指定" title="mikanani.me/Home/Bangumi/{ID} 里的数字" />
+              <input v-model="g.bgm_id_input" class="input" style="width: 150px;"
+                     placeholder="bgm.tv subject ID 手动指定" title="bgm.tv/subject/{ID} 里的数字" />
             </div>
           </div>
         </div>

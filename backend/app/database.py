@@ -63,6 +63,7 @@ def init_db() -> None:
 
     Base.metadata.create_all(engine)
     _migrate_columns()
+    _migrate_bangumi_nullable_mikan()
 
 
 def _migrate_columns() -> None:
@@ -93,6 +94,46 @@ def _migrate_columns() -> None:
                     conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
         conn.commit()
         _migrate_episode_type(conn)
+
+
+def _migrate_bangumi_nullable_mikan() -> None:
+    """bangumi.mikan_bangumi_id 由 NOT NULL 改为可空(本地导入按 bgm.tv 匹配,无蜜柑 ID)。
+
+    SQLite 不能直接 ALTER 掉 NOT NULL,须重建表。用独立 sqlite3 连接控制事务:
+    PRAGMA foreign_keys 须在事务外设置;重建保留 bangumi.id(子表 subscription/episode
+    的外键引用 id,值不变 → 引用仍有效)。幂等:已可空则跳过。DELETE 回滚日志下原子安全。
+    """
+    import sqlite3
+
+    con = sqlite3.connect(settings.db_path)
+    con.isolation_level = None   # 关闭隐式事务,手动 BEGIN/COMMIT
+    try:
+        cur = con.cursor()
+        col = next((r for r in cur.execute("PRAGMA table_info(bangumi)")
+                    if r[1] == "mikan_bangumi_id"), None)
+        if not col or int(col[3]) == 0:   # 表不存在 或 notnull 标志已为 0
+            return
+        ddl = cur.execute("SELECT sql FROM sqlite_master "
+                          "WHERE type='table' AND name='bangumi'").fetchone()[0]
+        if "mikan_bangumi_id INTEGER NOT NULL" not in ddl:
+            import logging
+            logging.getLogger(__name__).warning(
+                "跳过 bangumi 可空迁移:未在 DDL 找到预期的 NOT NULL 子句")
+            return
+        new_ddl = (ddl.replace("mikan_bangumi_id INTEGER NOT NULL", "mikan_bangumi_id INTEGER")
+                      .replace("CREATE TABLE bangumi", "CREATE TABLE _bangumi_new", 1))
+        cur.execute("PRAGMA journal_mode=DELETE")
+        cur.execute("PRAGMA foreign_keys=OFF")
+        cur.execute("BEGIN")
+        cur.execute(new_ddl)
+        cur.execute("INSERT INTO _bangumi_new SELECT * FROM bangumi")   # 同列序,直接整表复制
+        cur.execute("DROP TABLE bangumi")
+        cur.execute("ALTER TABLE _bangumi_new RENAME TO bangumi")
+        cur.execute("CREATE UNIQUE INDEX ix_bangumi_mikan_bangumi_id ON bangumi (mikan_bangumi_id)")
+        cur.execute("COMMIT")
+        cur.execute("PRAGMA foreign_keys=ON")
+    finally:
+        con.close()
 
 
 def _migrate_episode_type(conn) -> None:
