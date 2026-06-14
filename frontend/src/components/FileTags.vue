@@ -1,6 +1,6 @@
 <script setup>
 // 单个视频文件的标签分组展示:视频 / 音频 / 字幕 三行,加字幕组 + 体积。
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import Icon from './Icon.vue'
 import { fmtSize } from '../api'
 
@@ -8,6 +8,13 @@ const props = defineProps({
   file: { type: Object, required: true },
   showPath: { type: Boolean, default: false },   // 顶部是否显示文件名/相对路径
 })
+
+// 默认只展开常用语言(简中/繁中/日语/英语),其余(多语言压制版常带几十种)折叠
+const PRIMARY_SUB = /chinese|中文|简|繁|\bchs?\b|\bcht\b|\bgb\b|big5|\bzh|\bchi\b|\bzho\b|japanese|日本|日语|日語|\bjpn\b|\bja\b|\bjp\b|english|英语|英語|\beng\b|\ben\b/i
+function isPrimarySub(s) {
+  return PRIMARY_SUB.test(`${s.title || ''} ${s.lang || ''}`)
+}
+const subExpanded = ref(false)
 
 // ffprobe 语言码(ISO 639-2)→ 中文标签;sidecar 已是中文直接用
 const LANG = {
@@ -34,7 +41,10 @@ function subLabel(s) {
 }
 const f = computed(() => props.file)
 const hasAudio = computed(() => (f.value.audio_tracks || []).length > 0)
-const hasSub = computed(() => (f.value.subtitle_tracks || []).length > 0)
+const subs = computed(() => f.value.subtitle_tracks || [])
+const primarySubs = computed(() => subs.value.filter(isPrimarySub))
+const otherSubs = computed(() => subs.value.filter(s => !isPrimarySub(s)))
+const hasSub = computed(() => subs.value.length > 0)
 </script>
 
 <template>
@@ -60,10 +70,14 @@ const hasSub = computed(() => (f.value.subtitle_tracks || []).length > 0)
       <span v-for="(a, i) in f.audio_tracks" :key="'a' + i" class="tag">{{ audioLabel(a) }}</span>
     </div>
 
-    <!-- 字幕:逐轨 语言(外挂标注) -->
+    <!-- 字幕:默认只显示 简中/繁中/日语/英语,其余折叠 -->
     <div v-if="hasSub" class="trow">
       <Icon name="captions" :size="14" class="ti" />
-      <span v-for="(s, i) in f.subtitle_tracks" :key="'s' + i" class="tag green">{{ subLabel(s) }}</span>
+      <span v-for="(s, i) in primarySubs" :key="'s' + i" class="tag green">{{ subLabel(s) }}</span>
+      <span v-for="(s, i) in (subExpanded ? otherSubs : [])" :key="'o' + i" class="tag green">{{ subLabel(s) }}</span>
+      <button v-if="otherSubs.length" class="more" @click.stop="subExpanded = !subExpanded">
+        {{ subExpanded ? '收起' : `+${otherSubs.length} 种语言` }}
+      </button>
     </div>
   </div>
 </template>
@@ -74,4 +88,9 @@ const hasSub = computed(() => (f.value.subtitle_tracks || []).length > 0)
 .trow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .ti { color: var(--text-dim); opacity: .8; }
 .tag { display: inline-flex; align-items: center; gap: 3px; }
+.more {
+  font-size: 11px; padding: 1px 8px; border-radius: 20px; cursor: pointer;
+  border: 1px dashed var(--border); background: transparent; color: var(--text-dim);
+}
+.more:hover { color: var(--text); border-color: var(--accent-dim); }
 </style>

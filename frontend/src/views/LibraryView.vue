@@ -164,8 +164,12 @@ onUnmounted(() => clearTimeout(scanTimer))
           <div class="poster">
             <img v-if="b.poster" :src="b.poster" loading="lazy" :alt="b.title" />
             <div v-else class="poster-fallback">{{ b.title.slice(0, 2) }}</div>
-            <span v-if="b.airing_status === 'airing'" class="airing-badge">连载中</span>
-            <div class="ep-badge" v-if="b.eps_total">{{ b.eps_downloaded }}/{{ b.eps_total }}</div>
+            <span v-if="b.kind === 'tv' && b.airing_status === 'airing'" class="airing-badge">连载中</span>
+            <!-- TV 显示集进度;剧场版/OVA 不是集概念 → 显示形态分类(已入库/未入库) -->
+            <div class="ep-badge" v-if="b.kind === 'tv' && b.eps_total">{{ b.eps_downloaded }}/{{ b.eps_total }}</div>
+            <div class="ep-badge kind" v-else-if="b.kind && b.kind !== 'tv'" :class="{ dim: !b.has_resource }">
+              {{ b.kind === 'movie' ? '剧场版' : 'OVA' }}{{ b.has_resource ? '' : '·未入库' }}
+            </div>
             <div v-if="manageMode" class="sel-check" :class="{ on: isSel(b.id) }">
               <Icon v-if="isSel(b.id)" name="check" :size="14" />
             </div>
@@ -252,6 +256,8 @@ onUnmounted(() => clearTimeout(scanTimer))
   background: rgba(0,0,0,.75); font-size: 11px; padding: 2px 8px;
   border-top-left-radius: 8px; color: var(--accent);
 }
+.ep-badge.kind { color: var(--blue); font-weight: 700; }
+.ep-badge.kind.dim { color: var(--text-dim); }
 .info { padding: 10px 12px 12px; }
 .title {
   font-weight: 600; font-size: 13.5px; white-space: nowrap;

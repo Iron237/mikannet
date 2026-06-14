@@ -33,9 +33,15 @@ def library(db: Session = Depends(get_db)):
     return [{
         "id": b.id, "title": b.title, "year": b.year, "season": b.season_str,
         "studio": b.studio, "score": b.score, "airing_status": b.airing_status.value,
+        "kind": b.kind.value,
         "poster": _poster_url(b),
         "backdrop": f"/data/{b.backdrop_path}" if b.backdrop_path else None,
         "eps_total": b.eps_total,
+        # 影片/OVA 没有"正片集"概念,用是否有入库文件表达"已入库"(剧场版文件常未映射到集)
+        "has_resource": bool(db.execute(
+            select(VideoFile.id).join(Torrent).join(Subscription)
+            .where(Subscription.bangumi_id == b.id, VideoFile.is_active.is_(True))
+            .limit(1)).first()),
         "eps_downloaded": db.execute(
             select(Episode.id).join(TorrentEpisode).join(Torrent)
             .where(Episode.bangumi_id == b.id,
