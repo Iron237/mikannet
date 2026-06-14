@@ -22,9 +22,30 @@ def _auto_best_job() -> None:
     scan_auto_all()
 
 
+def _drain_completed_job() -> None:
+    """补跑后处理:把卡在 COMPLETED 的种子(tracker 完成入队后因重启/积压漏掉)重新入队。
+
+    process_torrent 幂等(已探测文件跳过、无失败才转 ARCHIVED)→ 重复入队无害。
+    保证「种子下好的文件」最终都会生成 VideoFile,在详情页显示文件详情。
+    """
+    from sqlalchemy import select
+
+    from app.models import Torrent, TorrentStatus
+    from app.services.postprocess import enqueue
+    with db_session() as db:
+        ids = db.execute(select(Torrent.id).where(
+            Torrent.status == TorrentStatus.COMPLETED)).scalars().all()
+    for tid in ids:
+        enqueue(tid)
+    if ids:
+        log.info("补跑后处理:重新入队 %s 个 COMPLETED 种子", len(ids))
+
+
 def start() -> None:
     scheduler.add_job(_rss_job, "interval", minutes=settings.poll_interval_min,
                       id="rss_poll", coalesce=True, max_instances=1)
+    scheduler.add_job(_drain_completed_job, "interval", minutes=5,
+                      id="drain_completed", coalesce=True, max_instances=1)
     if settings.auto_dl_interval_min and settings.auto_dl_interval_min > 0:
         scheduler.add_job(_auto_best_job, "interval", minutes=settings.auto_dl_interval_min,
                           id="auto_best", coalesce=True, max_instances=1)

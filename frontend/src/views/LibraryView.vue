@@ -154,7 +154,9 @@ onUnmounted(() => { clearTimeout(scanTimer); clearTimeout(autoTimer) })
         <strong>{{ scan.running ? '扫描中' : '扫描完成' }}</strong>
         <span class="muted">{{ scan.done }}/{{ scan.total }}</span>
         <span class="muted" v-if="scan.current">· {{ scan.current }}</span>
-        <span>· 登记 {{ scan.registered }} 个文件 · 匹配 {{ scan.matched?.length || 0 }} 部</span>
+        <span>· 新增 {{ scan.registered }} · 匹配 {{ scan.matched?.length || 0 }} 部</span>
+        <span class="muted" v-if="scan.updated">· 更新 {{ scan.updated }}</span>
+        <span class="muted" v-if="scan.removed">· 移除 {{ scan.removed }}</span>
         <span class="muted" v-if="scan.skipped">· 跳过 {{ scan.skipped }} 裸盘</span>
         <span class="muted" v-if="scan.unmatched?.length">· 未匹配 {{ scan.unmatched.length }}</span>
         <div class="spacer" />

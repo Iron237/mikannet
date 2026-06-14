@@ -4,7 +4,12 @@
 但库里没有对应的 VideoFile 记录(DB 被清过)。本扫描遍历 download_root 下每个顶层
 文件夹 → 按标题匹配已有 Bangumi(匹配不到则 Mikan 搜索创建)→ 把夹内每个视频就地登记:
 解析集数/分辨率/字幕组/片源 + ffprobe + 映射剧集,挂在该番剧的「本地导入」容器订阅下。
-幂等:已登记(按 relative_path)的文件跳过。
+
+增量同步(每次扫描都与磁盘比对,保持库与磁盘一致):
+- 新增:磁盘有、库没有 → 登记 + 探测 + 映射。
+- 变更:同一路径但文件大小变了(换源/重压)→ 重探测更新。
+- 删除:库里(容器登记的)有、磁盘已不在 → 移除记录并重算该集 is_active。
+qB 种子下载的文件由后处理管,本扫描只比对「容器」(库扫描/本地导入)登记的文件。
 """
 from __future__ import annotations
 
@@ -14,7 +19,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.config import settings
 from app.database import db_session
@@ -27,8 +32,8 @@ from app.services.local_import import LOCAL_SUBGROUP_ID
 log = logging.getLogger(__name__)
 
 state = {"running": False, "phase": "", "done": 0, "total": 0,
-         "current": "", "registered": 0, "matched": [], "unmatched": [], "skipped": 0,
-         "error": None}
+         "current": "", "registered": 0, "updated": 0, "removed": 0,
+         "matched": [], "unmatched": [], "skipped": 0, "error": None}
 
 _ILLEGAL = re.compile(r'[<>:"/\\|?*]')
 _NORM = re.compile(r"[\s·:：!！?？,，.。\-—_~、]+")
@@ -130,19 +135,47 @@ def _map_episode(db, b: Bangumi, t: Torrent, p) -> int | None:
     return ep.id
 
 
+def _probe_into(vf: VideoFile, abspath: Path, fallback_res: str | None = None) -> None:
+    """ffprobe 写入 VideoFile;失败留行可重探,分辨率退化用文件名解析值。"""
+    try:
+        r = media_probe.probe(abspath)
+        vf.resolution = r.resolution or fallback_res
+        vf.video_codec = r.video_codec
+        vf.color_depth = r.color_depth
+        vf.hdr = r.hdr
+        vf.bitrate = r.bitrate
+        vf.audio_tracks = r.audio_tracks
+        vf.subtitle_tracks = r.subtitle_tracks
+        vf.probed_at = datetime.now(timezone.utc)
+    except Exception as e:  # noqa: BLE001 — SMB 抖动
+        vf.resolution = vf.resolution or fallback_res
+        log.warning("库扫描 ffprobe 失败 %s: %s", abspath, e)
+
+
 def _register_file(db, b: Bangumi, t: Torrent, rel: str, abspath: Path,
-                   folder_source: str | None) -> bool:
-    """就地登记一个视频文件为 VideoFile(+ 剧集映射 + ffprobe)。已登记返回 False。
+                   folder_source: str | None) -> str:
+    """就地登记/比对一个视频文件。返回 "added" | "updated" | "unchanged"。
 
     片源:文件名优先,判不出则继承文件夹上下文(夹名含 BDRip → 内部成片标 BD)。
+    已登记:仅本容器登记的文件,若大小变了(换源/重压)→ 重探测;qB 种子文件不动。
     """
-    exists = db.execute(select(VideoFile.id).where(
-        VideoFile.relative_path == rel)).first()
-    if exists:
-        return False
+    existing = db.execute(select(VideoFile).where(
+        VideoFile.relative_path == rel)).scalar_one_or_none()
+    if existing is not None:
+        if existing.torrent_id == t.id:   # 本容器登记过 → 看是否变更
+            try:
+                cur = abspath.stat().st_size
+            except OSError:
+                cur = None
+            if cur and existing.size and cur != existing.size:
+                existing.size = cur
+                _probe_into(existing, abspath, parse(abspath.name).resolution)
+                db.flush()
+                return "updated"
+        return "unchanged"
     p = parse(abspath.name)
-    source = p.source or folder_source
-    vf = VideoFile(torrent_id=t.id, relative_path=rel, subgroup=p.group, source=source)
+    vf = VideoFile(torrent_id=t.id, relative_path=rel, subgroup=p.group,
+                   source=p.source or folder_source)
     try:
         vf.size = abspath.stat().st_size
     except OSError:
@@ -150,29 +183,41 @@ def _register_file(db, b: Bangumi, t: Torrent, rel: str, abspath: Path,
     db.add(vf)
     db.flush()
     vf.episode_id = _map_episode(db, b, t, p)
-    try:
-        r = media_probe.probe(abspath)
-        vf.resolution = r.resolution
-        vf.video_codec = r.video_codec
-        vf.color_depth = r.color_depth
-        vf.hdr = r.hdr
-        vf.bitrate = r.bitrate
-        vf.audio_tracks = r.audio_tracks
-        vf.subtitle_tracks = r.subtitle_tracks
-        if not vf.resolution and p.resolution:
-            vf.resolution = p.resolution
-        vf.probed_at = datetime.now(timezone.utc)
-    except Exception as e:  # noqa: BLE001 — SMB 抖动:留行可重探,分辨率退化用文件名解析
-        vf.resolution = vf.resolution or p.resolution
-        log.warning("库扫描 ffprobe 失败 %s: %s", abspath, e)
+    _probe_into(vf, abspath, p.resolution)
     db.flush()
-    return True
+    return "added"
+
+
+def _reconcile_removed(db) -> int:
+    """反向比对:容器(库扫描/本地导入)登记过、但磁盘已不在的文件 → 移除,重算 is_active。
+
+    安全:仅当父目录可访问、唯独该文件不在时才删(整挂载掉线时父目录也不在 → 跳过,不误删)。
+    """
+    from app.services.postprocess import _apply_version_switch
+    root = Path(settings.download_root_local)
+    rows = db.execute(select(VideoFile).join(Torrent).where(
+        or_(Torrent.guid.like("library:%"), Torrent.guid.like("local:%")))).scalars().all()
+    removed = 0
+    touched: set[int] = set()
+    for vf in rows:
+        fp = root / vf.relative_path
+        if not fp.exists() and fp.parent.exists():   # 文件没了、但目录还在 → 确属删除
+            if vf.episode_id:
+                touched.add(vf.episode_id)
+            db.delete(vf)
+            removed += 1
+    if removed:
+        db.flush()
+        for ep_id in touched:
+            _apply_version_switch(db, ep_id)
+    return removed
 
 
 def _run() -> None:
     root = Path(settings.download_root_local)
     state.update(running=True, phase="扫描下载根目录", done=0, total=0, current="",
-                 registered=0, matched=[], unmatched=[], skipped=0, error=None)
+                 registered=0, updated=0, removed=0, matched=[], unmatched=[],
+                 skipped=0, error=None)
     try:
         if not root.is_dir():
             raise FileNotFoundError(f"下载根目录不可访问: {root}")
@@ -203,23 +248,37 @@ def _run() -> None:
                         state["unmatched"].append(folder.name)
                         continue
                     t = _container_torrent(db, b)
-                    n = 0
+                    n = upd = 0
                     for vp in vids:
                         rel = str(vp.relative_to(root)).replace("\\", "/")
                         # 逐文件再看其所在子目录(如 .../SPs/、.../BDRip/)叠加上下文片源
                         sub_source = detect_source("/".join(vp.relative_to(folder).parts[:-1]))
                         try:
-                            if _register_file(db, b, t, rel, vp, sub_source or folder_source):
+                            r = _register_file(db, b, t, rel, vp, sub_source or folder_source)
+                            if r == "added":
                                 n += 1
+                            elif r == "updated":
+                                upd += 1
                         except Exception as e:  # noqa: BLE001 — 单文件失败不拖垮整夹
                             log.warning("库扫描登记失败 %s: %s", vp, e)
                     state["registered"] += n
-                    state["matched"].append(f"{b.title}: +{n}/{len(vids)}")
+                    state["updated"] += upd
+                    if n or upd:
+                        state["matched"].append(
+                            f"{b.title}: +{n}" + (f" ~{upd}" if upd else ""))
             except Exception as e:  # noqa: BLE001
                 log.warning("库扫描处理 %s 失败: %s", folder.name, e)
                 state["unmatched"].append(f"{folder.name}(出错)")
-        log.info("番剧库扫描完成:登记 %s 个文件,匹配 %s 部,未匹配 %s",
-                 state["registered"], len(state["matched"]), len(state["unmatched"]))
+        # 反向比对:移除磁盘已删的容器文件,保持库与磁盘一致
+        state["phase"] = "比对已删文件"
+        try:
+            with db_session() as db:
+                state["removed"] = _reconcile_removed(db)
+        except Exception as e:  # noqa: BLE001
+            log.warning("库扫描反向比对失败: %s", e)
+        log.info("番剧库扫描完成:新增 %s 更新 %s 移除 %s,匹配 %s 部,未匹配 %s",
+                 state["registered"], state["updated"], state["removed"],
+                 len(state["matched"]), len(state["unmatched"]))
     except Exception as e:  # noqa: BLE001
         state["error"] = str(e)
         log.exception("番剧库扫描失败")
