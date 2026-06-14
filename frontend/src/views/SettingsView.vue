@@ -28,8 +28,12 @@ const LABELS = {
   anidb_client_ver: 'AniDB client 版本号',
   anidb_search_base: 'anidb-search 地址(番剧→aid,可自托管)',
   anidb_lang: '剧集名首选语言(zh-Hans / en / x-jat)',
+  auto_dl_resolution: '目标分辨率(严格匹配,如 1080p)',
+  auto_dl_sub_lang: '字幕语言要求(简中 = 必须含简体)',
+  auto_dl_prefer_bd: '片源优先 BD > Web(并把已有 Web 升级为 BD)',
+  auto_dl_interval_min: '定期智能扫描间隔(分钟,0=关闭)',
 }
-const GROUP_ORDER = ['常规', '下载器', '代理', '搜索源', '整理', '坏种清理', 'AniDB', 'LLM']
+const GROUP_ORDER = ['常规', '智能下载', '下载器', '代理', '搜索源', '整理', '坏种清理', 'AniDB', 'LLM']
 
 const channelMeta = {
   telegram: { name: 'Telegram Bot', fields: [['bot_token', 'Bot Token'], ['chat_id', 'Chat ID']] },

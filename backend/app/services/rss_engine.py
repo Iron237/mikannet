@@ -257,8 +257,8 @@ def poll_all(db: Session) -> list[dict]:
     """并发拉取 RSS(网络阶段并行,数据库阶段串行 — SQLite 单写者)。"""
     from concurrent.futures import ThreadPoolExecutor, as_completed
     subs = db.execute(select(Subscription).where(Subscription.enabled)).scalars().all()
-    # 排除本地导入等伪订阅(无 RSS)
-    subs = [s for s in subs if s.mikan_subgroup_id != "local"]
+    # 排除本地导入/智能下载等容器伪订阅(无单一 RSS 源)
+    subs = [s for s in subs if s.mikan_subgroup_id not in ("local", "auto")]
 
     fetched: dict[int, list | Exception] = {}
     with ThreadPoolExecutor(max_workers=8) as pool:

@@ -14,6 +14,10 @@ const selected = ref(new Set())
 const delConfirm = ref(null)
 const delFiles = ref(false)
 const busy = ref(false)
+const autoConfirm = ref(null)   // 智能下载确认 { ids }
+const autoEnable = ref(false)   // 同时设为常驻智能下载
+const autoScan = ref(null)      // 智能扫描进度
+let autoTimer = null
 
 const SEASON_ORDER = { '秋': 4, '夏': 3, '春': 2, '冬': 1 }
 
@@ -76,6 +80,24 @@ async function doDelete() {
   } finally { busy.value = false }
 }
 
+async function doAutoScan() {
+  busy.value = true
+  try {
+    await api.post('/api/bangumi/auto-scan',
+      { ids: autoConfirm.value.ids, enable_auto: autoEnable.value })
+    autoConfirm.value = null; autoEnable.value = false; clearSel(); manageMode.value = false
+    pollAutoScan()
+  } catch (e) { autoScan.value = { error: e.message } }
+  finally { busy.value = false }
+}
+async function pollAutoScan() {
+  autoScan.value = await api.get('/api/bangumi/auto-scan/status')
+  if (autoScan.value.running) { autoTimer = setTimeout(pollAutoScan, 1500) }
+  else { await reload() }
+}
+const autoSubmitted = computed(() =>
+  (autoScan.value?.result || []).reduce((n, r) => n + (r.submitted || 0), 0))
+
 async function startScan() {
   try {
     await api.post('/api/import/library-scan', {})
@@ -96,8 +118,10 @@ onMounted(async () => {
   loading.value = false
   const s = await api.get('/api/import/library-scan/status')
   if (s.running) { scan.value = s; pollScan() }
+  const a = await api.get('/api/bangumi/auto-scan/status')
+  if (a.running) { autoScan.value = a; pollAutoScan() }
 })
-onUnmounted(() => clearTimeout(scanTimer))
+onUnmounted(() => { clearTimeout(scanTimer); clearTimeout(autoTimer) })
 </script>
 
 <template>
@@ -145,8 +169,26 @@ onUnmounted(() => clearTimeout(scanTimer))
       <button class="btn sm" :disabled="!selected.size" @click="clearSel">清空选择</button>
       <span class="muted" style="font-size: 12.5px;">已选 {{ selected.size }} 部</span>
       <div class="spacer" />
+      <button class="btn sm primary" :disabled="!selected.size || busy || autoScan?.running"
+              @click="autoConfirm = { ids: [...selected] }"
+              title="扫所有字幕组,按偏好(BD>Web/分辨率/简中)补全缺集并升级现有源">
+        <Icon name="zap" :size="13" /> 智能下载
+      </button>
       <button class="btn sm danger" :disabled="!selected.size || busy"
               @click="delConfirm = { ids: [...selected] }"><Icon name="trash" :size="13" /> 批量删除</button>
+    </div>
+
+    <div v-if="autoScan" class="scan-bar card">
+      <template v-if="autoScan.error"><span style="color: var(--red);">智能下载失败:{{ autoScan.error }}</span></template>
+      <template v-else>
+        <Icon name="zap" :size="14" style="color: var(--accent);" />
+        <strong>{{ autoScan.running ? '智能扫描中' : '智能扫描完成' }}</strong>
+        <span class="muted">{{ autoScan.done }}/{{ autoScan.total }}</span>
+        <span class="muted" v-if="autoScan.current">· {{ autoScan.current }}</span>
+        <span v-if="!autoScan.running">· 共提交 {{ autoSubmitted }} 个种子</span>
+        <div class="spacer" />
+        <button v-if="!autoScan.running" class="btn sm" @click="autoScan = null"><Icon name="close" :size="13" /></button>
+      </template>
     </div>
 
     <div v-if="loading" class="muted">加载中…</div>
@@ -165,6 +207,7 @@ onUnmounted(() => clearTimeout(scanTimer))
             <img v-if="b.poster" :src="b.poster" loading="lazy" :alt="b.title" />
             <div v-else class="poster-fallback">{{ b.title.slice(0, 2) }}</div>
             <span v-if="b.kind === 'tv' && b.airing_status === 'airing'" class="airing-badge">连载中</span>
+            <span v-if="b.auto_best" class="auto-badge" title="已开启智能下载(定期扫描升级)"><Icon name="zap" :size="11" /></span>
             <!-- TV 显示集进度;剧场版/OVA 不是集概念 → 显示形态分类(已入库/未入库) -->
             <div class="ep-badge" v-if="b.kind === 'tv' && b.eps_total">{{ b.eps_downloaded }}/{{ b.eps_total }}</div>
             <div class="ep-badge kind" v-else-if="b.kind && b.kind !== 'tv'" :class="{ dim: !b.has_resource }">
@@ -184,6 +227,27 @@ onUnmounted(() => clearTimeout(scanTimer))
         </component>
       </div>
     </section>
+
+    <div v-if="autoConfirm" class="modal-mask" @click.self="autoConfirm = null">
+      <div class="modal" style="width: 460px;">
+        <h3 style="margin-bottom: 10px;">智能下载 {{ autoConfirm.ids.length }} 部番剧</h3>
+        <p class="muted" style="font-size: 12.5px; line-height: 1.7;">
+          扫描每部番剧的<b>所有字幕组</b>种子,按偏好挑最佳源:<br>
+          片源 <b>BD &gt; Web</b> · 严格匹配分辨率与字幕(默认 1080P / 简中,可在设置改)。<br>
+          缺失的集会补全;已有 Web 而出现合格 BD 的会下 BD 升级(完成后自动顶替)。
+        </p>
+        <label class="row" style="margin: 16px 0; cursor: pointer;">
+          <input type="checkbox" v-model="autoEnable" />
+          同时设为常驻智能下载(之后定期自动扫描补全/升级)
+        </label>
+        <div class="row" style="justify-content: flex-end;">
+          <button class="btn" @click="autoConfirm = null">取消</button>
+          <button class="btn primary" :disabled="busy" @click="doAutoScan">
+            <Icon name="zap" :size="13" /> 开始
+          </button>
+        </div>
+      </div>
+    </div>
 
     <div v-if="delConfirm" class="modal-mask" @click.self="delConfirm = null">
       <div class="modal" style="width: 440px;">
@@ -250,6 +314,11 @@ onUnmounted(() => clearTimeout(scanTimer))
   position: absolute; top: 8px; left: 8px;
   background: var(--green); color: #06130a; font-size: 11px; font-weight: 700;
   padding: 1px 8px; border-radius: 10px;
+}
+.auto-badge {
+  position: absolute; top: 8px; right: 8px; display: inline-flex;
+  align-items: center; justify-content: center; width: 20px; height: 20px;
+  background: var(--accent); color: #1a1207; border-radius: 50%;
 }
 .ep-badge {
   position: absolute; bottom: 0; right: 0;

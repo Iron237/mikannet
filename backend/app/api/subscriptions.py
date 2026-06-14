@@ -71,9 +71,9 @@ def create_subscription(payload: SubscriptionCreate, background: BackgroundTasks
 
 @router.get("", response_model=list[SubscriptionOut])
 def list_subscriptions(db: Session = Depends(get_db)):
-    # 排除「本地导入/番剧库」容器订阅(它们只是挂就地视频的载体,不是 RSS 订阅)
+    # 排除「本地导入/智能下载」容器订阅(它们只是挂文件的载体,不是用户 RSS 订阅)
     subs = db.execute(select(Subscription).where(
-        Subscription.mikan_subgroup_id != "local")).scalars().all()
+        Subscription.mikan_subgroup_id.notin_(["local", "auto"]))).scalars().all()
     return [_to_out(s, s.bangumi.title) for s in subs]
 
 

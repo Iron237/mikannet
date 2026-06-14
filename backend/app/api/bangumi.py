@@ -33,7 +33,8 @@ def library(db: Session = Depends(get_db)):
     return [{
         "id": b.id, "title": b.title, "year": b.year, "season": b.season_str,
         "studio": b.studio, "score": b.score, "airing_status": b.airing_status.value,
-        "kind": b.kind.value,
+        "kind": b.kind.value, "auto_best": b.auto_best,
+        "has_mikan": b.mikan_bangumi_id is not None,
         "poster": _poster_url(b),
         "backdrop": f"/data/{b.backdrop_path}" if b.backdrop_path else None,
         "eps_total": b.eps_total,
@@ -128,7 +129,10 @@ def detail(bangumi_id: int, db: Session = Depends(get_db)):
                VideoFile.episode_id.is_(None), VideoFile.is_active.is_(True))
         .order_by(VideoFile.relative_path)).scalars().all()
 
-    subs = db.execute(select(Subscription).where(Subscription.bangumi_id == b.id)).scalars().all()
+    # 不展示「智能下载」内部容器订阅(它的种子已按集出现在剧集列表里;本地导入容器仍展示)
+    subs = db.execute(select(Subscription).where(
+        Subscription.bangumi_id == b.id,
+        Subscription.mikan_subgroup_id != "auto")).scalars().all()
     return {
         "id": b.id, "mikan_bangumi_id": b.mikan_bangumi_id,
         "title": b.title, "title_original": b.title_original,
@@ -140,6 +144,7 @@ def detail(bangumi_id: int, db: Session = Depends(get_db)):
         "anidb_aid": b.anidb_aid,
         "anidb_synced_at": b.anidb_synced_at.isoformat() if b.anidb_synced_at else None,
         "season_number": b.season_number or 1,
+        "auto_best": b.auto_best,
         "episodes": eps_out,
         "unmapped_files": [_file_out(f) for f in unmapped],
         "subscriptions": [_sub_out(s) for s in subs],
@@ -238,8 +243,11 @@ def update_bangumi(bangumi_id: int, payload: dict, db: Session = Depends(get_db)
             b.kind = Kind(str(payload["kind"]).lower())
         except ValueError:
             raise HTTPException(400, "kind 非法(tv/movie/ova)") from None
+    if "auto_best" in payload:
+        b.auto_best = bool(payload["auto_best"])
     db.commit()
-    return {"ok": True, "season_number": b.season_number, "kind": b.kind.value}
+    return {"ok": True, "season_number": b.season_number, "kind": b.kind.value,
+            "auto_best": b.auto_best}
 
 
 @router.post("/{bangumi_id}/sync-anidb")
@@ -308,3 +316,44 @@ def refresh(bangumi_id: int, db: Session = Depends(get_db)):
     enrich_bangumi(db, b)
     db.commit()
     return {"ok": True, "title": b.title}
+
+
+# ---- 智能下载(扫所有字幕组挑最佳源:BD>Web、严格分辨率/简中)--------------------
+
+@router.get("/auto-scan/status")
+def auto_scan_status():
+    from app.services.auto_best import state
+    return state
+
+
+@router.post("/auto-scan")
+def auto_scan(payload: dict, db: Session = Depends(get_db)):
+    """批量智能扫描。payload: {ids:[...], enable_auto?:bool}。
+    enable_auto=True 时同时把这些番剧设为常驻智能下载(定期扫描升级)。"""
+    from app.services import auto_best
+    ids = [int(i) for i in (payload.get("ids") or [])]
+    if not ids:
+        raise HTTPException(400, "没有选择番剧")
+    if payload.get("enable_auto"):
+        for bid in ids:
+            b = db.get(Bangumi, bid)
+            if b:
+                b.auto_best = True
+        db.commit()
+    if not auto_best.start_scan(ids):
+        raise HTTPException(409, "已有智能扫描在进行中")
+    return {"started": True, "total": len(ids)}
+
+
+@router.post("/{bangumi_id}/auto-scan")
+def auto_scan_one(bangumi_id: int, db: Session = Depends(get_db)):
+    """单部立即智能扫描(详情页按钮)。补全缺集 + 升级现有源。"""
+    from app.services import auto_best
+    b = db.get(Bangumi, bangumi_id)
+    if not b:
+        raise HTTPException(404)
+    if not b.mikan_bangumi_id:
+        raise HTTPException(400, "该番剧无蜜柑 ID(本地导入),无法扫描线上源")
+    if not auto_best.start_scan([bangumi_id]):
+        raise HTTPException(409, "已有智能扫描在进行中")
+    return {"started": True}

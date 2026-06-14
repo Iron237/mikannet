@@ -78,7 +78,8 @@ def _migrate_columns() -> None:
                     ("season_number", "INTEGER DEFAULT 1"),
                     ("anidb_aid", "INTEGER"),
                     ("anidb_synced_at", "DATETIME"),
-                    ("kind", "VARCHAR(8) DEFAULT 'TV'")],   # SQLAlchemy 存 Enum 名:TV/MOVIE/OVA
+                    ("kind", "VARCHAR(8) DEFAULT 'TV'"),   # SQLAlchemy 存 Enum 名:TV/MOVIE/OVA
+                    ("auto_best", "BOOLEAN DEFAULT 0")],
         "torrent": [("stalled_since", "DATETIME")],
         "episode": [("anidb_eid", "INTEGER")],
         "video_file": [("subgroup", "VARCHAR(128)"),

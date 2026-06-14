@@ -21,7 +21,7 @@ class SubscriptionCreate(BaseModel):
 class SubscriptionOut(BaseModel):
     id: int
     bangumi_id: int
-    mikan_bangumi_id: int
+    mikan_bangumi_id: int | None = None   # 本地导入番剧无蜜柑 ID
     bangumi_title: str
     mikan_subgroup_id: str
     subgroup_name: str | None

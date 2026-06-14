@@ -42,6 +42,11 @@ EDITABLE: dict[str, tuple[str, type, bool]] = {
     # 坏种清理
     "dead_torrent_enabled": ("坏种清理", bool, False),
     "dead_torrent_hours": ("坏种清理", int, False),
+    # 智能下载偏好
+    "auto_dl_resolution": ("智能下载", str, False),
+    "auto_dl_sub_lang": ("智能下载", str, False),
+    "auto_dl_prefer_bd": ("智能下载", bool, False),
+    "auto_dl_interval_min": ("智能下载", int, False),
     # AniDB(剧集级元数据)
     "anidb_enabled": ("AniDB", bool, False),
     "anidb_client_name": ("AniDB", str, False),
@@ -125,6 +130,12 @@ def _apply(applied: dict) -> None:
             reschedule(applied["poll_interval_min"])
         except Exception as e:  # noqa: BLE001
             log.warning("重排 RSS 轮询失败: %s", e)
+    if "auto_dl_interval_min" in applied:
+        try:
+            from app.scheduler import reschedule_auto_best
+            reschedule_auto_best(applied["auto_dl_interval_min"])
+        except Exception as e:  # noqa: BLE001
+            log.warning("重排智能扫描失败: %s", e)
     if any(k.startswith("qb_") or k == "downloader" for k in applied):
         try:
             from app.clients.qbittorrent import qb_client

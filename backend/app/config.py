@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     # RSS 轮询间隔(分钟)
     poll_interval_min: int = 15
 
+    # 智能下载偏好(番剧库批量补全 / 定期扫所有字幕组挑最佳源)
+    auto_dl_resolution: str = "1080p"   # 严格:只下该分辨率
+    auto_dl_sub_lang: str = "简中"       # 严格:必须含该字幕语言(简中=含简体中文)
+    auto_dl_prefer_bd: bool = True       # 片源优先级 BD>Web;据此把已有 Web 升级为 BD
+    auto_dl_interval_min: int = 360      # 定期智能扫描间隔(分钟);0=关闭定期,仅手动
+
     # 元数据
     tmdb_api_key: str = ""
 

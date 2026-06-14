@@ -69,15 +69,27 @@ def _match_episode(db: Session, t: Torrent, filename: str) -> int | None:
     return ep.id
 
 
+# 片源优先级:BD > Web > 未知。决定同集多文件谁 is_active(Web→BD 升级靠它切换)
+_SOURCE_RANK = {"BD": 0, "Web": 1}
+
+
+def _file_quality(f: VideoFile) -> tuple[int, int]:
+    """画质优先序(越小越优):先片源 BD>Web,再版本号高者优先。"""
+    return (_SOURCE_RANK.get(f.source, 2), -(f.torrent.version or 1))
+
+
 def _apply_version_switch(db: Session, episode_id: int) -> None:
-    """同一剧集多版本文件:只保留最高版本种子的文件为 is_active(v2 决议)。"""
+    """同一剧集多文件:保留画质最优(BD>Web、再 v2>v1)的为 is_active,其余置 0。
+
+    既覆盖 v2 决议,也覆盖跨字幕组的 Web→BD 升级(智能下载补的 BD 完成后自动顶替 Web)。
+    """
     files = db.execute(select(VideoFile).join(Torrent).where(
         VideoFile.episode_id == episode_id)).scalars().all()
     if not files:
         return
-    best = max(f.torrent.version for f in files)
+    best_q = min(_file_quality(f) for f in files)
     for f in files:
-        f.is_active = f.torrent.version == best
+        f.is_active = _file_quality(f) == best_q
     db.flush()
 
 

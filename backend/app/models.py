@@ -66,6 +66,8 @@ class Bangumi(Base):
     anidb_synced_at: Mapped[datetime | None] = mapped_column(DateTime)  # 上次 AniDB 剧集同步(≥24h 缓存)
 
     kind: Mapped[Kind] = mapped_column(Enum(Kind), default=Kind.TV)   # 作品形态:tv/movie/ova
+    # 智能下载:开启后定期扫所有字幕组,按偏好(BD>Web/分辨率/简中)补全缺集+升级现有源
+    auto_best: Mapped[bool] = mapped_column(Boolean, default=False)
 
     title: Mapped[str] = mapped_column(String(255))            # 官方中文译名优先
     title_original: Mapped[str | None] = mapped_column(String(255))
