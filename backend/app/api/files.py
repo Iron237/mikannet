@@ -22,14 +22,22 @@ def unassigned(db: Session = Depends(get_db)):
 
 @router.post("/{file_id}/assign")
 def assign(file_id: int, payload: dict, db: Session = Depends(get_db)):
-    """手动指定该文件属于第几话。payload: {"episode_number": 8, "type": "EP"}"""
+    """手动指定该文件属于第几话。payload: {"episode_number": 8, "type": "regular"}
+
+    type 接受新枚举值(regular/special/credits/trailer/other);兼容旧名 EP/SP。
+    """
     vf = db.get(VideoFile, file_id)
     if not vf:
         raise HTTPException(404)
     number = payload.get("episode_number")
     if number is None:
         raise HTTPException(400, "缺少 episode_number")
-    ep_type = EpisodeType(payload.get("type", "EP"))
+    raw_type = str(payload.get("type") or "regular")
+    _legacy = {"EP": "regular", "SP": "special", "OVA": "special", "MOVIE": "special"}
+    try:
+        ep_type = EpisodeType(_legacy.get(raw_type, raw_type.lower()))
+    except ValueError:
+        ep_type = EpisodeType.REGULAR
     t: Torrent = vf.torrent
     bangumi_id = t.subscription.bangumi_id
 

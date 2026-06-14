@@ -16,11 +16,21 @@ from app.clients.bgmtv import bgmtv_client
 from app.clients.mikan import mikan_client
 from app.clients.tmdb import tmdb_client
 from app.config import settings
-from app.models import AiringStatus, Bangumi
+from app.models import AiringStatus, Bangumi, Kind
 
 log = logging.getLogger(__name__)
 
 IMAGES_DIR = settings.data_dir / "images"
+
+
+def _kind_from_platform(platform: str | None) -> Kind:
+    """bgm.tv platform → 番剧形态。剧场版=电影,OVA/OAD=OVA,其余(TV/WEB/…)=TV。"""
+    p = (platform or "").strip()
+    if "剧场版" in p or "劇場版" in p or p.lower() == "movie":
+        return Kind.MOVIE
+    if p.upper() in ("OVA", "OAD", "OAV"):
+        return Kind.OVA
+    return Kind.TV
 
 
 def _season_str(date: str) -> str | None:
@@ -97,6 +107,9 @@ def enrich_bangumi(db: Session, bangumi: Bangumi,
             bangumi.score = s.score
             bangumi.eps_total = s.eps
             bangumi.airing_status = _infer_airing_status(s.date, s.eps)
+            # 形态:AniDB 已绑时由 AniDB 同步主导(更可靠),否则用 bgm.tv platform 推
+            if not bangumi.anidb_aid:
+                bangumi.kind = _kind_from_platform(s.platform)
             if s.cover_url:   # bgm.tv 封面质量优于 Mikan 缩略图,覆盖
                 if p := _cache_image("poster", f"bgmtv{subject_id}",
                                      bgmtv_client.download_image, s.cover_url):

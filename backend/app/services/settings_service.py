@@ -42,6 +42,12 @@ EDITABLE: dict[str, tuple[str, type, bool]] = {
     # 坏种清理
     "dead_torrent_enabled": ("坏种清理", bool, False),
     "dead_torrent_hours": ("坏种清理", int, False),
+    # AniDB(剧集级元数据)
+    "anidb_enabled": ("AniDB", bool, False),
+    "anidb_client_name": ("AniDB", str, False),
+    "anidb_client_ver": ("AniDB", int, False),
+    "anidb_search_base": ("AniDB", str, False),
+    "anidb_lang": ("AniDB", str, False),
     # LLM 兜底
     "llm_enabled": ("LLM", bool, False),
     "llm_base_url": ("LLM", str, False),

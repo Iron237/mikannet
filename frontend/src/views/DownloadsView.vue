@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { api, fmtSize, fmtSpeed } from '../api'
 import { useTasksStore } from '../stores/tasks'
+import Icon from '../components/Icon.vue'
 
 const store = useTasksStore()
 const delConfirm = ref(null)      // { ids: [...] } 待确认删除(单条或批量)
@@ -74,10 +75,10 @@ async function doDelete() {
     <div v-if="selected.size" class="batch-bar card">
       <strong>已选 {{ selected.size }} 项</strong>
       <div class="spacer" />
-      <button class="btn sm" :disabled="busy" @click="batchAct('pause')">⏸ 暂停</button>
-      <button class="btn sm" :disabled="busy" @click="batchAct('resume')">▶ 恢复</button>
-      <button class="btn sm" :disabled="busy" @click="batchAct('resume')">↻ 重试</button>
-      <button class="btn sm danger" :disabled="busy" @click="batchAct('delete')">🗑 删除</button>
+      <button class="btn sm" :disabled="busy" @click="batchAct('pause')"><Icon name="pause" :size="13" /> 暂停</button>
+      <button class="btn sm" :disabled="busy" @click="batchAct('resume')"><Icon name="play" :size="13" /> 恢复</button>
+      <button class="btn sm" :disabled="busy" @click="batchAct('resume')"><Icon name="refresh" :size="13" /> 重试</button>
+      <button class="btn sm danger" :disabled="busy" @click="batchAct('delete')"><Icon name="trash" :size="13" /> 删除</button>
     </div>
 
     <div v-if="!store.active.length" class="muted" style="margin: 10px 0 24px;">没有进行中的任务</div>
@@ -107,9 +108,9 @@ async function doDelete() {
               <td class="num">{{ t.status === 'downloading' ? fmtEta(t.eta) : '—' }}</td>
               <td class="num">{{ t.seeds ?? 0 }} / {{ t.peers ?? 0 }}</td>
               <td class="ops">
-                <button v-if="t.status === 'downloading'" class="icon-btn" title="暂停" @click="act(t, 'pause')">⏸</button>
-                <button v-else class="icon-btn" title="恢复" @click="act(t, 'resume')">▶</button>
-                <button class="icon-btn" title="删除" @click="askDelete(t)">🗑</button>
+                <button v-if="t.status === 'downloading'" class="icon-btn" title="暂停" @click="act(t, 'pause')"><Icon name="pause" :size="14" /></button>
+                <button v-else class="icon-btn" title="恢复" @click="act(t, 'resume')"><Icon name="play" :size="14" /></button>
+                <button class="icon-btn" title="删除" @click="askDelete(t)"><Icon name="trash" :size="14" /></button>
               </td>
             </tr>
           </tbody>
@@ -125,8 +126,8 @@ async function doDelete() {
       <div class="hist-title muted" :title="t.title_raw">{{ t.title_raw }}</div>
       <div class="spacer" />
       <span class="muted" style="font-size: 12px;" v-if="t.error_message">{{ t.error_message }}</span>
-      <button v-if="['download_error', 'submit_failed'].includes(t.status)" class="btn sm" @click="act(t, 'resume')">↻ 重试</button>
-      <button class="btn sm danger" @click="askDelete(t)">🗑 删除</button>
+      <button v-if="['download_error', 'submit_failed'].includes(t.status)" class="btn sm" @click="act(t, 'resume')"><Icon name="refresh" :size="13" /> 重试</button>
+      <button class="btn sm danger" @click="askDelete(t)"><Icon name="trash" :size="13" /> 删除</button>
     </div>
 
     <div v-if="delConfirm" class="modal-mask" @click.self="delConfirm = null">

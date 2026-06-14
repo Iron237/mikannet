@@ -4,7 +4,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Bangumi, Episode, Subscription, Torrent, TorrentEpisode, TorrentStatus
+from app.models import (Bangumi, Episode, EpisodeType, Kind, Subscription, Torrent,
+                        TorrentEpisode, TorrentStatus)
+from app.services.local_import import LOCAL_SUBGROUP_ID
 
 router = APIRouter(prefix="/api/bangumi", tags=["bangumi"])
 
@@ -14,12 +16,13 @@ def _poster_url(b: Bangumi) -> str | None:
 
 
 def _file_out(f) -> dict:
-    """视频文件展示信息:分辨率 / 字幕组 / 片源(web/BD)/ 字幕轨 / 编码 / 码率。"""
+    """视频文件展示信息:分辨率/字幕组/片源/编码/色深/HDR/码率 + 音轨(含声道)/字幕轨(含外挂)。"""
     from pathlib import PurePosixPath
     return {
         "id": f.id, "path": f.relative_path, "name": PurePosixPath(f.relative_path).name,
         "size": f.size, "resolution": f.resolution, "subgroup": f.subgroup,
-        "source": f.source, "codec": f.video_codec, "bitrate": f.bitrate,
+        "source": f.source, "codec": f.video_codec,
+        "color_depth": f.color_depth, "hdr": f.hdr, "bitrate": f.bitrate,
         "audio_tracks": f.audio_tracks, "subtitle_tracks": f.subtitle_tracks,
     }
 
@@ -72,10 +75,14 @@ def detail(bangumi_id: int, db: Session = Depends(get_db)):
     b = db.get(Bangumi, bangumi_id)
     if not b:
         raise HTTPException(404)
-    episodes = db.execute(select(Episode).where(Episode.bangumi_id == b.id)
-                          .order_by(Episode.number)).scalars().all()
+    # 正片按集号、非正片(SP/OP·ED/PV…)按类型+序号,统一排序
+    _TYPE_ORDER = {EpisodeType.REGULAR: 0, EpisodeType.SPECIAL: 1, EpisodeType.CREDITS: 2,
+                   EpisodeType.TRAILER: 3, EpisodeType.OTHER: 4}
+    episodes = db.execute(select(Episode).where(Episode.bangumi_id == b.id)).scalars().all()
+    episodes.sort(key=lambda e: (_TYPE_ORDER.get(e.type, 9),
+                                 e.number if e.number is not None else 1e9))
     eps_out = []
-    known_numbers = {ep.number for ep in episodes if ep.type.value == "EP"}
+    known_numbers = {ep.number for ep in episodes if ep.type == EpisodeType.REGULAR}
     for ep in episodes:
         torrents = db.execute(
             select(Torrent).join(TorrentEpisode)
@@ -84,20 +91,24 @@ def detail(bangumi_id: int, db: Session = Depends(get_db)):
         current = next((t for t in torrents if t.status not in
                         (TorrentStatus.SKIPPED, TorrentStatus.SUBMIT_FAILED)), None)
         eps_out.append({
-            "id": ep.id, "number": ep.number, "type": ep.type.value,
+            "id": ep.id, "number": ep.number, "type": ep.type.value, "title": ep.title,
             "status": current.status.value if current else "missing",
             "version": current.version if current else None,
             "torrent_id": current.id if current else None,
             "files": [_file_out(f) for f in (current.files if current else []) if f.is_active],
         })
-    # 缺集占位:已知总集数时,把库里没有的集号渲染为"未下载"(详情页补全入口的依据)
-    if b.eps_total:
+    # 缺集占位:仅 tv 番剧 + 已知总集数时,把库里没有的正片集号渲染为"未下载"(补全入口依据)。
+    # movie/ova 没有"正片集"概念,不补占位。
+    if b.eps_total and b.kind == Kind.TV:
+        regular = [e for e in eps_out if e["type"] == "regular"]
+        others = [e for e in eps_out if e["type"] != "regular"]
         for n in range(1, b.eps_total + 1):
             if float(n) not in known_numbers:
-                eps_out.append({"id": None, "number": float(n), "type": "EP",
+                regular.append({"id": None, "number": float(n), "type": "regular", "title": None,
                                 "status": "missing", "version": None,
                                 "torrent_id": None, "files": []})
-        eps_out.sort(key=lambda e: (e["number"] is None, e["number"]))
+        regular.sort(key=lambda e: (e["number"] is None, e["number"]))
+        eps_out = regular + others
 
     # 未匹配文件:登记进库但没解析到单集的视频(剧场版/合集/解析失败),也要展示,别让它隐身
     from app.models import VideoFile
@@ -112,18 +123,31 @@ def detail(bangumi_id: int, db: Session = Depends(get_db)):
         "id": b.id, "mikan_bangumi_id": b.mikan_bangumi_id,
         "title": b.title, "title_original": b.title_original,
         "year": b.year, "season": b.season_str, "studio": b.studio, "score": b.score,
-        "summary": b.summary, "airing_status": b.airing_status.value,
+        "summary": b.summary, "airing_status": b.airing_status.value, "kind": b.kind.value,
         "eps_total": b.eps_total, "poster": _poster_url(b),
         "backdrop": f"/data/{b.backdrop_path}" if b.backdrop_path else None,
         "bgmtv_subject_id": b.bgmtv_subject_id, "tmdb_id": b.tmdb_id,
+        "anidb_aid": b.anidb_aid,
+        "anidb_synced_at": b.anidb_synced_at.isoformat() if b.anidb_synced_at else None,
         "season_number": b.season_number or 1,
         "episodes": eps_out,
         "unmapped_files": [_file_out(f) for f in unmapped],
-        "subscriptions": [{
-            "id": s.id, "subgroup_name": s.subgroup_name, "enabled": s.enabled,
-            "exclude_batch": s.exclude_batch, "include_keywords": s.include_keywords,
-            "exclude_keywords": s.exclude_keywords,
-        } for s in subs],
+        "subscriptions": [_sub_out(s) for s in subs],
+    }
+
+
+def _sub_out(s: Subscription) -> dict:
+    """订阅源详情(详情页订阅卡):字幕组 / 规则 / RSS 健康 / 上次检查 / 本地容器标记。"""
+    is_local = s.mikan_subgroup_id == LOCAL_SUBGROUP_ID
+    return {
+        "id": s.id, "subgroup_name": s.subgroup_name, "mikan_subgroup_id": s.mikan_subgroup_id,
+        "enabled": s.enabled, "is_local": is_local,
+        "exclude_batch": s.exclude_batch, "backfill": s.backfill,
+        "include_keywords": s.include_keywords or [], "exclude_keywords": s.exclude_keywords or [],
+        "pinned_guids": s.pinned_guids or [], "blocked_guids": s.blocked_guids or [],
+        "episode_offset": s.episode_offset or 0,
+        "last_poll_ok": s.last_poll_ok, "last_poll_error": s.last_poll_error,
+        "last_checked_at": s.last_checked_at.isoformat() if s.last_checked_at else None,
     }
 
 
@@ -190,7 +214,7 @@ def batch_delete(payload: dict, db: Session = Depends(get_db)):
 
 @router.patch("/{bangumi_id}")
 def update_bangumi(bangumi_id: int, payload: dict, db: Session = Depends(get_db)):
-    """编辑番剧元数据(目前:season_number 续作季号,整理重命名用)。"""
+    """编辑番剧元数据:season_number(续作季号)/ kind(形态,手动覆盖始终优先)。"""
     b = db.get(Bangumi, bangumi_id)
     if not b:
         raise HTTPException(404)
@@ -199,8 +223,55 @@ def update_bangumi(bangumi_id: int, payload: dict, db: Session = Depends(get_db)
             b.season_number = max(0, int(payload["season_number"]))
         except (TypeError, ValueError):
             raise HTTPException(400, "season_number 非法") from None
+    if "kind" in payload:
+        try:
+            b.kind = Kind(str(payload["kind"]).lower())
+        except ValueError:
+            raise HTTPException(400, "kind 非法(tv/movie/ova)") from None
     db.commit()
-    return {"ok": True, "season_number": b.season_number}
+    return {"ok": True, "season_number": b.season_number, "kind": b.kind.value}
+
+
+@router.post("/{bangumi_id}/sync-anidb")
+def sync_anidb(bangumi_id: int, db: Session = Depends(get_db)):
+    """按需同步 AniDB 剧集表(剧集类型/标题/形态)。需在设置里启用 AniDB。"""
+    from app.services.anidb_service import sync_episodes
+    b = db.get(Bangumi, bangumi_id)
+    if not b:
+        raise HTTPException(404)
+    result = sync_episodes(db, b, force=True)
+    db.commit()
+    if not result.get("ok") and result.get("reason") == "disabled":
+        raise HTTPException(400, "AniDB 未启用(在设置里开启并填 client 名)")
+    return result
+
+
+@router.get("/{bangumi_id}/anidb-candidates")
+def anidb_candidates(bangumi_id: int, query: str = "", db: Session = Depends(get_db)):
+    """AniDB 候选(手动绑 aid 用)。不传 query 用番剧原名/中文名搜。"""
+    from app.services.anidb_service import search_candidates
+    b = db.get(Bangumi, bangumi_id)
+    if not b:
+        raise HTTPException(404)
+    q = query.strip() or b.title_original or b.title
+    return {"query": q, "candidates": search_candidates(q)}
+
+
+@router.post("/{bangumi_id}/bind-anidb")
+def bind_anidb(bangumi_id: int, payload: dict, db: Session = Depends(get_db)):
+    """手动绑定 AniDB aid,并立即同步。"""
+    from app.services.anidb_service import sync_episodes
+    b = db.get(Bangumi, bangumi_id)
+    if not b:
+        raise HTTPException(404)
+    aid = payload.get("aid")
+    if not aid:
+        raise HTTPException(400, "缺少 aid")
+    b.anidb_aid = int(aid)
+    b.anidb_synced_at = None   # 强制重新同步
+    result = sync_episodes(db, b, force=True)
+    db.commit()
+    return {"ok": True, "anidb_aid": b.anidb_aid, **result}
 
 
 @router.post("/{bangumi_id}/rebind")

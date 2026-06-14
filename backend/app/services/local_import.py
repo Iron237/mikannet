@@ -84,9 +84,9 @@ def scan(source: str) -> list[dict]:
     for title, files in groups.items():
         mikan = None
         try:
-            hits = mikan_client.search(title)
-            if hits:
-                mikan = {"mikan_bangumi_id": hits[0].mikan_bangumi_id, "title": hits[0].title}
+            hit = mikan_client.search_best(title)
+            if hit:
+                mikan = {"mikan_bangumi_id": hit.mikan_bangumi_id, "title": hit.title}
         except Exception as e:  # noqa: BLE001
             log.warning("Mikan 匹配失败 %s: %s", title, e)
         out.append({
@@ -122,9 +122,9 @@ def _run_scan(source: str) -> None:
             scan_state["current"] = title
             mikan = None
             try:
-                hits = mikan_client.search(title)
-                if hits:
-                    mikan = {"mikan_bangumi_id": hits[0].mikan_bangumi_id, "title": hits[0].title}
+                hit = mikan_client.search_best(title)
+                if hit:
+                    mikan = {"mikan_bangumi_id": hit.mikan_bangumi_id, "title": hit.title}
             except Exception as e:  # noqa: BLE001
                 log.warning("Mikan 匹配失败 %s: %s", title, e)
             out.append({
@@ -264,10 +264,10 @@ def _import_group(group: dict) -> str:
             if len(p.episodes) == 1:
                 n = p.episodes[0]
                 ep = db.execute(select(Episode).where(
-                    Episode.bangumi_id == bangumi.id, Episode.type == EpisodeType.EP,
+                    Episode.bangumi_id == bangumi.id, Episode.type == EpisodeType.REGULAR,
                     Episode.number == n)).scalar_one_or_none()
                 if ep is None:
-                    ep = Episode(bangumi_id=bangumi.id, number=n, type=EpisodeType.EP)
+                    ep = Episode(bangumi_id=bangumi.id, number=n, type=EpisodeType.REGULAR)
                     db.add(ep)
                     db.flush()
                 vf.episode_id = ep.id

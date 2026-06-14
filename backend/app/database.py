@@ -69,10 +69,16 @@ def _migrate_columns() -> None:
                          ("last_poll_ok", "BOOLEAN DEFAULT 1"),
                          ("last_poll_error", "TEXT")],
         "bangumi": [("air_weekday", "INTEGER"),
-                    ("season_number", "INTEGER DEFAULT 1")],
+                    ("season_number", "INTEGER DEFAULT 1"),
+                    ("anidb_aid", "INTEGER"),
+                    ("anidb_synced_at", "DATETIME"),
+                    ("kind", "VARCHAR(8) DEFAULT 'TV'")],   # SQLAlchemy 存 Enum 名:TV/MOVIE/OVA
         "torrent": [("stalled_since", "DATETIME")],
+        "episode": [("anidb_eid", "INTEGER")],
         "video_file": [("subgroup", "VARCHAR(128)"),
-                       ("source", "VARCHAR(32)")],
+                       ("source", "VARCHAR(32)"),
+                       ("color_depth", "VARCHAR(8)"),
+                       ("hdr", "VARCHAR(16)")],
     }
     with engine.connect() as conn:
         for table, cols in additions.items():
@@ -81,3 +87,18 @@ def _migrate_columns() -> None:
                 if name not in existing:
                     conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
         conn.commit()
+        _migrate_episode_type(conn)
+
+
+def _migrate_episode_type(conn) -> None:
+    """剧集类型枚举重整(ADR-0003):旧名 → 新名。SQLAlchemy 以 Enum 成员名持久化。
+
+    EP→REGULAR、SP→SPECIAL;旧作品级 OVA/MOVIE 在番剧内无干净映射,归 SPECIAL(几乎不存在)。
+    番剧本身的形态由新增的 bangumi.kind 表达。幂等:只动旧值。
+    """
+    remap = {"EP": "REGULAR", "SP": "SPECIAL", "OVA": "SPECIAL", "MOVIE": "SPECIAL"}
+    existing = {r[0] for r in conn.exec_driver_sql("SELECT DISTINCT type FROM episode")}
+    for old, new in remap.items():
+        if old in existing:
+            conn.exec_driver_sql("UPDATE episode SET type = ? WHERE type = ?", (new, old))
+    conn.commit()

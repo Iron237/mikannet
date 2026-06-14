@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onUnmounted, ref } from 'vue'
 import { api } from '../api'
+import Icon from './Icon.vue'
 
 const emit = defineEmits(['close'])
 
@@ -79,7 +80,7 @@ onUnmounted(() => { clearTimeout(pollTimer); clearTimeout(scanTimer) })
       <div class="row" style="margin-bottom: 10px;">
         <h3>导入本地番剧</h3>
         <div class="spacer" />
-        <button class="btn sm" @click="emit('close')">✕</button>
+        <button class="btn sm" @click="emit('close')"><Icon name="close" :size="13" /></button>
       </div>
       <p class="muted" style="font-size: 12.5px; margin-bottom: 12px;">
         扫描目录里的视频文件,按作品自动分组并匹配蜜柑番剧;确认后**移动**到
@@ -91,8 +92,8 @@ onUnmounted(() => { clearTimeout(pollTimer); clearTimeout(scanTimer) })
       </p>
 
       <div class="row" style="margin-bottom: 12px; flex-wrap: wrap;">
-        <button class="btn sm" @click="path = '/import'">📁 本机磁盘</button>
-        <button class="btn sm" @click="path = '/import-nas'">🗄 NAS</button>
+        <button class="btn sm" @click="path = '/import'"><Icon name="folder" :size="13" /> 本机磁盘</button>
+        <button class="btn sm" @click="path = '/import-nas'"><Icon name="database" :size="13" /> NAS</button>
         <input v-model="path" class="input" placeholder="/import 或 /import-nas 或粘贴 Win/NAS 路径" />
         <button class="btn primary" :disabled="scanning" @click="doScan">
           {{ scanning ? '扫描中…' : '扫描' }}
@@ -149,8 +150,8 @@ onUnmounted(() => { clearTimeout(pollTimer); clearTimeout(scanTimer) })
 
       <div v-if="status" class="card" style="margin-top: 10px; padding: 12px; font-size: 12.5px;">
         <div>{{ status.running ? '导入中…' : '导入完成' }} {{ status.done }}/{{ status.total }}</div>
-        <div v-for="s in status.imported" :key="s" class="muted">✓ {{ s }}</div>
-        <div v-for="e in status.errors" :key="e" style="color: var(--red);">✕ {{ e }}</div>
+        <div v-for="s in status.imported" :key="s" class="muted"><Icon name="check" :size="12" /> {{ s }}</div>
+        <div v-for="e in status.errors" :key="e" style="color: var(--red);"><Icon name="close" :size="12" /> {{ e }}</div>
       </div>
     </div>
   </div>

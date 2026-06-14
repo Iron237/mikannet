@@ -26,19 +26,21 @@ class ParsedTitle:
     resolution: str | None = None
     group: str | None = None
     source: str | None = None      # "Web" | "BD"(片源,见 _detect_source)
+    # 剧集类型,对齐 EpisodeType 枚举值(regular/special/credits/trailer/other)。见 _detect_ep_type
+    ep_type: str = "regular"
     confidence: float = 0.0
 
     def to_dict(self) -> dict:
         return {"episodes": self.episodes, "version": self.version, "is_batch": self.is_batch,
                 "resolution": self.resolution, "group": self.group, "source": self.source,
-                "confidence": self.confidence}
+                "ep_type": self.ep_type, "confidence": self.confidence}
 
     @classmethod
     def from_dict(cls, d: dict) -> "ParsedTitle":
         return cls(episodes=d.get("episodes") or [], version=d.get("version", 1),
                    is_batch=d.get("is_batch", False), resolution=d.get("resolution"),
                    group=d.get("group"), source=d.get("source"),
-                   confidence=d.get("confidence", 0.0))
+                   ep_type=d.get("ep_type", "regular"), confidence=d.get("confidence", 0.0))
 
 
 # ---- 预处理 ----------------------------------------------------------------
@@ -75,6 +77,36 @@ _SOURCE_WEB = re.compile(
     r"WEB-?DL|WEB-?Rip|\bWEB\b|Baha|Bilibili|B-?Global|BGlobal|B站|哔哩|"
     r"Crunchyroll|\bCR\b|AMZN|Amazon|Netflix|\bNF\b|ABEMA|Sentai|Viu|iQIYI|爱奇艺|Funimation",
     re.I)
+# 剧集类型识别(对齐 EpisodeType)。按特异性排序,命中即返回。
+# CREDITS 最先(NCOP/NCED 里含 OP/ED,且最明确);TRAILER 次之;SPECIAL/剧场版;OTHER 兜底。
+_EP_CREDITS = re.compile(
+    r"\bNC[\s_]?(?:OP|ED)\d*\b|\b(?:OP|ED)\d{1,2}\b|\[\s*(?:OP|ED|NCOP|NCED)\s*\]|"
+    r"Creditless|片头|片頭|片尾|無テロップ|ノンクレジット", re.I)
+_EP_TRAILER = re.compile(r"\bPV\d*\b|\bCM\d*\b|Trailer|Teaser|预告|預告|\bPreview\b", re.I)
+# 强特典标记:整条发布本身就是特典单元(数字是它自身序号,不是正片集号)
+_EP_SPECIAL_STRONG = re.compile(
+    r"\bSP\d{0,2}\b|\[\s*SP\s*\]|\bOVA\d*\b|\bOAD\d*\b|OAV|剧场版|劇場版|\bMovie\b|\bSpecial\b", re.I)
+# 弱特典描述:可能只是修饰某一正片集(如哆啦A梦「[109]…特别篇…」仍是正片第 109 话)
+_EP_SPECIAL_WEAK = re.compile(r"特别篇|特別篇|特典|番外|总集篇|總集篇|映像特典", re.I)
+# 剧场版/Movie 在番剧内无正片集号 → 归 SPECIAL(番剧整体形态另由 Bangumi.kind 表达)
+_EP_SPECIAL = re.compile(_EP_SPECIAL_STRONG.pattern + "|" + _EP_SPECIAL_WEAK.pattern, re.I)
+_EP_OTHER = re.compile(
+    r"\bMenu\b|\bLogo\b|\bBonus\b|\bSample\b|花絮|访谈|訪談|\bMAD\b|Interview|Web\s?预览", re.I)
+
+
+def _detect_ep_type(t: str) -> str:
+    """标题 → 剧集类型(regular/special/credits/trailer/other)。判不出 → regular。"""
+    if _EP_CREDITS.search(t):
+        return "credits"
+    if _EP_TRAILER.search(t):
+        return "trailer"
+    if _EP_SPECIAL.search(t):
+        return "special"
+    if _EP_OTHER.search(t):
+        return "other"
+    return "regular"
+
+
 # 字幕组兜底:首个方括号内容
 _FIRST_BRACKET = re.compile(r"^\[([^\]]{2,40})\]")
 # 方括号内的独立集号:[02]/[04]/[123](括号内只有 1-3 位数字)
@@ -109,11 +141,16 @@ def _detect_source(t: str) -> str | None:
     return None
 
 
+def detect_source(text: str) -> str | None:
+    """公开版:对任意文本(文件名/路径段/文件夹名)判定片源。库扫描的文件夹上下文用。"""
+    return _detect_source(_preprocess(text or ""))
+
+
 def _parse_rules(title: str) -> ParsedTitle:
     raw = title
     t = _preprocess(raw)
     result = ParsedTitle(resolution=_detect_resolution(t), version=_detect_version(t),
-                         source=_detect_source(t))
+                         source=_detect_source(t), ep_type=_detect_ep_type(t))
 
     # 字幕组:先用 anitopy,后面兜底
     ani = anitopy.parse(t) or {}
@@ -196,6 +233,16 @@ def _parse_rules(title: str) -> ParsedTitle:
 def parse(title: str) -> ParsedTitle:
     """规则解析;低置信度时(<0.5)尝试 LLM 兜底(需在设置里启用)。"""
     result = _parse_rules(title)
+    # 解析后修正(压住误判):
+    # 1) 仅弱特典描述(特别篇/特典/番外…)且带明确正片集号时,集号说了算 → 让位给正片
+    #    (哆啦A梦「[109]…特别篇…」是正片第 109 话)。强标记(SP01/OVA/剧场版/OP·ED/PV)不让位。
+    if result.ep_type in ("special", "other") and not result.is_batch \
+            and len(result.episodes) == 1 and result.episodes[0] < 1900 \
+            and not _EP_SPECIAL_STRONG.search(_preprocess(title)):
+        result.ep_type = "regular"
+    # 2) 非正片里抽到的「年份」不是集号(如「剧场版 2023」≠ EP2023)→ 丢弃,留空待归类。
+    if result.ep_type != "regular" and not result.is_batch:
+        result.episodes = [e for e in result.episodes if not 1900 <= e <= 2099]
     if result.confidence < 0.5:
         try:
             from app.clients.llm import parse_title as _llm

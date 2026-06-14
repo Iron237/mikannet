@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, onUnmounted, ref } from 'vue'
 import { api } from '../api'
+import Icon from '../components/Icon.vue'
 
 const LEVELS = ['ALL', 'INFO', 'WARNING', 'ERROR', 'DEBUG']
 const level = ref('ALL')
@@ -44,7 +45,7 @@ onUnmounted(() => clearInterval(timer))
       <button class="btn sm" :class="{ primary: paused }" @click="paused = !paused">
         {{ paused ? '已暂停' : '实时' }}
       </button>
-      <button class="btn sm" @click="copyAll">📋 复制</button>
+      <button class="btn sm" @click="copyAll"><Icon name="copy" :size="13" /> 复制</button>
     </div>
 
     <div class="tabs">
@@ -69,7 +70,7 @@ onUnmounted(() => clearInterval(timer))
       <h4 style="margin: 0 0 10px;">历史归档(重启时压缩,全部保留)</h4>
       <div class="arch">
         <a v-for="a in archives" :key="a" class="btn sm" :href="`/api/logs/archives/${a}`" download>
-          ⬇ {{ a }}
+          <Icon name="download" :size="13" /> {{ a }}
         </a>
       </div>
     </div>

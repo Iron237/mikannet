@@ -82,7 +82,7 @@ def organize_torrent(db: Session, t: Torrent) -> None:
         ep = db.get(Episode, vf.episode_id)
         if ep is None:
             continue
-        season_n = (b.season_number or 1) if ep.type == EpisodeType.EP else 0
+        season_n = (b.season_number or 1) if ep.type == EpisodeType.REGULAR else 0
         ext = Path(vf.relative_path).suffix
         new_name = f"{show} S{season_n:02d}E{_epfmt(ep.number)}{ext}"
         new_rel_sp = f"Season {season_n:02d}/{new_name}"

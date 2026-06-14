@@ -20,17 +20,20 @@ from app.config import settings
 from app.database import db_session
 from app.models import (Bangumi, Episode, EpisodeType, Subscription, Torrent,
                         TorrentEpisode, TorrentStatus, VideoFile)
-from app.parsers.title_parser import parse
+from app.parsers.title_parser import detect_source, parse
 from app.services import media_probe
 from app.services.local_import import LOCAL_SUBGROUP_ID
 
 log = logging.getLogger(__name__)
 
 state = {"running": False, "phase": "", "done": 0, "total": 0,
-         "current": "", "registered": 0, "matched": [], "unmatched": [], "error": None}
+         "current": "", "registered": 0, "matched": [], "unmatched": [], "skipped": 0,
+         "error": None}
 
 _ILLEGAL = re.compile(r'[<>:"/\\|?*]')
 _NORM = re.compile(r"[\s·:：!！?？,，.。\-—_~、]+")
+# 裸盘结构(蓝光 BDMV/STREAM、DVD VIDEO_TS):整盘,不逐文件当集登记
+_RAW_DISC_DIRS = {"BDMV", "STREAM", "VIDEO_TS"}
 
 
 def _safe(name: str) -> str:
@@ -62,18 +65,18 @@ def _match_or_create(db, folder: str) -> Bangumi | None:
     b = exact.get(_safe(folder)) or norm.get(_norm(folder))
     if b is not None:
         return b
-    # 匹配不到 → Mikan 搜索创建(让库自动补全这部番剧)
+    # 匹配不到 → Mikan 容错搜索创建(让库自动补全这部番剧)
     try:
-        hits = mikan_client.search(folder)
+        hit = mikan_client.search_best(folder)
     except Exception as e:  # noqa: BLE001
         log.warning("库扫描:Mikan 搜索 %s 失败: %s", folder, e)
         return None
-    if not hits:
+    if not hit:
         return None
-    mid = hits[0].mikan_bangumi_id
+    mid = hit.mikan_bangumi_id
     b = db.execute(select(Bangumi).where(Bangumi.mikan_bangumi_id == mid)).scalar_one_or_none()
     if b is None:
-        b = Bangumi(mikan_bangumi_id=mid, title=hits[0].title or folder)
+        b = Bangumi(mikan_bangumi_id=mid, title=hit.title or folder)
         db.add(b)
         db.flush()
         enrich_bangumi(db, b)
@@ -105,37 +108,54 @@ def _container_torrent(db, b: Bangumi) -> Torrent:
     return t
 
 
-def _register_file(db, b: Bangumi, t: Torrent, rel: str, abspath: Path) -> bool:
-    """就地登记一个视频文件为 VideoFile(+ 剧集映射 + ffprobe)。已登记返回 False。"""
+def _map_episode(db, b: Bangumi, t: Torrent, p) -> int | None:
+    """解析结果 → episode_id(+ TorrentEpisode)。按 ep_type 归类,非正片不占正片集号。"""
+    ep_type = (EpisodeType(p.ep_type)
+               if p.ep_type in EpisodeType._value2member_map_ else EpisodeType.REGULAR)
+    if ep_type == EpisodeType.REGULAR:
+        if len(p.episodes) != 1 or p.episodes[0] <= 0:
+            return None       # 解析不出单集 → 留作「其他文件」
+        number = p.episodes[0]
+    else:
+        number = p.episodes[0] if len(p.episodes) == 1 else None
+    q = select(Episode).where(Episode.bangumi_id == b.id, Episode.type == ep_type)
+    q = q.where(Episode.number == number) if number is not None else q.where(Episode.number.is_(None))
+    ep = db.execute(q).scalars().first()
+    if ep is None:
+        ep = Episode(bangumi_id=b.id, number=number, type=ep_type)
+        db.add(ep)
+        db.flush()
+    if not db.get(TorrentEpisode, (t.id, ep.id)):
+        db.add(TorrentEpisode(torrent_id=t.id, episode_id=ep.id))
+    return ep.id
+
+
+def _register_file(db, b: Bangumi, t: Torrent, rel: str, abspath: Path,
+                   folder_source: str | None) -> bool:
+    """就地登记一个视频文件为 VideoFile(+ 剧集映射 + ffprobe)。已登记返回 False。
+
+    片源:文件名优先,判不出则继承文件夹上下文(夹名含 BDRip → 内部成片标 BD)。
+    """
     exists = db.execute(select(VideoFile.id).where(
         VideoFile.relative_path == rel)).first()
     if exists:
         return False
     p = parse(abspath.name)
-    vf = VideoFile(torrent_id=t.id, relative_path=rel, subgroup=p.group, source=p.source)
+    source = p.source or folder_source
+    vf = VideoFile(torrent_id=t.id, relative_path=rel, subgroup=p.group, source=source)
     try:
         vf.size = abspath.stat().st_size
     except OSError:
         pass
     db.add(vf)
     db.flush()
-    if len(p.episodes) == 1:
-        n = p.episodes[0]
-        if n > 0:
-            ep = db.execute(select(Episode).where(
-                Episode.bangumi_id == b.id, Episode.type == EpisodeType.EP,
-                Episode.number == n)).scalar_one_or_none()
-            if ep is None:
-                ep = Episode(bangumi_id=b.id, number=n, type=EpisodeType.EP)
-                db.add(ep)
-                db.flush()
-            vf.episode_id = ep.id
-            if not db.get(TorrentEpisode, (t.id, ep.id)):
-                db.add(TorrentEpisode(torrent_id=t.id, episode_id=ep.id))
+    vf.episode_id = _map_episode(db, b, t, p)
     try:
         r = media_probe.probe(abspath)
         vf.resolution = r.resolution
         vf.video_codec = r.video_codec
+        vf.color_depth = r.color_depth
+        vf.hdr = r.hdr
         vf.bitrate = r.bitrate
         vf.audio_tracks = r.audio_tracks
         vf.subtitle_tracks = r.subtitle_tracks
@@ -152,7 +172,7 @@ def _register_file(db, b: Bangumi, t: Torrent, rel: str, abspath: Path) -> bool:
 def _run() -> None:
     root = Path(settings.download_root_local)
     state.update(running=True, phase="扫描下载根目录", done=0, total=0, current="",
-                 registered=0, matched=[], unmatched=[], error=None)
+                 registered=0, matched=[], unmatched=[], skipped=0, error=None)
     try:
         if not root.is_dir():
             raise FileNotFoundError(f"下载根目录不可访问: {root}")
@@ -160,9 +180,22 @@ def _run() -> None:
         state["total"] = len(folders)
         for idx, folder in enumerate(folders, 1):
             state.update(done=idx, current=folder.name)
-            vids = [p for p in folder.rglob("*") if p.is_file() and media_probe.is_video(p)]
+            all_files = [p for p in folder.rglob("*") if p.is_file() and media_probe.is_video(p)]
+            # 裸盘(BDMV/STREAM、VIDEO_TS):整盘结构,不逐 m2ts 当集登记 → 跳过
+            vids, raw = [], 0
+            for vp in all_files:
+                parts = {seg.upper() for seg in vp.relative_to(folder).parts}
+                if parts & _RAW_DISC_DIRS:
+                    raw += 1
+                else:
+                    vids.append(vp)
+            state["skipped"] += raw
+            if raw:
+                log.info("库扫描:%s 内跳过 %s 个裸盘视频(BDMV/VIDEO_TS)", folder.name, raw)
             if not vids:
                 continue
+            # 文件夹上下文片源:夹名整体看一遍(BDRip 合集夹 → 内部成片继承 BD)
+            folder_source = detect_source(folder.name)
             try:
                 with db_session() as db:
                     b = _match_or_create(db, folder.name)
@@ -173,8 +206,10 @@ def _run() -> None:
                     n = 0
                     for vp in vids:
                         rel = str(vp.relative_to(root)).replace("\\", "/")
+                        # 逐文件再看其所在子目录(如 .../SPs/、.../BDRip/)叠加上下文片源
+                        sub_source = detect_source("/".join(vp.relative_to(folder).parts[:-1]))
                         try:
-                            if _register_file(db, b, t, rel, vp):
+                            if _register_file(db, b, t, rel, vp, sub_source or folder_source):
                                 n += 1
                         except Exception as e:  # noqa: BLE001 — 单文件失败不拖垮整夹
                             log.warning("库扫描登记失败 %s: %s", vp, e)

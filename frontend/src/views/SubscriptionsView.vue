@@ -4,6 +4,7 @@ import { api } from '../api'
 import EditSubscriptionModal from '../components/EditSubscriptionModal.vue'
 import LocalImportModal from '../components/LocalImportModal.vue'
 import SubscribeWizard from '../components/SubscribeWizard.vue'
+import Icon from '../components/Icon.vue'
 
 const subs = ref([])
 const showWizard = ref(false)
@@ -99,17 +100,17 @@ onUnmounted(() => { clearTimeout(pollTimer); clearTimeout(allTimer) })
         {{ allSelected ? '取消全选' : '全选' }}
       </button>
       <button v-if="subs.length" class="btn sm" :disabled="!selected.size" @click="clearSel">清空选择</button>
-      <button class="btn" @click="showLocalImport = true">📂 导入本地番剧</button>
-      <button class="btn" @click="showImportAll = true">🗂 蜜柑订阅入库</button>
-      <button class="btn" @click="showImport = true">⇪ 导入蜜柑订阅</button>
-      <button class="btn primary" @click="showWizard = true">＋ 添加订阅</button>
+      <button class="btn" @click="showLocalImport = true"><Icon name="folder" :size="14" /> 导入本地番剧</button>
+      <button class="btn" @click="showImportAll = true"><Icon name="folder-in" :size="14" /> 蜜柑订阅入库</button>
+      <button class="btn" @click="showImport = true"><Icon name="download" :size="14" /> 导入蜜柑订阅</button>
+      <button class="btn primary" @click="showWizard = true"><Icon name="plus" :size="14" /> 添加订阅</button>
     </div>
 
     <div v-if="selected.size" class="batch-bar card">
       <strong>已选 {{ selected.size }} 个订阅</strong>
       <div class="spacer" />
       <button class="btn sm danger" :disabled="busy" @click="delConfirm = { ids: [...selected] }">
-        🗑 批量删除
+        <Icon name="trash" :size="13" /> 批量删除
       </button>
     </div>
 
@@ -136,11 +137,11 @@ onUnmounted(() => { clearTimeout(pollTimer); clearTimeout(allTimer) })
         <span class="muted" style="font-size: 12px;" v-if="s.last_checked_at">
           上次检查 {{ new Date(s.last_checked_at + 'Z').toLocaleString('zh-CN') }}
         </span>
-        <button class="btn sm" @click="editing = s">✎ 编辑规则</button>
+        <button class="btn sm" @click="editing = s"><Icon name="edit" :size="13" /> 编辑规则</button>
         <button class="btn sm" :class="{ primary: s.enabled }" @click="toggle(s)">
           {{ s.enabled ? '已启用' : '已停用' }}
         </button>
-        <button class="btn sm danger" @click="delConfirm = { ids: [s.id] }">🗑 删除</button>
+        <button class="btn sm danger" @click="delConfirm = { ids: [s.id] }"><Icon name="trash" :size="13" /> 删除</button>
       </div>
     </div>
 
@@ -182,7 +183,7 @@ onUnmounted(() => { clearTimeout(pollTimer); clearTimeout(allTimer) })
             <span v-if="allStatus.errors"> · 失败 {{ allStatus.errors }}</span>
           </div>
           <div v-if="allStatus.error" style="color: var(--red);">{{ allStatus.error }}</div>
-          <div v-for="c in allStatus.created" :key="c" class="muted">✓ {{ c }}</div>
+          <div v-for="c in allStatus.created" :key="c" class="muted"><Icon name="check" :size="12" /> {{ c }}</div>
         </div>
         <div class="row" style="justify-content: flex-end; margin-top: 10px;">
           <button class="btn" @click="showImportAll = false">关闭</button>
@@ -217,7 +218,7 @@ onUnmounted(() => { clearTimeout(pollTimer); clearTimeout(allTimer) })
             新建 {{ importStatus.created.length }} 个订阅
             <span v-if="importStatus.errors">,失败 {{ importStatus.errors }}</span>
           </div>
-          <div v-for="c in importStatus.created" :key="c" class="muted">✓ {{ c }}</div>
+          <div v-for="c in importStatus.created" :key="c" class="muted"><Icon name="check" :size="12" /> {{ c }}</div>
         </div>
         <div class="row" style="justify-content: flex-end;">
           <button class="btn" @click="showImport = false">关闭</button>

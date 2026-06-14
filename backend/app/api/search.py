@@ -34,8 +34,30 @@ def _chips(title: str, group_hint: str | None) -> dict:
         "episode": episode_label(p),
         "version": p.version,
         "is_batch": p.is_batch,
+        "source": p.source,                 # Web / BD
+        "ep_type": p.ep_type,               # regular/special/credits/trailer/other
         "subtitle_tags": detect_subtitle_tags(title),
     }
+
+
+def _group_caps(titles: list[str]) -> dict:
+    """字幕组能力摘要:聚合该组全部发布的分辨率/字幕语言/片源/有无合集(向导第 2 步 chips)。"""
+    from app.parsers.title_parser import detect_subtitle_tags, parse
+    resolutions, langs, sources = {}, {}, {}
+    has_batch = False
+    for t in titles:
+        p = parse(t)
+        if p.resolution:
+            resolutions[p.resolution] = resolutions.get(p.resolution, 0) + 1
+        if p.source:
+            sources[p.source] = sources.get(p.source, 0) + 1
+        for lang in detect_subtitle_tags(t):
+            langs[lang] = langs.get(lang, 0) + 1
+        has_batch = has_batch or p.is_batch
+    # 按出现频次降序,保留标签
+    pick = lambda d: [k for k, _ in sorted(d.items(), key=lambda kv: -kv[1])]   # noqa: E731
+    return {"resolutions": pick(resolutions), "subtitle_langs": pick(langs),
+            "sources": pick(sources), "has_batch": has_batch}
 
 
 def _torrent_dict(t) -> dict:
@@ -102,7 +124,10 @@ def bangumi_detail(mikan_bangumi_id: int):
         "subgroups": [{
             "subgroup_id": g.subgroup_id, "name": g.name,
             "torrent_count": len(g.torrents),
-            "recent_titles": [t.title for t in g.torrents[:5]],
+            "caps": _group_caps([t.title for t in g.torrents]),
+            "recent_titles": [t.title for t in g.torrents[:5]],   # 兼容旧前端
+            "recent": [{"title": t.title, "chips": _chips(t.title, g.name)}
+                       for t in g.torrents[:5]],
         } for g in d.subgroups],
     }
 
@@ -126,6 +151,7 @@ def preview(bangumi_id: int, subgroup_id: str, include: str = "", exclude: str =
             "published_at": it.published_at.isoformat() if it.published_at else None,
             "episodes": parsed.episodes[:2] + (["…"] if len(parsed.episodes) > 2 else []),
             "is_batch": parsed.is_batch, "version": parsed.version,
+            "chips": _chips(it.title, None),    # 集号/分辨率/字幕语言/片源/合集/版本(tag 化展示)
             "pass": ok, "reason": reason,
         })
     out.sort(key=lambda x: x["published_at"] or "", reverse=True)

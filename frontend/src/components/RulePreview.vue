@@ -1,6 +1,8 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { api, fmtSize } from '../api'
+import Icon from './Icon.vue'
+import Chips from './Chips.vue'
 
 const props = defineProps({
   bangumiId: { type: Number, required: true },     // mikan_bangumi_id
@@ -116,7 +118,7 @@ onMounted(load)
       <button class="btn sm" @click="bulk('none')">清空</button>
       <button class="btn sm" @click="bulk('rule')">按规则</button>
       <button class="btn sm" :disabled="healthLoading" @click="checkHealth">
-        {{ healthLoading ? '探测中…' : '⚡ 检测活跃度' }}
+        <Icon name="zap" :size="13" /> {{ healthLoading ? '探测中…' : '检测活跃度' }}
       </button>
     </div>
 
@@ -129,15 +131,14 @@ onMounted(load)
     </div>
 
     <p v-if="!loading && items.length && !items.some(isChecked)" class="warn">
-      ⚠ 当前没有任何源被选中 — 不会下载任何内容
+      <Icon name="alert" :size="14" /> 当前没有任何源被选中 — 不会下载任何内容
     </p>
     <div class="preview-list">
       <label v-for="p in items" :key="p.guid" class="preview-item"
-             :class="{ off: !isChecked(p) }">
+             :class="{ off: !isChecked(p) }" :title="p.title">
         <input type="checkbox" :checked="isChecked(p)" @change="toggle(p)" />
-        <span class="p-title" :title="p.title">{{ p.title }}</span>
-        <span v-if="p.is_batch" class="tag">合集</span>
-        <span v-if="p.version > 1" class="tag accent">v{{ p.version }}</span>
+        <Chips v-if="p.chips" :chips="p.chips" />
+        <span v-else class="p-title">{{ p.title }}</span>
         <span v-if="overrides[p.guid] !== undefined" class="tag blue">手动</span>
         <span v-if="health[p.torrent_url]" class="tag"
               :class="(health[p.torrent_url].seeders ?? 0) > 0 ? 'green' : 'red'">

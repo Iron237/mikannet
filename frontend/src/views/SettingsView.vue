@@ -23,8 +23,13 @@ const LABELS = {
   dead_torrent_hours: '坏种判定:卡住超过几小时',
   llm_enabled: '启用 LLM 兜底解析(仅低置信度调用)',
   llm_base_url: 'LLM baseURL(OpenAI 兼容)', llm_api_key: 'LLM API Key', llm_model: 'LLM 模型',
+  anidb_enabled: '启用 AniDB 剧集元数据(需注册 client 名)',
+  anidb_client_name: 'AniDB client 名(在 anidb.net 注册)',
+  anidb_client_ver: 'AniDB client 版本号',
+  anidb_search_base: 'anidb-search 地址(番剧→aid,可自托管)',
+  anidb_lang: '剧集名首选语言(zh-Hans / en / x-jat)',
 }
-const GROUP_ORDER = ['常规', '下载器', '代理', '搜索源', '整理', '坏种清理', 'LLM']
+const GROUP_ORDER = ['常规', '下载器', '代理', '搜索源', '整理', '坏种清理', 'AniDB', 'LLM']
 
 const channelMeta = {
   telegram: { name: 'Telegram Bot', fields: [['bot_token', 'Bot Token'], ['chat_id', 'Chat ID']] },
@@ -52,9 +57,9 @@ async function saveConfig() {
   try {
     const payload = Object.fromEntries(Object.entries(cfg.value).map(([k, o]) => [k, o.value]))
     const r = await api.put('/api/config', payload)
-    cfgSaved.value = `✅ 已保存并生效(${r.applied.length} 项)`
+    cfgSaved.value = `已保存并生效(${r.applied.length} 项)`
     await load()
-  } catch (e) { cfgSaved.value = '❌ ' + e.message }
+  } catch (e) { cfgSaved.value = '保存失败:' + e.message }
 }
 
 async function saveCh(ch) {
@@ -66,8 +71,8 @@ async function testCh(ch) {
   try {
     await saveCh(ch)
     await api.post(`/api/notifications/${ch.channel}/test`)
-    testResult.value = { ...testResult.value, [ch.channel]: '✅ 发送成功' }
-  } catch (e) { testResult.value = { ...testResult.value, [ch.channel]: '❌ ' + e.message } }
+    testResult.value = { ...testResult.value, [ch.channel]: '发送成功' }
+  } catch (e) { testResult.value = { ...testResult.value, [ch.channel]: '发送失败:' + e.message } }
 }
 async function pollNow() { await api.post('/api/system/poll') }
 

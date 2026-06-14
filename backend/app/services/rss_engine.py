@@ -92,10 +92,10 @@ def _ensure_episodes(db: Session, bangumi_id: int, numbers: list[float]) -> list
     eps: list[Episode] = []
     for n in numbers:
         ep = db.execute(select(Episode).where(
-            Episode.bangumi_id == bangumi_id, Episode.type == EpisodeType.EP,
+            Episode.bangumi_id == bangumi_id, Episode.type == EpisodeType.REGULAR,
             Episode.number == n)).scalar_one_or_none()
         if ep is None:
-            ep = Episode(bangumi_id=bangumi_id, number=n, type=EpisodeType.EP)
+            ep = Episode(bangumi_id=bangumi_id, number=n, type=EpisodeType.REGULAR)
             db.add(ep)
             db.flush()
         eps.append(ep)

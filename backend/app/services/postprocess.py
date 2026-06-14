@@ -32,24 +32,35 @@ def enqueue(torrent_id: int) -> None:
 
 
 def _match_episode(db: Session, t: Torrent, filename: str) -> int | None:
-    """文件名 → episode_id。单集种子直接用其关联集;合集按文件名解析定集。"""
+    """文件名 → episode_id。单集种子直接用其关联集;合集按文件名解析定集。
+
+    剧集类型(正片/OP·ED/SP/PV…)由解析器判定:非正片不占用正片集号(独立 type)。
+    """
     linked = db.execute(select(TorrentEpisode.episode_id).where(
         TorrentEpisode.torrent_id == t.id)).scalars().all()
     if len(linked) == 1 and not t.is_batch:
         return linked[0]
 
     parsed = parse(filename)
-    if len(parsed.episodes) != 1:
-        return None
     sub = t.subscription
-    number = parsed.episodes[0] - (sub.episode_offset or 0)
-    if number <= 0:
-        return None
-    ep = db.execute(select(Episode).where(
-        Episode.bangumi_id == sub.bangumi_id, Episode.type == EpisodeType.EP,
-        Episode.number == number)).scalar_one_or_none()
+    ep_type = (EpisodeType(parsed.ep_type)
+               if parsed.ep_type in EpisodeType._value2member_map_ else EpisodeType.REGULAR)
+
+    if ep_type == EpisodeType.REGULAR:
+        if len(parsed.episodes) != 1:
+            return None
+        number = parsed.episodes[0] - (sub.episode_offset or 0)
+        if number <= 0:
+            return None
+    else:
+        # 非正片:用自身小序号(SP1/OVA03)或留空;不减集数偏移
+        number = parsed.episodes[0] if len(parsed.episodes) == 1 else None
+
+    q = select(Episode).where(Episode.bangumi_id == sub.bangumi_id, Episode.type == ep_type)
+    q = q.where(Episode.number == number) if number is not None else q.where(Episode.number.is_(None))
+    ep = db.execute(q).scalars().first()
     if ep is None:
-        ep = Episode(bangumi_id=sub.bangumi_id, number=number, type=EpisodeType.EP)
+        ep = Episode(bangumi_id=sub.bangumi_id, number=number, type=ep_type)
         db.add(ep)
         db.flush()
     if ep.id not in linked:
@@ -112,6 +123,8 @@ def process_torrent(db: Session, torrent_id: int) -> None:
                 r = media_probe.probe(local)
                 vf.resolution = r.resolution
                 vf.video_codec = r.video_codec
+                vf.color_depth = r.color_depth
+                vf.hdr = r.hdr
                 vf.bitrate = r.bitrate
                 vf.audio_tracks = r.audio_tracks
                 vf.subtitle_tracks = r.subtitle_tracks

@@ -2,6 +2,8 @@
 import { onMounted, ref } from 'vue'
 import { api } from '../api'
 import RulePreview from './RulePreview.vue'
+import Icon from './Icon.vue'
+import Chips from './Chips.vue'
 
 const props = defineProps({
   // 从番剧详情页打开时预设,直接跳到选字幕组
@@ -86,7 +88,7 @@ onMounted(() => {
         <h3>添加订阅</h3>
         <span class="muted">— 第 {{ step }} / 3 步</span>
         <div class="spacer" />
-        <button class="btn sm" @click="emit('close')">✕</button>
+        <button class="btn sm" @click="emit('close')"><Icon name="close" :size="13" /></button>
       </div>
 
       <p v-if="error" style="color: var(--red); margin-bottom: 12px;">{{ error }}</p>
@@ -109,10 +111,10 @@ onMounted(() => {
         </div>
       </template>
 
-      <!-- 步骤 2:选字幕组 -->
+      <!-- 步骤 2:选字幕组(能力摘要 chips) -->
       <template v-if="step === 2">
         <div class="row" style="margin-bottom: 12px;">
-          <button v-if="!props.preset" class="btn sm" @click="step = 1">← 返回</button>
+          <button v-if="!props.preset" class="btn sm" @click="step = 1"><Icon name="arrow-left" :size="13" /> 返回</button>
           <strong>{{ picked.title }}</strong>
         </div>
         <div v-if="!detail" class="muted">加载字幕组…</div>
@@ -123,7 +125,20 @@ onMounted(() => {
               <strong>{{ g.name }}</strong>
               <span class="tag">{{ g.torrent_count }} 个种子</span>
             </div>
-            <div class="muted recent" v-for="t in g.recent_titles.slice(0, 2)" :key="t">{{ t }}</div>
+            <!-- 能力摘要:该组发布过的分辨率/字幕语言/片源/有无合集 -->
+            <div v-if="g.caps" class="caps">
+              <span v-for="r in g.caps.resolutions" :key="'r' + r" class="tag blue">{{ r }}</span>
+              <span v-for="l in g.caps.subtitle_langs" :key="'l' + l" class="tag green">{{ l }}</span>
+              <span v-for="s in g.caps.sources" :key="'s' + s" class="tag" :class="s === 'BD' ? 'accent' : ''">{{ s }}</span>
+              <span v-if="g.caps.has_batch" class="tag">含合集</span>
+              <span v-if="!g.caps.resolutions.length && !g.caps.subtitle_langs.length" class="muted" style="font-size: 11.5px;">无法解析能力</span>
+            </div>
+            <!-- 最近发布:逐条 chips(原标题移到 hover) -->
+            <div class="recent-list">
+              <div v-for="(t, i) in (g.recent || []).slice(0, 3)" :key="i" class="recent-row" :title="t.title">
+                <Chips :chips="t.chips" />
+              </div>
+            </div>
           </div>
         </div>
       </template>
@@ -131,7 +146,7 @@ onMounted(() => {
       <!-- 步骤 3:规则 + 全部源实时预览 -->
       <template v-if="step === 3">
         <div class="row" style="margin-bottom: 12px;">
-          <button class="btn sm" @click="step = 2">← 返回</button>
+          <button class="btn sm" @click="step = 2"><Icon name="arrow-left" :size="13" /> 返回</button>
           <strong>{{ picked.title }}</strong>
           <span class="tag accent">{{ group.name }}</span>
           <div class="spacer" />
@@ -196,10 +211,10 @@ onMounted(() => {
   cursor: pointer; transition: all .15s;
 }
 .group-item:hover { border-color: var(--accent); background: var(--bg-hover); }
-.recent {
-  font-size: 11.5px; white-space: nowrap; overflow: hidden;
-  text-overflow: ellipsis; margin-top: 3px;
-}
+.caps { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.recent-list { margin-top: 8px; display: flex; flex-direction: column; gap: 5px;
+  border-top: 1px dashed var(--border); padding-top: 8px; }
+.recent-row { cursor: default; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .form-grid label { font-size: 12.5px; color: var(--text-dim); display: flex; flex-direction: column; gap: 5px; }
 .preview-list {

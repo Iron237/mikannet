@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted } from 'vue'
 import { useTasksStore } from './stores/tasks'
+import Icon from './components/Icon.vue'
 
 const tasksStore = useTasksStore()
 onMounted(() => {
@@ -14,17 +15,17 @@ onMounted(() => {
     <aside class="sidebar">
       <div class="logo">🍊 Mikanarr</div>
       <nav>
-        <RouterLink to="/" class="nav-item">📚 番剧库</RouterLink>
-        <RouterLink to="/search" class="nav-item">🔍 搜索</RouterLink>
-        <RouterLink to="/calendar" class="nav-item">📅 放送表</RouterLink>
-        <RouterLink to="/subscriptions" class="nav-item">📡 订阅管理</RouterLink>
+        <RouterLink to="/" class="nav-item"><Icon name="library" :size="17" /> 番剧库</RouterLink>
+        <RouterLink to="/search" class="nav-item"><Icon name="search" :size="17" /> 搜索</RouterLink>
+        <RouterLink to="/calendar" class="nav-item"><Icon name="calendar" :size="17" /> 放送表</RouterLink>
+        <RouterLink to="/subscriptions" class="nav-item"><Icon name="rss" :size="17" /> 订阅管理</RouterLink>
         <RouterLink to="/downloads" class="nav-item">
-          ⬇️ 下载任务
+          <Icon name="download" :size="17" /> 下载任务
           <span v-if="tasksStore.active.filter(t => t.status === 'downloading').length"
                 class="badge">{{ tasksStore.active.filter(t => t.status === 'downloading').length }}</span>
         </RouterLink>
-        <RouterLink to="/logs" class="nav-item">📜 日志</RouterLink>
-        <RouterLink to="/settings" class="nav-item">⚙️ 设置</RouterLink>
+        <RouterLink to="/logs" class="nav-item"><Icon name="logs" :size="17" /> 日志</RouterLink>
+        <RouterLink to="/settings" class="nav-item"><Icon name="settings" :size="17" /> 设置</RouterLink>
       </nav>
       <div class="spacer" />
       <div class="ws-status" :class="{ ok: tasksStore.wsConnected }">

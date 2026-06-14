@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     # 外部网络:本机所有外部服务必须走代理(见 PROBE-NOTES)
     proxy_url: str = "http://127.0.0.1:10808"
     # 走代理的服务名单;qB 等本地服务永远直连
-    proxy_services: set[str] = {"mikan", "bgmtv", "tmdb", "telegram", "nyaa", "dmhy"}
+    proxy_services: set[str] = {"mikan", "bgmtv", "tmdb", "telegram", "nyaa", "dmhy", "anidb"}
 
     # Mikan(域名可配,镜像切换)
     mikan_base_url: str = "https://mikanani.me"
@@ -72,6 +72,19 @@ class Settings(BaseSettings):
     # 坏种清理:DOWNLOADING 且 0 做种 + 卡住无进度超过 N 小时 → 移除并换备选源
     dead_torrent_enabled: bool = True
     dead_torrent_hours: int = 6
+
+    # AniDB 剧集级元数据(ADR-0003;默认关,需注册 client 名)
+    anidb_enabled: bool = False
+    # 官方 HTTP API 要求每个客户端注册一个名字+版本(https://anidb.net/software/add)
+    anidb_client_name: str = ""
+    anidb_client_ver: int = 1
+    # 番剧→aid 第三方搜索(MIT,中文/拼音;base 可改为自托管)
+    anidb_search_base: str = "https://anidb.rotcool.me"
+    # 剧集名首选语言(zh-Hans→中文;判不出退romaji/英文)
+    anidb_lang: str = "zh-Hans"
+    # 可选 UDP 账号(仅歧义文件 ed2k 精配用;留空=永不哈希)
+    anidb_udp_user: str = ""
+    anidb_udp_pass: str = ""
 
     # LLM 兜底解析(OpenAI 兼容;仅低置信度时调用)
     llm_enabled: bool = False

@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api } from '../api'
+import Icon from '../components/Icon.vue'
 
 const items = ref([])
 const filter = ref('all')   // all | airing | finished
@@ -104,7 +105,10 @@ onUnmounted(() => clearTimeout(scanTimer))
     <div class="row" style="margin-bottom: 18px; flex-wrap: wrap;">
       <div class="page-title" style="margin: 0;">番剧库</div>
       <div class="spacer" />
-      <input v-model="keyword" class="input search-box" placeholder="🔍 搜索标题 / 制作公司" />
+      <div class="search-wrap">
+        <Icon name="search" :size="15" class="search-ic" />
+        <input v-model="keyword" class="input search-box" placeholder="搜索标题 / 制作公司" />
+      </div>
       <div class="filters">
         <button v-for="f in [['all','全部'],['airing','连载中'],['finished','已完结']]" :key="f[0]"
                 class="btn sm" :class="{ primary: filter === f[0] }" @click="filter = f[0]">
@@ -113,10 +117,10 @@ onUnmounted(() => clearTimeout(scanTimer))
       </div>
       <button class="btn sm" :disabled="scan?.running" @click="startScan"
               title="扫描下载根目录,把已摆好的视频就地识别进库(不移动文件)">
-        {{ scan?.running ? '扫描中…' : '📥 扫描番剧库' }}
+        <Icon name="scan" :size="14" /> {{ scan?.running ? '扫描中…' : '扫描番剧库' }}
       </button>
       <button class="btn sm" :class="{ primary: manageMode }" @click="toggleManage">
-        {{ manageMode ? '完成' : '✓ 管理' }}
+        <Icon :name="manageMode ? 'check' : 'edit'" :size="14" /> {{ manageMode ? '完成' : '管理' }}
       </button>
     </div>
 
@@ -127,9 +131,10 @@ onUnmounted(() => clearTimeout(scanTimer))
         <span class="muted">{{ scan.done }}/{{ scan.total }}</span>
         <span class="muted" v-if="scan.current">· {{ scan.current }}</span>
         <span>· 登记 {{ scan.registered }} 个文件 · 匹配 {{ scan.matched?.length || 0 }} 部</span>
+        <span class="muted" v-if="scan.skipped">· 跳过 {{ scan.skipped }} 裸盘</span>
         <span class="muted" v-if="scan.unmatched?.length">· 未匹配 {{ scan.unmatched.length }}</span>
         <div class="spacer" />
-        <button v-if="!scan.running" class="btn sm" @click="scan = null">×</button>
+        <button v-if="!scan.running" class="btn sm" @click="scan = null"><Icon name="close" :size="13" /></button>
       </template>
     </div>
 
@@ -141,7 +146,7 @@ onUnmounted(() => clearTimeout(scanTimer))
       <span class="muted" style="font-size: 12.5px;">已选 {{ selected.size }} 部</span>
       <div class="spacer" />
       <button class="btn sm danger" :disabled="!selected.size || busy"
-              @click="delConfirm = { ids: [...selected] }">🗑 批量删除</button>
+              @click="delConfirm = { ids: [...selected] }"><Icon name="trash" :size="13" /> 批量删除</button>
     </div>
 
     <div v-if="loading" class="muted">加载中…</div>
@@ -162,7 +167,7 @@ onUnmounted(() => clearTimeout(scanTimer))
             <span v-if="b.airing_status === 'airing'" class="airing-badge">连载中</span>
             <div class="ep-badge" v-if="b.eps_total">{{ b.eps_downloaded }}/{{ b.eps_total }}</div>
             <div v-if="manageMode" class="sel-check" :class="{ on: isSel(b.id) }">
-              {{ isSel(b.id) ? '✓' : '' }}
+              <Icon v-if="isSel(b.id)" name="check" :size="14" />
             </div>
           </div>
           <div class="info">
@@ -196,7 +201,9 @@ onUnmounted(() => clearTimeout(scanTimer))
 </template>
 
 <style scoped>
-.search-box { width: 240px; }
+.search-wrap { position: relative; display: inline-flex; align-items: center; }
+.search-ic { position: absolute; left: 10px; color: var(--text-dim); pointer-events: none; }
+.search-box { width: 240px; padding-left: 32px; }
 .season-group { margin-bottom: 26px; }
 .season-title {
   font-size: 15px; margin-bottom: 12px; color: var(--accent);
@@ -258,7 +265,8 @@ onUnmounted(() => clearTimeout(scanTimer))
 
 @media (max-width: 768px) {
   .grid { grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); gap: 10px; }
-  .search-box { width: 100%; order: 3; }
+  .search-wrap { width: 100%; order: 3; }
+  .search-box { width: 100%; }
   .info { padding: 7px 9px 9px; }
   .title { font-size: 12.5px; }
   .studio { display: none; }

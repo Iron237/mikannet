@@ -23,11 +23,23 @@ class AiringStatus(str, enum.Enum):
     FINISHED = "finished"    # 已完结:补番时合集为首选
 
 
+class Kind(str, enum.Enum):
+    """番剧整体形态(作品级),决定详情页布局。来源:AniDB anime type > bgm.tv platform > 手动。"""
+    TV = "tv"          # 连载剧集:详情页渲染剧集网格
+    MOVIE = "movie"    # 整部即剧场版电影(无 TV 集):影片本体 + 版本列表
+    OVA = "ova"        # 整部为 OVA/OAD
+
+
 class EpisodeType(str, enum.Enum):
-    EP = "EP"
-    SP = "SP"
-    OVA = "OVA"
-    MOVIE = "MOVIE"
+    """剧集类型(番剧内单集的性质),对齐 AniDB 剧集类型。见 CONTEXT.md「剧集类型」。
+
+    迁移:旧 EP→REGULAR、SP→SPECIAL;旧 OVA/MOVIE 是作品级,归 Kind(数据迁移在 database._migrate_columns)。
+    """
+    REGULAR = "regular"   # 正片
+    SPECIAL = "special"   # 特别篇/特典/番外(总集篇 recap 归此)
+    CREDITS = "credits"   # OP/ED,含无字幕 NCOP/NCED
+    TRAILER = "trailer"   # PV/CM/预告
+    OTHER = "other"       # 其他映像特典(parody/MAD 归此)
 
 
 class TorrentStatus(str, enum.Enum):
@@ -48,6 +60,10 @@ class Bangumi(Base):
     mikan_bangumi_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
     bgmtv_subject_id: Mapped[int | None] = mapped_column(Integer)
     tmdb_id: Mapped[int | None] = mapped_column(Integer)
+    anidb_aid: Mapped[int | None] = mapped_column(Integer)   # AniDB anime id(剧集级元数据,ADR-0003)
+    anidb_synced_at: Mapped[datetime | None] = mapped_column(DateTime)  # 上次 AniDB 剧集同步(≥24h 缓存)
+
+    kind: Mapped[Kind] = mapped_column(Enum(Kind), default=Kind.TV)   # 作品形态:tv/movie/ova
 
     title: Mapped[str] = mapped_column(String(255))            # 官方中文译名优先
     title_original: Mapped[str | None] = mapped_column(String(255))
@@ -111,7 +127,8 @@ class Episode(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     bangumi_id: Mapped[int] = mapped_column(ForeignKey("bangumi.id"))
     number: Mapped[float | None] = mapped_column(Float)   # 支持 12.5;None=未解析出
-    type: Mapped[EpisodeType] = mapped_column(Enum(EpisodeType), default=EpisodeType.EP)
+    type: Mapped[EpisodeType] = mapped_column(Enum(EpisodeType), default=EpisodeType.REGULAR)
+    anidb_eid: Mapped[int | None] = mapped_column(Integer)   # AniDB episode id(同步后回填,ADR-0003)
     title: Mapped[str | None] = mapped_column(String(255))
     air_date: Mapped[str | None] = mapped_column(String(32))
 
@@ -174,7 +191,10 @@ class VideoFile(Base):
     subgroup: Mapped[str | None] = mapped_column(String(128))   # 字幕组(从文件名解析)
     source: Mapped[str | None] = mapped_column(String(32))      # 片源 Web/BD(从文件名解析)
     video_codec: Mapped[str | None] = mapped_column(String(32))
+    color_depth: Mapped[str | None] = mapped_column(String(8))   # "8bit" / "10bit"(从 pix_fmt 推)
+    hdr: Mapped[str | None] = mapped_column(String(16))          # "HDR10"/"HLG"/"DV";None=SDR
     bitrate: Mapped[int | None] = mapped_column(Integer)
+    # 每条音轨/字幕轨 dict:{codec, lang, title, channels?};字幕含 sidecar(source="external")
     audio_tracks: Mapped[list] = mapped_column(JSON, default=list)
     subtitle_tracks: Mapped[list] = mapped_column(JSON, default=list)
     probed_at: Mapped[datetime | None] = mapped_column(DateTime)   # None=未探测/失败可重试

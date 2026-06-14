@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { api } from '../api'
 import RulePreview from './RulePreview.vue'
+import Icon from './Icon.vue'
 
 const props = defineProps({
   sub: { type: Object, required: true },   // SubscriptionOut
@@ -51,7 +52,7 @@ async function save() {
         <strong>{{ sub.bangumi_title }}</strong>
         <span class="tag accent">{{ sub.subgroup_name || sub.mikan_subgroup_id }}</span>
         <div class="spacer" />
-        <button class="btn sm" @click="emit('close')">✕</button>
+        <button class="btn sm" @click="emit('close')"><Icon name="close" :size="13" /></button>
       </div>
       <p v-if="error" style="color: var(--red); margin-bottom: 10px;">{{ error }}</p>
 

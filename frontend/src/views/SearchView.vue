@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api, fmtSize } from '../api'
 import SubscribeWizard from '../components/SubscribeWizard.vue'
+import Icon from '../components/Icon.vue'
 
 const SOURCES = [
   { id: 'mikan', label: 'mikan', hint: '蜜柑计划(按番剧聚合)' },
@@ -99,7 +100,7 @@ onUnmounted(() => document.removeEventListener('click', closeMenu))
 
 <template>
   <div class="page">
-    <div class="page-title">🔍 搜索</div>
+    <div class="page-title"><Icon name="search" :size="19" /> 搜索</div>
 
     <!-- 搜索栏 + 源选择 -->
     <div class="search-bar">
@@ -137,9 +138,9 @@ onUnmounted(() => document.removeEventListener('click', closeMenu))
         <div class="poster-title">{{ currentSeries.title }}</div>
         <button class="btn primary" style="width: 100%;"
                 @click="wizardPreset = { mikan_bangumi_id: currentSeries.mikan_bangumi_id, title: currentSeries.title }">
-          ＋ 订阅此番剧
+          <Icon name="plus" :size="14" /> 订阅此番剧
         </button>
-        <button class="btn" style="width: 100%;" @click="backToSeries">← 重选番剧</button>
+        <button class="btn" style="width: 100%;" @click="backToSeries"><Icon name="arrow-left" :size="14" /> 重选番剧</button>
       </aside>
 
       <div class="list-col">
@@ -175,9 +176,9 @@ onUnmounted(() => document.removeEventListener('click', closeMenu))
                 ▲{{ t.seeders }} ▼{{ t.leechers }}
               </span>
               <span class="meta">{{ fmtSize(t.size) }}</span>
-              <button class="icon-btn" title="复制链接" @click="copyLink(t)">📋</button>
+              <button class="icon-btn" title="复制链接" @click="copyLink(t)"><Icon name="copy" :size="14" /></button>
               <a v-if="t.page_url" class="icon-btn" :href="t.page_url" target="_blank"
-                 rel="noopener" title="打开详情页">↗</a>
+                 rel="noopener" title="打开详情页"><Icon name="link" :size="14" /></a>
             </div>
             <div v-if="showRaw" class="raw">{{ t.title }}</div>
           </div>
