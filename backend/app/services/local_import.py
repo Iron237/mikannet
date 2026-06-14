@@ -35,14 +35,25 @@ scan_state = {"running": False, "phase": "", "files_found": 0, "done": 0, "total
               "current": "", "result": None, "error": None}
 
 
-def _guess_series(path: Path) -> str:
-    """文件 → 作品名:anitopy anime_title,兜底用上级目录名。"""
+# 结构性子目录(非作品名):碰到则上溯一层取作品文件夹
+_STRUCT_DIR = re.compile(
+    r"^(season ?\d+|s\d+|disc ?\d+|cd\d*|scans?|bdmv|stream|specials?|sps?|extras?|映像特典|特典|花絮)$",
+    re.I)
+
+
+def _guess_series(path: Path, root: Path) -> str:
+    """作品名:用户按「作品名/[发布]/文件」组织,作品名即视频的作品文件夹(直接父目录;
+    父目录是 Season/Disc/特典 等结构性目录时再上溯一层)。这比解析文件名稳——文件名常是
+    罗马音发布名(Yorimoi、Yoru no Kurage…),蜜柑按中文/日文标题索引,匹配不到;而用户给
+    文件夹起的(多为中文)名能直接命中。散落在扫描根的裸文件才退回 anitopy 标题。"""
+    d = path.parent
+    while d != root and d.parent != d and _STRUCT_DIR.match(d.name.strip()):
+        d = d.parent
+    if d != root:
+        return d.name
     ani = anitopy.parse(path.name) or {}
     title = (ani.get("anime_title") or "").strip()
-    if len(title) >= 2:
-        return title
-    parent = path.parent.name
-    return re.sub(r"[\[\(【].*?[\]\)】]", "", parent).strip() or parent
+    return title if len(title) >= 2 else path.stem
 
 
 # 容器内可扫描的挂载点(/import=本机磁盘源,/import-nas=NAS 源,/downloads=NAS 番剧库)
@@ -78,7 +89,7 @@ def scan(source: str) -> list[dict]:
         if _is_skipped(p, skips):
             continue
         if p.is_file() and media_probe.is_video(p):
-            groups.setdefault(_guess_series(p), []).append(p)
+            groups.setdefault(_guess_series(p, root), []).append(p)
 
     out = []
     for title, files in groups.items():
@@ -113,7 +124,7 @@ def _run_scan(source: str) -> None:
             if _is_skipped(p, skips):
                 continue
             if p.is_file() and media_probe.is_video(p):
-                groups.setdefault(_guess_series(p), []).append(p)
+                groups.setdefault(_guess_series(p, root), []).append(p)
                 scan_state["files_found"] += 1
                 scan_state["current"] = p.name
         scan_state.update(phase="匹配蜜柑", total=len(groups), done=0, current="")

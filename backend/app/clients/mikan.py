@@ -33,32 +33,36 @@ def _similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, na, nb).ratio()
 
 
-def _candidate_queries(title: str) -> list[str]:
-    """容错搜索的候选查询,从具体到宽泛:全名 → 去标点 → 递减词前缀 → 最长词/末词。
+def _dedup(seq: list[str]) -> list[str]:
+    seen, out = set(), []
+    for q in seq:
+        k = q.strip().lower()
+        if len(q.strip()) >= 2 and k not in seen:
+            seen.add(k)
+            out.append(q.strip())
+    return out
 
-    Mikan 的 searchstr 对带 !!!!!/撇号/续作后缀的全名常 0 命中,但短关键词能命中(实测
-    「BanG Dream! It's MyGO!!!!!」0 条,而「BanG Dream」「MyGO」都命中)。逐级退化提升匹配率。
+
+def _query_tiers(title: str) -> tuple[list[str], list[str]]:
+    """搜索查询分两级:
+    - strong(全标题级):原名、去括号名、去标点名。够特异,可信蜜柑相关度首条(即便跨语言)。
+    - weak(关键词级):递减词前缀、最长词、末词。易误配(如「Punch」→ Punch Line),须相似度兜底。
+
+    Mikan 的 searchstr 对带 !!!!!/撇号/字幕组前缀/技术标签的名常 0 命中,故逐级退化。
+    去括号:`[LPSub] BanG Dream MyGO [01-13]` → `BanG Dream MyGO`;`[DMG] BOCCHI THE ROCK! [Ma10p]` → `BOCCHI THE ROCK!`。
     """
     raw = (title or "").strip()
-    cleaned = re.sub(r"\s+", " ", _NORM_RE.sub(" ", raw)).strip()
+    debr = re.sub(r"\s+", " ", re.sub(r"[\[\(【][^\]\)】]*[\]\)】]", " ", raw)).strip()
+    base = debr or raw
+    # 逗号/顿号/波浪号前的主标题:副标题(", Muri Muri"、"〜再次闪耀〜")常使全名 0 命中,主标题能中
+    precomma = re.split(r"[,，、~〜]", base, maxsplit=1)[0].strip()
+    cleaned = re.sub(r"\s+", " ", _NORM_RE.sub(" ", base)).strip()
     toks = [t for t in cleaned.split(" ") if len(t) >= 2]
-    cands = [raw]
-    if cleaned and cleaned.lower() != raw.lower():
-        cands.append(cleaned)
-    for n in range(len(toks) - 1, 1, -1):    # 前 n-1、… 、前 2 个词(去尾部噪声/季号)
-        cands.append(" ".join(toks[:n]))
-    if toks:                                  # 最长词、末词(分别作为关键词)
-        longest = max(toks, key=len)
-        cands.append(longest)
-        if toks[-1] != longest:
-            cands.append(toks[-1])
-    seen, out = set(), []
-    for q in cands:
-        k = q.lower()
-        if len(q) >= 2 and k not in seen:
-            seen.add(k)
-            out.append(q)
-    return out[:6]                            # 限请求数(最坏 6 次)
+    weak = [" ".join(toks[:n]) for n in range(len(toks) - 1, 1, -1)]
+    if toks:
+        weak.append(max(toks, key=len))   # 最长词
+        weak.append(toks[-1])             # 末词
+    return _dedup([raw, debr, precomma, cleaned]), _dedup(weak)[:4]
 
 
 @dataclass
@@ -81,27 +85,45 @@ class MikanClient:
             r.raise_for_status()
         return parse_search(r.text)
 
-    def search_best(self, title: str, threshold: float = 0.5):
-        """自动匹配用:逐级退化搜索,返回与 title 最相似且达阈值的命中(否则 None)。
+    def _search_safe(self, q: str):
+        try:
+            return self.search(q)
+        except Exception as e:  # noqa: BLE001
+            log.warning("Mikan 搜索 %r 失败: %s", q, e)
+            return []
 
-        给本地导入/番剧库扫描用——文件夹名常是完整作品名(带 !!!!!/续作后缀),直接全名搜
-        Mikan 会 0 命中,故退化到关键词再按相似度挑回正确番剧。阈值以下视为没匹配上(交给手动)。
+    def search_best(self, title: str, threshold: float = 0.5):
+        """自动匹配用:strong(全名)→ weak(关键词)两级退化,返回最佳命中(否则 None)。
+
+        给本地导入/番剧库扫描用。strong 查询够特异 → 即便跨语言(罗马音/日文文件夹名 →
+        蜜柑中文标题,相似度为 0)也信蜜柑相关度首条;weak 关键词易误配 → 必须相似度达阈值。
+        都不中 → 视为没匹配上(交给手动指定),不硬塞错的。
         """
-        best, best_score = None, 0.0
-        for q in _candidate_queries(title):
-            try:
-                hits = self.search(q)
-            except Exception as e:  # noqa: BLE001
-                log.warning("Mikan 搜索 %r 失败: %s", q, e)
+        strong, weak = _query_tiers(title)
+        # 1) strong:全标题级。命中里若有够像的取最像(同系列分季靠它选对季);否则信蜜柑首条
+        for q in strong:
+            hits = self._search_safe(q)
+            if not hits:
                 continue
-            for h in hits:
+            best = max(hits, key=lambda h: _similarity(title, h.title))
+            sim = _similarity(title, best.title)
+            if sim >= threshold:
+                log.info("Mikan 匹配 %r → %r (强/相似 %.2f)", title, best.title, sim)
+                return best
+            if len(hits) <= 5:               # 跨语言:够特异(结果不发散)→ 信首条
+                log.info("Mikan 匹配 %r → %r (强/跨语言首条)", title, hits[0].title)
+                return hits[0]
+        # 2) weak:关键词级,必须够像才接受
+        best, best_score = None, 0.0
+        for q in weak:
+            for h in self._search_safe(q):
                 sc = _similarity(title, h.title)
                 if sc > best_score:
                     best, best_score = h, sc
-            if best and best_score >= 0.75:    # 已足够像 → 提前停,省请求
+            if best_score >= 0.75:
                 break
         if best and best_score >= threshold:
-            log.info("Mikan 容错匹配 %r → %r (%.2f)", title, best.title, best_score)
+            log.info("Mikan 匹配 %r → %r (弱/相似 %.2f)", title, best.title, best_score)
             return best
         return None
 
