@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import (Bangumi, Episode, EpisodeType, Kind, Subscription, Torrent,
-                        TorrentEpisode, TorrentStatus)
+                        TorrentEpisode, TorrentStatus, VideoFile)
 from app.services.local_import import LOCAL_SUBGROUP_ID
 
 router = APIRouter(prefix="/api/bangumi", tags=["bangumi"])
@@ -90,12 +90,17 @@ def detail(bangumi_id: int, db: Session = Depends(get_db)):
             .order_by(Torrent.version.desc())).scalars().all()
         current = next((t for t in torrents if t.status not in
                         (TorrentStatus.SKIPPED, TorrentStatus.SUBMIT_FAILED)), None)
+        # 只取映射到「这一集」的文件,不是整个种子(合集/番剧库容器种子覆盖多集,
+        # 否则每集都会列出整包的全部文件)。is_active 处理 v2 切换。
+        ep_files = db.execute(
+            select(VideoFile).where(VideoFile.episode_id == ep.id, VideoFile.is_active.is_(True))
+            .order_by(VideoFile.relative_path)).scalars().all()
         eps_out.append({
             "id": ep.id, "number": ep.number, "type": ep.type.value, "title": ep.title,
             "status": current.status.value if current else "missing",
             "version": current.version if current else None,
             "torrent_id": current.id if current else None,
-            "files": [_file_out(f) for f in (current.files if current else []) if f.is_active],
+            "files": [_file_out(f) for f in ep_files],
         })
     # 缺集占位:仅 tv 番剧 + 已知总集数时,把库里没有的正片集号渲染为"未下载"(补全入口依据)。
     # movie/ova 没有"正片集"概念,不补占位。
@@ -111,7 +116,6 @@ def detail(bangumi_id: int, db: Session = Depends(get_db)):
         eps_out = regular + others
 
     # 未匹配文件:登记进库但没解析到单集的视频(剧场版/合集/解析失败),也要展示,别让它隐身
-    from app.models import VideoFile
     unmapped = db.execute(
         select(VideoFile).join(Torrent).join(Subscription)
         .where(Subscription.bangumi_id == b.id,

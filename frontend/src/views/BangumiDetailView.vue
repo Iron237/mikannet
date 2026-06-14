@@ -72,6 +72,12 @@ async function saveSeason() {
   finally { savingSeason.value = false }
 }
 
+// 形态手动覆盖(始终优先):元数据把电影/OVA 误判成 TV 时,一键改正,详情页布局随之切换
+async function saveKind() {
+  await api.patch(`/api/bangumi/${b.value.id}`, { kind: b.value.kind })
+  await load()
+}
+
 async function toggleSub(s) {
   await api.patch(`/api/subscriptions/${s.id}`, { enabled: !s.enabled })
   await load()
@@ -126,8 +132,14 @@ onMounted(load)
             <span v-if="b.score" class="tag accent"><Icon name="star" :size="12" /> {{ b.score }}</span>
           </div>
           <p class="summary muted" v-if="b.summary">{{ b.summary }}</p>
-          <div class="row" style="margin-top: 12px; gap: 8px; align-items: center;">
-            <span class="muted" style="font-size: 12.5px;">Jellyfin 季号 Season</span>
+          <div class="row" style="margin-top: 12px; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <span class="muted" style="font-size: 12.5px;">形态</span>
+            <select class="input" style="width: 104px;" v-model="b.kind" @change="saveKind">
+              <option value="tv">TV 连载</option>
+              <option value="movie">剧场版</option>
+              <option value="ova">OVA</option>
+            </select>
+            <span class="muted" style="font-size: 12.5px; margin-left: 6px;">Jellyfin 季号 Season</span>
             <input type="number" min="0" class="input" style="width: 64px;"
                    v-model.number="b.season_number" @change="saveSeason" />
             <span class="muted" style="font-size: 12px;">
