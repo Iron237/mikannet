@@ -27,7 +27,7 @@ const SRC_BADGE = { bdrip: ['BDRip', 'accent'], raw_disc: ['自购原盘', 'gree
       <span v-if="r.extra_count" class="tag">特典 {{ r.extra_count }} 项</span>
     </div>
 
-    <div v-if="r.source_kind === 'raw_disc' && !r.groups.length" class="muted bd-raw">
+    <div v-if="r.source_kind === 'raw_disc' && !r.groups?.length" class="muted bd-raw">
       自购原盘(BDMV)· 当前仅登记占位,m2ts 深度解析后续支持。
     </div>
 

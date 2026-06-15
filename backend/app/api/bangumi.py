@@ -221,6 +221,9 @@ def _purge_bangumi(db: Session, b: Bangumi, delete_files: bool) -> None:
     for s in db.execute(select(Subscription).where(
             Subscription.bangumi_id == b.id)).scalars():
         db.delete(s)
+    # BD 发行(extras 经 relationship cascade 一并删);否则 FK 约束让删番剧报错
+    for br in db.execute(select(BdRelease).where(BdRelease.bangumi_id == b.id)).scalars():
+        db.delete(br)
     db.delete(b)
 
 

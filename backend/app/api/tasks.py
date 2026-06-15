@@ -15,10 +15,10 @@ router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
 
 @router.get("", response_model=list[TorrentOut])
-def list_tasks(status: str | None = None, db: Session = Depends(get_db)):
+def list_tasks(status: TorrentStatus | None = None, db: Session = Depends(get_db)):
     q = select(Torrent).order_by(Torrent.created_at.desc())
     if status:
-        q = q.where(Torrent.status == TorrentStatus(status))
+        q = q.where(Torrent.status == status)   # 非法值由 FastAPI 校验为 422,不再 500
     rows = db.execute(q).scalars().all()
 
     # 合并 qB 实时快照
@@ -98,6 +98,7 @@ def batch(payload: dict, db: Session = Depends(get_db)):
                     t.status = TorrentStatus.DOWNLOADING   # 恢复无进度暂停/错误 → 重新跟踪
                     t.error_message = None
                     t.progress_at = None
+                    t.stalled_since = None
             done.append(tid)
         except Exception:  # noqa: BLE001 — 单条失败不阻断其余
             log.warning("批量 %s 失败 task=%s", action, tid, exc_info=True)
@@ -119,6 +120,7 @@ def resume(task_id: int, db: Session = Depends(get_db)):
         t.status = TorrentStatus.DOWNLOADING   # 恢复无进度暂停/错误 → 重新跟踪
         t.error_message = None
         t.progress_at = None
+        t.stalled_since = None
         db.commit()
 
 

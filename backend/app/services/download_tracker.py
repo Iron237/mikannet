@@ -127,6 +127,7 @@ def _check_stall(db, t, lt) -> bool:
 
 def _sync_once() -> tuple[list[dict], bool]:
     """同步一轮:回写快照 + 状态迁移。返回 (广播数据, 是否有活动任务)。"""
+    to_enqueue: list[int] = []          # 后处理入队延到 commit 之后(见函数尾)
     with db_session() as db:
         rows = db.execute(select(Torrent).where(Torrent.status.in_(
             [TorrentStatus.DOWNLOADING, TorrentStatus.COMPLETED,
@@ -155,8 +156,7 @@ def _sync_once() -> tuple[list[dict], bool]:
                     t.stalled_since = None
                     log.info("下载完成 #%s %s", t.id, t.title_raw[:50])
                     _emit("on_complete", t)
-                    from app.services.postprocess import enqueue
-                    enqueue(t.id)
+                    to_enqueue.append(t.id)
                 elif _check_stall(db, t, lt):
                     pass            # 无进度已自动暂停
                 elif _check_dead(db, t, lt):
@@ -171,12 +171,12 @@ def _sync_once() -> tuple[list[dict], bool]:
                     t.progress = 1.0
                     log.info("错误任务在下载器已完成,恢复入库 #%s %s", t.id, t.title_raw[:40])
                     _emit("on_complete", t)
-                    from app.services.postprocess import enqueue
-                    enqueue(t.id)
+                    to_enqueue.append(t.id)
                 elif lt.state in _RECOVER_DL_STATES:
                     t.status = TorrentStatus.DOWNLOADING
                     t.error_message = None
                     t.progress_at = None
+                    t.stalled_since = None   # 否则坏种计时残留 → 恢复后可能立刻被删
                     log.info("错误任务在下载器已恢复下载 #%s %s", t.id, t.title_raw[:40])
                     active = True
             if lt is not None:
@@ -192,7 +192,13 @@ def _sync_once() -> tuple[list[dict], bool]:
                 "seeds": lt.seeds if lt else 0,
                 "peers": lt.peers if lt else 0,
             })
-        return payload, active
+        result = (payload, active)
+    # with 退出 → commit 完成,worker 再读能看到 COMPLETED(否则读到旧 DOWNLOADING 被静默跳过)
+    if to_enqueue:
+        from app.services.postprocess import enqueue
+        for tid in to_enqueue:
+            enqueue(tid)
+    return result
 
 
 async def tracker_loop(stop_event: asyncio.Event) -> None:

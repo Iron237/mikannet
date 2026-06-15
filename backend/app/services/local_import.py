@@ -258,6 +258,11 @@ def _import_group(group: dict) -> str:
             if rel in seen_rel:
                 continue   # 同组内多个源映射到同一目标名 → 去重,避免 UNIQUE 冲突
             seen_rel.add(rel)
+            # 跨次导入去重:同 relative_path 已登记过则跳过,避免产生多行(不同 torrent_id 绕过
+            # UNIQUE)→ 后续库扫描 scalar_one_or_none() 抛 MultipleResultsFound
+            if db.execute(select(VideoFile.id).where(
+                    VideoFile.relative_path == rel)).first():
+                continue
             dest = dest_dir / src.name
             try:
                 if not dest.exists():
@@ -287,13 +292,16 @@ def _import_group(group: dict) -> str:
                     db.add(TorrentEpisode(torrent_id=torrent.id, episode_id=ep.id))
             try:
                 r = media_probe.probe(dest)
-                vf.resolution = r.resolution
+                vf.resolution = r.resolution or parse(src.name).resolution
                 vf.video_codec = r.video_codec
+                vf.color_depth = r.color_depth
+                vf.hdr = r.hdr
                 vf.bitrate = r.bitrate
                 vf.audio_tracks = r.audio_tracks
                 vf.subtitle_tracks = r.subtitle_tracks
                 vf.probed_at = datetime.now(timezone.utc)
             except Exception as e:  # noqa: BLE001
+                vf.resolution = vf.resolution or parse(src.name).resolution
                 log.warning("导入探测失败 %s: %s", dest, e)
             ok += 1
             db.flush()

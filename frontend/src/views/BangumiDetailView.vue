@@ -26,6 +26,7 @@ const autoBest = ref(false)
 const bdOwned = ref(false)
 const autoScan = ref(null)
 let autoTimer = null
+let mounted = true
 // 文件管理
 const opMsg = ref('')
 const fileBusy = ref(0)          // 正在操作的文件 id
@@ -77,7 +78,9 @@ async function scanBest() {
   } catch (e) { opMsg.value = e.message }
 }
 async function pollAuto() {
-  autoScan.value = await api.get('/api/bangumi/auto-scan/status')
+  const s = await api.get('/api/bangumi/auto-scan/status')
+  if (!mounted) return            // 卸载后别再起定时器/写已销毁组件
+  autoScan.value = s
   if (autoScan.value.running) { autoTimer = setTimeout(pollAuto, 1500) }
   else { await load() }
 }
@@ -137,8 +140,13 @@ async function redownload(ep) {
 
 async function doRemove() {
   removing.value = true
-  await api.delete(`/api/bangumi/${b.value.id}?delete_files=${removeFiles.value}`)
-  router.push('/')
+  try {
+    await api.delete(`/api/bangumi/${b.value.id}?delete_files=${removeFiles.value}`)
+    router.push('/')
+  } catch (e) {
+    opMsg.value = e.message
+    removing.value = false
+  }
 }
 
 const savingSeason = ref(false)
@@ -191,7 +199,7 @@ onMounted(async () => {
   const a = await api.get('/api/bangumi/auto-scan/status')
   if (a.running) { autoScan.value = a; pollAuto() }
 })
-onUnmounted(() => clearTimeout(autoTimer))
+onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
 </script>
 
 <template>

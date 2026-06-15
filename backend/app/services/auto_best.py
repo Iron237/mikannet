@@ -162,10 +162,12 @@ def scan_bangumi(db: Session, bangumi: Bangumi, do_fill: bool = True,
                 "submitted": 0, "note": "无满足偏好的源(分辨率/字幕严格)"}
 
     # 已下过的 guid 不重复下
+    # 排除已处理过的 guid:SKIPPED 也算(过滤/手动删/坏种 → 不该再被选中,否则贪心占了集却
+    # 在 _submit_candidate 被跳过 → 漏下);仅 SUBMIT_FAILED 留待重试
     have = set(db.execute(
         select(Torrent.guid).join(Subscription).where(
             Subscription.bangumi_id == bangumi.id,
-            Torrent.status.notin_([TorrentStatus.SKIPPED, TorrentStatus.SUBMIT_FAILED]))
+            Torrent.status != TorrentStatus.SUBMIT_FAILED)
         ).scalars().all())
     cands = [c for c in cands if c["guid"] not in have]
     if not cands:

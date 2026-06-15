@@ -19,6 +19,7 @@ const autoConfirm = ref(null)   // 智能下载确认 { ids }
 const autoEnable = ref(false)   // 同时设为常驻智能下载
 const autoScan = ref(null)      // 智能扫描进度
 let autoTimer = null
+let mounted = true
 
 const SEASON_ORDER = { '秋': 4, '夏': 3, '春': 2, '冬': 1 }
 
@@ -97,7 +98,9 @@ async function doAutoScan() {
   finally { busy.value = false }
 }
 async function pollAutoScan() {
-  autoScan.value = await api.get('/api/bangumi/auto-scan/status')
+  const s = await api.get('/api/bangumi/auto-scan/status')
+  if (!mounted) return
+  autoScan.value = s
   if (autoScan.value.running) { autoTimer = setTimeout(pollAutoScan, 1500) }
   else { await reload() }
 }
@@ -111,7 +114,9 @@ async function startScan() {
   } catch (e) { scan.value = { error: e.message } }
 }
 async function pollScan() {
-  scan.value = await api.get('/api/import/library-scan/status')
+  const s = await api.get('/api/import/library-scan/status')
+  if (!mounted) return
+  scan.value = s
   if (scan.value.running) {
     scanTimer = setTimeout(pollScan, 1500)
   } else {
@@ -127,7 +132,7 @@ onMounted(async () => {
   const a = await api.get('/api/bangumi/auto-scan/status')
   if (a.running) { autoScan.value = a; pollAutoScan() }
 })
-onUnmounted(() => { clearTimeout(scanTimer); clearTimeout(autoTimer) })
+onUnmounted(() => { mounted = false; clearTimeout(scanTimer); clearTimeout(autoTimer) })
 </script>
 
 <template>

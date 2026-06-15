@@ -10,6 +10,7 @@ const scan = ref(null)
 const filter = ref('all')          // all | owned | unowned | unbound
 const expanded = ref(new Set())
 let scanTimer = null
+let mounted = true
 
 async function reload() { releases.value = await api.get('/api/bd/releases') }
 
@@ -19,7 +20,7 @@ onMounted(async () => {
   const s = await api.get('/api/bd/scan/status')
   if (s.running) { scan.value = s; poll() }
 })
-onUnmounted(() => clearTimeout(scanTimer))
+onUnmounted(() => { mounted = false; clearTimeout(scanTimer) })
 
 const shown = computed(() => releases.value.filter(r =>
   filter.value === 'all' ? true
@@ -37,7 +38,9 @@ async function startScan() {
   catch (e) { scan.value = { error: e.message } }
 }
 async function poll() {
-  scan.value = await api.get('/api/bd/scan/status')
+  const s = await api.get('/api/bd/scan/status')
+  if (!mounted) return
+  scan.value = s
   if (scan.value.running) scanTimer = setTimeout(poll, 1500)
   else await reload()
 }

@@ -74,6 +74,7 @@ def update_release(release_id: int, payload: dict, db: Session = Depends(get_db)
     r = db.get(BdRelease, release_id)
     if not r:
         raise HTTPException(404)
+    old_bid = r.bangumi_id
     if "bangumi_id" in payload:
         bid = payload["bangumi_id"]
         if bid is not None and not db.get(Bangumi, int(bid)):
@@ -81,13 +82,13 @@ def update_release(release_id: int, payload: dict, db: Session = Depends(get_db)
         r.bangumi_id = int(bid) if bid is not None else None
     if "owned" in payload:
         r.owned = bool(payload["owned"])
-    # 拥有且已绑 → 番剧排除自动下载;该番剧已无任何 owned 发行 → 解除
-    if r.bangumi_id:
-        b = db.get(Bangumi, r.bangumi_id)
+    db.flush()
+    # 重算受影响番剧的 bd_owned(新绑 + 旧绑/解绑都要):有 owned 发行 → 排除自动下载,否则解除
+    for bid in {old_bid, r.bangumi_id} - {None}:
+        b = db.get(Bangumi, bid)
         if b:
-            any_owned = any(x.owned for x in db.execute(select(BdRelease).where(
-                BdRelease.bangumi_id == b.id)).scalars())
-            b.bd_owned = any_owned
+            b.bd_owned = any(x.owned for x in db.execute(select(BdRelease).where(
+                BdRelease.bangumi_id == bid)).scalars())
     db.commit()
     return {"ok": True, "owned": r.owned, "bangumi_id": r.bangumi_id}
 
