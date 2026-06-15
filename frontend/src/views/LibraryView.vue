@@ -4,7 +4,8 @@ import { api } from '../api'
 import Icon from '../components/Icon.vue'
 
 const items = ref([])
-const filter = ref('all')   // all | airing | finished
+const filter = ref('all')      // all | airing | finished
+const srcFilter = ref('all')   // all | bd | bd_owned | bd_unowned | web
 const keyword = ref('')
 const loading = ref(true)
 const scan = ref(null)       // 番剧库扫描状态
@@ -24,6 +25,11 @@ const SEASON_ORDER = { '秋': 4, '夏': 3, '春': 2, '冬': 1 }
 const groups = computed(() => {
   let list = items.value
   if (filter.value !== 'all') list = list.filter(b => b.airing_status === filter.value)
+  const sf = srcFilter.value
+  if (sf === 'bd') list = list.filter(b => b.has_bd)
+  else if (sf === 'bd_owned') list = list.filter(b => b.has_bd && b.bd_owned)
+  else if (sf === 'bd_unowned') list = list.filter(b => b.has_bd && !b.bd_owned)
+  else if (sf === 'web') list = list.filter(b => b.has_web)
   const kw = keyword.value.trim().toLowerCase()
   if (kw) list = list.filter(b =>
     b.title.toLowerCase().includes(kw) || (b.studio || '').toLowerCase().includes(kw))
@@ -136,6 +142,12 @@ onUnmounted(() => { clearTimeout(scanTimer); clearTimeout(autoTimer) })
       <div class="filters">
         <button v-for="f in [['all','全部'],['airing','连载中'],['finished','已完结']]" :key="f[0]"
                 class="btn sm" :class="{ primary: filter === f[0] }" @click="filter = f[0]">
+          {{ f[1] }}
+        </button>
+      </div>
+      <div class="filters">
+        <button v-for="f in [['all','全部源'],['bd','BD'],['bd_owned','BD·已购'],['bd_unowned','BD·未购'],['web','Web']]"
+                :key="f[0]" class="btn sm" :class="{ primary: srcFilter === f[0] }" @click="srcFilter = f[0]">
           {{ f[1] }}
         </button>
       </div>

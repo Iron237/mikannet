@@ -73,23 +73,27 @@ def _match_episode(db: Session, t: Torrent, filename: str) -> int | None:
 _SOURCE_RANK = {"BD": 0, "Web": 1}
 
 
-def _file_quality(f: VideoFile) -> tuple[int, int]:
-    """画质优先序(越小越优):先片源 BD>Web,再版本号高者优先。"""
-    return (_SOURCE_RANK.get(f.source, 2), -(f.torrent.version or 1))
+def _file_quality(f: VideoFile) -> tuple:
+    """画质优先序(越小越优):片源 BD>Web > 未知,再版本号高,再体积大,最后 id 稳定。
+
+    体积兜底很关键:同集挂了多个 BD 文件(真正片 + 被误映射的菜单/NC 小片)时,
+    最大的那个才是正片 → 选它,其余置灰隐藏(用户说的「同一集多个源」只留一个)。
+    """
+    return (_SOURCE_RANK.get(f.source, 2), -(f.torrent.version or 1), -(f.size or 0), f.id)
 
 
 def _apply_version_switch(db: Session, episode_id: int) -> None:
-    """同一剧集多文件:保留画质最优(BD>Web、再 v2>v1)的为 is_active,其余置 0。
+    """同一剧集多文件:只保留**唯一**画质最优的为 is_active(BD>Web>未知、v2>v1、体积大),其余置 0。
 
-    既覆盖 v2 决议,也覆盖跨字幕组的 Web→BD 升级(智能下载补的 BD 完成后自动顶替 Web)。
+    覆盖 v2 决议 + 跨字幕组 Web→BD 升级(BD 完成后顶替 Web)+ 同集多源去重(只留一个)。
     """
     files = db.execute(select(VideoFile).join(Torrent).where(
         VideoFile.episode_id == episode_id)).scalars().all()
     if not files:
         return
-    best_q = min(_file_quality(f) for f in files)
+    best = min(files, key=_file_quality)
     for f in files:
-        f.is_active = _file_quality(f) == best_q
+        f.is_active = f is best
     db.flush()
 
 

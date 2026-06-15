@@ -4,8 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import (Bangumi, Episode, EpisodeType, Kind, Subscription, Torrent,
-                        TorrentEpisode, TorrentStatus, VideoFile)
+from app.models import (Bangumi, BdRelease, Episode, EpisodeType, Kind, Subscription,
+                        Torrent, TorrentEpisode, TorrentStatus, VideoFile)
 from app.services.local_import import LOCAL_SUBGROUP_ID
 
 router = APIRouter(prefix="/api/bangumi", tags=["bangumi"])
@@ -43,13 +43,33 @@ def library(db: Session = Depends(get_db)):
             select(VideoFile.id).join(Torrent).join(Subscription)
             .where(Subscription.bangumi_id == b.id, VideoFile.is_active.is_(True))
             .limit(1)).first()),
-        "eps_downloaded": db.execute(
-            select(Episode.id).join(TorrentEpisode).join(Torrent)
-            .where(Episode.bangumi_id == b.id,
-                   Torrent.status.in_([TorrentStatus.COMPLETED, TorrentStatus.ARCHIVED,
-                                       TorrentStatus.DOWNLOADING]))
-            .distinct()).scalars().all().__len__(),
+        "eps_downloaded": _eps_done(db, b),
+        "has_bd": _has_source(db, b.id, "BD"),
+        "has_web": _has_source(db, b.id, "Web"),
     } for b in rows]
+
+
+def _eps_done(db: Session, b: Bangumi) -> int:
+    """已入库集数:只数有 active 文件的**正片**集(不含 SP/菜单/NC/特典),并封顶到总集数。
+
+    封顶规避:跨季连续编号(S2 编 13-24)/ 错误元数据 / 旧整理残留的幽灵集 等导致的「超过总集数」。
+    """
+    n = db.execute(
+        select(Episode.id).join(VideoFile, VideoFile.episode_id == Episode.id)
+        .where(Episode.bangumi_id == b.id, Episode.type == EpisodeType.REGULAR,
+               VideoFile.is_active.is_(True)).distinct()).scalars().all().__len__()
+    return min(n, b.eps_total) if b.eps_total else n
+
+
+def _has_source(db: Session, bangumi_id: int, source: str) -> bool:
+    """该番剧是否有指定片源的 active 文件;BD 还认 BD 发行记录(BD 收藏扫描登记的)。"""
+    if source == "BD" and db.execute(select(BdRelease.id).where(
+            BdRelease.bangumi_id == bangumi_id).limit(1)).first():
+        return True
+    return bool(db.execute(
+        select(VideoFile.id).join(Torrent).join(Subscription)
+        .where(Subscription.bangumi_id == bangumi_id, VideoFile.is_active.is_(True),
+               VideoFile.source == source).limit(1)).first())
 
 
 @router.get("/calendar/week")
@@ -64,11 +84,7 @@ def calendar(db: Session = Depends(get_db)):
         entry = {
             "id": b.id, "title": b.title, "poster": _poster_url(b),
             "score": b.score, "eps_total": b.eps_total,
-            "eps_downloaded": db.execute(
-                select(Episode.id).join(TorrentEpisode).join(Torrent)
-                .where(Episode.bangumi_id == b.id,
-                       Torrent.status.in_([TorrentStatus.COMPLETED, TorrentStatus.ARCHIVED]))
-                .distinct()).scalars().all().__len__(),
+            "eps_downloaded": _eps_done(db, b),
         }
         if b.air_weekday is not None:
             days[b.air_weekday].append(entry)
