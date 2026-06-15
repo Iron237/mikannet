@@ -236,7 +236,9 @@ def parse(title: str) -> ParsedTitle:
     # 解析后修正(压住误判):
     # 1) 仅弱特典描述(特别篇/特典/番外…)且带明确正片集号时,集号说了算 → 让位给正片
     #    (哆啦A梦「[109]…特别篇…」是正片第 109 话)。强标记(SP01/OVA/剧场版/OP·ED/PV)不让位。
-    if result.ep_type in ("special", "other") and not result.is_batch \
+    #    注意:只降级 special,**不碰 other**(menu/Logo/Bonus/MAD 等永远不是正片,
+    #    否则 BD 合集里的 [menu][01] 会被当成正片第 1 话,整理时与真第 1 话撞名)。
+    if result.ep_type == "special" and not result.is_batch \
             and len(result.episodes) == 1 and result.episodes[0] < 1900 \
             and not _EP_SPECIAL_STRONG.search(_preprocess(title)):
         result.ep_type = "regular"

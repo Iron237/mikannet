@@ -76,24 +76,35 @@ def organize_torrent(db: Session, t: Torrent) -> None:
     sp = (sub.save_path or "").replace("\\", "/").rstrip("/")
     prefix = sp[len(root):].lstrip("/") if sp.startswith(root) else ""   # 番剧名(相对下载根)
 
+    # 已被本种子占用的相对路径集合 → 预判撞名,避免 UNIQUE(torrent_id, relative_path) 冲突
+    # (BD 合集里 SP/菜单/多版本可能算出同一 SxxExx 目标;撞名就跳过,绝不让 flush 报错毒化事务)
+    used = {(f.relative_path or "").replace("\\", "/") for f in t.files}
     for vf in t.files:
         if not vf.is_active or not vf.episode_id:
             continue
         ep = db.get(Episode, vf.episode_id)
-        if ep is None:
+        # 只整理正片 + 带集号的特别篇;菜单/OP·ED/PV/无集号特典留原名(Jellyfin 当 extras)
+        if ep is None or ep.number is None or ep.type not in (
+                EpisodeType.REGULAR, EpisodeType.SPECIAL):
             continue
         season_n = (b.season_number or 1) if ep.type == EpisodeType.REGULAR else 0
         ext = Path(vf.relative_path).suffix
         new_name = f"{show} S{season_n:02d}E{_epfmt(ep.number)}{ext}"
         new_rel_sp = f"Season {season_n:02d}/{new_name}"
+        new_full = (f"{prefix}/{new_rel_sp}" if prefix else new_rel_sp)
         old_rel_root = vf.relative_path.replace("\\", "/")
         old_rel_sp = (old_rel_root[len(prefix) + 1:]
                       if prefix and old_rel_root.startswith(prefix + "/") else old_rel_root)
         if old_rel_sp == new_rel_sp:
             continue   # 已整理
+        if new_full in used:
+            log.warning("整理 #%s 跳过撞名目标 %s(%s)", t.id, new_full, old_rel_sp)
+            continue
         try:
             downloader.rename_file(t.info_hash, old_rel_sp, new_rel_sp)
-            vf.relative_path = f"{prefix}/{new_rel_sp}" if prefix else new_rel_sp
+            used.discard(old_rel_root)
+            vf.relative_path = new_full
+            used.add(new_full)
             db.flush()
             log.info("整理 #%s → %s", t.id, vf.relative_path)
         except Exception as e:  # noqa: BLE001 — 单文件失败不阻断其余

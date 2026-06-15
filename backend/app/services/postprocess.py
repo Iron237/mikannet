@@ -151,17 +151,22 @@ def process_torrent(db: Session, torrent_id: int) -> None:
 
     if failures:
         t.error_message = f"{failures} 个文件探测失败,可重试"
-    else:
-        # 整理:qB 原地重命名成 Jellyfin 结构 + 写 NFO/封面(可开关,改 ADR-0001)
-        try:
-            from app.services.organize import organize_torrent
-            organize_torrent(db, t)
-        except Exception as e:  # noqa: BLE001 — 整理失败不阻断入库
-            log.warning("整理 #%s 异常: %s", t.id, e)
-        t.status = TorrentStatus.ARCHIVED
-        t.error_message = None
-    db.flush()
-    log.info("后处理完成 #%s → %s(失败 %s)", t.id, t.status.value, failures)
+        db.flush()
+        log.info("后处理 #%s 停在 COMPLETED(%s 个探测失败,待重试)", t.id, failures)
+        return
+    # 文件映射 + ARCHIVED 先落库:整理(qB 改名)即便出错,也不回滚文件记录、
+    # 不让种子卡回 COMPLETED(否则会被 drain 反复重入队 → organize 反复改名 → 搅乱 qB)
+    t.status = TorrentStatus.ARCHIVED
+    t.error_message = None
+    db.commit()
+    try:
+        from app.services.organize import organize_torrent
+        organize_torrent(db, t)
+        db.commit()
+    except Exception as e:  # noqa: BLE001 — 整理失败:回滚整理改动,文件/状态已入库
+        db.rollback()
+        log.warning("整理 #%s 异常(文件已入库,跳过整理): %s", t.id, e)
+    log.info("后处理完成 #%s → archived", t.id)
 
 
 def _worker() -> None:
