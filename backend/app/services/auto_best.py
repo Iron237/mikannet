@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import re
 import threading
+from collections import defaultdict
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -236,19 +237,41 @@ def scan_bangumi(db: Session, bangumi: Bangumi, do_fill: bool = True,
         return {"bangumi": bangumi.id, "title": bangumi.title, "candidates": len(cands),
                 "submitted": 0, "note": "已是最佳,无需下载"}
 
-    # 画质关卡 + 可用性 + 贪心选种:每集挑最优种子。排序优先级:
-    # 片源(BD>Web>未知)→ 画质分(10bit/HEVC/无损)→ 可用性(发布越新种子越活,减少死种)
-    # → 版本 → 合集(同优先覆盖广)→ 体积(码率)。死种仍有「坏种自动换源」兜底。
+    # 选种:优先「同一字幕组」整部覆盖,避免「逐集源 + 别家合集」的重复下载。
+    # 每轮挑最优子组(片源 BD>Web → 画质 10bit/HEVC/无损 → 可用性发布越新 → 对仍缺集覆盖数),
+    # 子组内按画质/合集优先挑最小非重叠种子。去重关卡:某种子重复「已认领/已在库」的集多于
+    # 它新带来的集时视为浪费(典型:为补 1-2 集去下整包 01-11),跳过 → 缺口留待下次更贴合的源。
+    covered: set[int] = set(cur) - needed       # 已在最佳源、无需重下的集(防跨次重复下载)
     remaining = set(needed)
     selected: list[dict] = []
-    for c in sorted(cands, key=lambda c: (_source_rank(c["source"]), -c["quality"], -c["pub"],
-                                          -c["version"], not c["is_batch"], -c["size"])):
-        cover = remaining & set(c["episodes"])
-        if cover:
-            selected.append(c)
-            remaining -= cover
-        if not remaining:
+    by_sg: dict[str, list[dict]] = defaultdict(list)
+    for c in cands:
+        by_sg[c["subgroup_id"]].append(c)
+
+    def _sg_key(sg: str) -> tuple:
+        cs = by_sg[sg]
+        return (min(_source_rank(c["source"]) for c in cs),     # BD > Web > 未知
+                -max(c["quality"] for c in cs),                  # 画质越高越先
+                -max(c["pub"] for c in cs),                      # 发布越新种子越活
+                -len({e for c in cs for e in c["episodes"]} & remaining))  # 同字幕组尽量多覆盖
+
+    while remaining and by_sg:
+        usable = [sg for sg in by_sg
+                  if any(set(c["episodes"]) & remaining for c in by_sg[sg])]
+        if not usable:
             break
+        sg = min(usable, key=_sg_key)
+        for c in sorted(by_sg[sg], key=lambda c: (_source_rank(c["source"]), -c["quality"],
+                                                  -c["pub"], -c["version"], not c["is_batch"],
+                                                  -c["size"])):
+            eps = set(c["episodes"])
+            new = remaining & eps
+            if not new or len(eps & covered) > len(new):   # 无新增、或重叠多于新增 → 跳过
+                continue
+            selected.append(c)
+            covered |= eps                                  # 整段范围认领,后续不再重复下
+            remaining -= eps
+        del by_sg[sg]
 
     sub = _auto_sub(db, bangumi)
     submitted = sum(1 for c in selected if _submit_candidate(db, sub, c))
