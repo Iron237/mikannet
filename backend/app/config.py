@@ -78,6 +78,12 @@ class Settings(BaseSettings):
     # 坏种清理:DOWNLOADING 且 0 做种 + 卡住无进度超过 N 小时 → 移除并换备选源
     dead_torrent_enabled: bool = True
     dead_torrent_hours: int = 6
+    # 无进度暂停(温和档,与坏种清理并存):进度长期不增长超过 N 小时 → 暂停(不删,可手动恢复)
+    stall_pause_enabled: bool = True
+    stall_pause_hours: int = 12
+
+    # 已购原盘目录(BD 收藏:MAKEMKV 原盘等;独立 CIFS 挂载到容器内 /bd-owned,缺失则跳过)
+    bd_owned_mount: str = "/bd-owned"
 
     # AniDB 剧集级元数据(ADR-0003;默认关,需注册 client 名)
     anidb_enabled: bool = False

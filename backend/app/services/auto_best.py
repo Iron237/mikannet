@@ -146,6 +146,8 @@ def scan_bangumi(db: Session, bangumi: Bangumi, do_fill: bool = True,
     """扫一部番剧:挑最佳源补缺集 + 升级现有源。返回结果摘要。"""
     if not bangumi.mikan_bangumi_id:
         return {"bangumi": bangumi.id, "title": bangumi.title, "note": "无蜜柑 ID,跳过"}
+    if bangumi.bd_owned:
+        return {"bangumi": bangumi.id, "title": bangumi.title, "note": "已购买(有原盘),跳过"}
     do_upgrade = do_upgrade and settings.auto_dl_prefer_bd
 
     detail = mikan_client.get_bangumi(bangumi.mikan_bangumi_id)
@@ -249,6 +251,7 @@ def scan_auto_all() -> None:
     with db_session() as db:
         ids = db.execute(select(Bangumi.id).where(
             Bangumi.auto_best.is_(True),
+            Bangumi.bd_owned.is_(False),          # 已购买原盘 → 不自动下载
             Bangumi.mikan_bangumi_id.isnot(None))).scalars().all()
     if ids:
         log.info("定期智能扫描:%s 部番剧", len(ids))

@@ -42,6 +42,8 @@ EDITABLE: dict[str, tuple[str, type, bool]] = {
     # 坏种清理
     "dead_torrent_enabled": ("坏种清理", bool, False),
     "dead_torrent_hours": ("坏种清理", int, False),
+    "stall_pause_enabled": ("坏种清理", bool, False),
+    "stall_pause_hours": ("坏种清理", int, False),
     # 智能下载偏好
     "auto_dl_resolution": ("智能下载", str, False),
     "auto_dl_sub_lang": ("智能下载", str, False),

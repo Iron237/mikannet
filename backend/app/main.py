@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import scheduler
-from app.api import (bangumi, config, files, import_mikan, logs, notifications, search,
+from app.api import (bangumi, bd, config, files, import_mikan, logs, notifications, search,
                      subscriptions, system, tasks, ws)
 from app.clients.downloader import downloader
 from app.config import settings
@@ -49,6 +49,7 @@ app.include_router(tasks.router)
 app.include_router(system.router)
 app.include_router(search.router)
 app.include_router(bangumi.router)
+app.include_router(bd.router)
 app.include_router(ws.router)
 app.include_router(files.router)
 app.include_router(notifications.router)

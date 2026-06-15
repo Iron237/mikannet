@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
 import Icon from '../components/Icon.vue'
 import FileTags from '../components/FileTags.vue'
+import BdReleases from '../components/BdReleases.vue'
 import SubscribeWizard from '../components/SubscribeWizard.vue'
 import EditSubscriptionModal from '../components/EditSubscriptionModal.vue'
 
@@ -20,8 +21,9 @@ const delSub = ref(null)         // 待删订阅 { id, name }
 const delSubFiles = ref(false)
 const anidbMsg = ref('')
 const anidbBusy = ref(false)
-// 智能下载
+// 智能下载 / BD
 const autoBest = ref(false)
+const bdOwned = ref(false)
 const autoScan = ref(null)
 let autoTimer = null
 // 文件管理
@@ -58,6 +60,12 @@ function fmtTime(iso) {
 async function load() {
   b.value = await api.get(`/api/bangumi/${route.params.id}`)
   autoBest.value = !!b.value.auto_best
+  bdOwned.value = !!b.value.bd_owned
+}
+
+async function toggleBdOwned() {
+  await api.patch(`/api/bangumi/${b.value.id}`, { bd_owned: bdOwned.value })
+  await load()
 }
 
 // ---- 智能下载 ----
@@ -228,6 +236,9 @@ onUnmounted(() => clearTimeout(autoTimer))
             <label v-if="b.mikan_bangumi_id" class="row auto-toggle" title="开启后定期自动扫描补全/升级">
               <input type="checkbox" v-model="autoBest" @change="toggleAutoBest" /> 智能下载(常驻)
             </label>
+            <label class="row auto-toggle" title="有原盘/已购 → 该番剧完全不自动下载">
+              <input type="checkbox" v-model="bdOwned" @change="toggleBdOwned" /> 已购买(有原盘)
+            </label>
             <button class="btn" :disabled="anidbBusy" @click="syncAnidb">
               <Icon name="refresh" /> {{ anidbBusy ? '同步中…' : '同步 AniDB 剧集' }}
             </button>
@@ -329,7 +340,7 @@ onUnmounted(() => clearTimeout(autoTimer))
             {{ b.kind === 'tv' ? '(已识别但未匹配到具体集 — 剧场版/合集/命名异常)' : '(影片本体与各版本)' }}
           </span>
         </div>
-        <div v-for="f in b.unmapped_files" :key="f.id" class="card file unmapped">
+        <div v-for="f in b.unmapped_files" :key="'u' + f.id" class="card file unmapped">
           <FileTags :file="f" :show-path="true" />
           <div class="file-ops">
             <button class="btn xs" :disabled="fileBusy === f.id" @click="reprobeFile(f)"><Icon name="refresh" :size="12" /> 重探测</button>
@@ -345,6 +356,16 @@ onUnmounted(() => clearTimeout(autoTimer))
             <button class="btn xs" @click="fileEdit = null">取消</button>
           </div>
         </div>
+      </template>
+
+      <!-- BD / 特典 -->
+      <template v-if="b.bd_releases && b.bd_releases.length">
+        <div class="page-title" style="margin-top: 22px;">BD / 特典
+          <span class="muted" style="font-size: 12px; font-weight: 400;">
+            (蓝光发行的特别动画/短剧/音频/图集/扫描等)
+          </span>
+        </div>
+        <BdReleases :releases="b.bd_releases" />
       </template>
     </div>
 

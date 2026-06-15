@@ -39,6 +39,8 @@ services:
       - ${LOCAL_IMPORT_PATH:-./import}:/import
       # /import-nas = NAS 上的旧番剧目录(.env NAS_IMPORT_PATH,CIFS 挂载)
       - nas_import:/import-nas
+      # /bd-owned = 已购原盘目录(BD 收藏,.env BD_OWNED_PATH,CIFS;不需要可删此行+下方卷)
+      - bd_owned:/bd-owned
     restart: unless-stopped
   # 下载器已迁移到桌面 qBittorrent(host.docker.internal:19897),
   # 原 Docker qBittorrent 服务已移除(同 BitComet)。app 仍挂 downloads 卷读 NAS 上的成品文件。
@@ -59,3 +61,10 @@ volumes:
       type: cifs
       o: "username=${NAS_USER},password=${NAS_PASS},uid=1000,gid=1000,iocharset=utf8,vers=3.0,noserverino"
       device: "${NAS_IMPORT_PATH:-//192.168.2.4/Minecraft 独行侠/番剧}"
+  # 已购原盘目录(BD 收藏:MAKEMKV 原盘等;CIFS 只读扫描。路径不存在请删掉它与上方挂载行)
+  bd_owned:
+    driver: local
+    driver_opts:
+      type: cifs
+      o: "username=${NAS_USER},password=${NAS_PASS},uid=1000,gid=1000,iocharset=utf8,vers=3.0,noserverino"
+      device: "${BD_OWNED_PATH:-//192.168.2.4/Minecraft 独行侠/BD/已购BD翻录}"

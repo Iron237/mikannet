@@ -144,11 +144,20 @@ def detail(bangumi_id: int, db: Session = Depends(get_db)):
         "anidb_aid": b.anidb_aid,
         "anidb_synced_at": b.anidb_synced_at.isoformat() if b.anidb_synced_at else None,
         "season_number": b.season_number or 1,
-        "auto_best": b.auto_best,
+        "auto_best": b.auto_best, "bd_owned": b.bd_owned,
+        "bd_releases": _bd_releases_out(db, b.id),
         "episodes": eps_out,
         "unmapped_files": [_file_out(f) for f in unmapped],
         "subscriptions": [_sub_out(s) for s in subs],
     }
+
+
+def _bd_releases_out(db: Session, bangumi_id: int) -> list[dict]:
+    from app.api.bd import bd_release_out
+    from app.models import BdRelease
+    rows = db.execute(select(BdRelease).where(
+        BdRelease.bangumi_id == bangumi_id)).scalars().all()
+    return [bd_release_out(r) for r in rows]
 
 
 def _sub_out(s: Subscription) -> dict:
@@ -245,9 +254,11 @@ def update_bangumi(bangumi_id: int, payload: dict, db: Session = Depends(get_db)
             raise HTTPException(400, "kind 非法(tv/movie/ova)") from None
     if "auto_best" in payload:
         b.auto_best = bool(payload["auto_best"])
+    if "bd_owned" in payload:
+        b.bd_owned = bool(payload["bd_owned"])
     db.commit()
     return {"ok": True, "season_number": b.season_number, "kind": b.kind.value,
-            "auto_best": b.auto_best}
+            "auto_best": b.auto_best, "bd_owned": b.bd_owned}
 
 
 @router.post("/{bangumi_id}/sync-anidb")

@@ -93,6 +93,34 @@ def _check_dead(db, t, lt) -> bool:
     return False
 
 
+def _check_stall(db, t, lt) -> bool:
+    """无进度暂停(温和档,与坏种删除并存):进度长期不增长超阈值 → 暂停(不删,可手动恢复)。
+
+    只要进度还在涨就持续刷新计时;停涨超过 stall_pause_hours → 暂停 + 标 DOWNLOAD_ERROR
+    (复用「错误→恢复」入口,恢复时重置计时,见 api/tasks.resume)。返回是否已暂停。
+    """
+    if not settings.stall_pause_enabled:
+        return False
+    now = datetime.utcnow()
+    prog = float(lt.progress)
+    if t.progress_at is None or prog > (t.last_progress or 0) + 1e-6:
+        t.last_progress = prog          # 有进度:刷新快照与计时
+        t.progress_at = now
+        return False
+    if now - t.progress_at < timedelta(hours=settings.stall_pause_hours):
+        return False
+    try:
+        downloader.pause(t.info_hash)
+    except Exception:  # noqa: BLE001
+        pass
+    t.status = TorrentStatus.DOWNLOAD_ERROR
+    t.error_message = f"长期无进度(>{settings.stall_pause_hours}h),已自动暂停,可手动恢复"
+    log.info("无进度自动暂停 #%s %s", t.id, t.title_raw[:50])
+    _emit("on_fail", t)
+    db.flush()
+    return True
+
+
 def _sync_once() -> tuple[list[dict], bool]:
     """同步一轮:回写快照 + 状态迁移。返回 (广播数据, 是否有活动任务)。"""
     with db_session() as db:
@@ -124,6 +152,8 @@ def _sync_once() -> tuple[list[dict], bool]:
                     _emit("on_complete", t)
                     from app.services.postprocess import enqueue
                     enqueue(t.id)
+                elif _check_stall(db, t, lt):
+                    pass            # 无进度已自动暂停
                 elif _check_dead(db, t, lt):
                     pass            # 坏种已自动清理/换源,本轮不再计为活动
                 else:

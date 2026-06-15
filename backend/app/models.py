@@ -68,6 +68,8 @@ class Bangumi(Base):
     kind: Mapped[Kind] = mapped_column(Enum(Kind), default=Kind.TV)   # 作品形态:tv/movie/ova
     # 智能下载:开启后定期扫所有字幕组,按偏好(BD>Web/分辨率/简中)补全缺集+升级现有源
     auto_best: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 有原盘/已购 BD → 完全排除出自动下载(auto-best + RSS 轮询都跳过)。见 ADR-0004
+    bd_owned: Mapped[bool] = mapped_column(Boolean, default=False)
 
     title: Mapped[str] = mapped_column(String(255))            # 官方中文译名优先
     title_original: Mapped[str | None] = mapped_column(String(255))
@@ -166,6 +168,9 @@ class Torrent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
     stalled_since: Mapped[datetime | None] = mapped_column(DateTime)   # 坏种检测:开始无做种卡住的时刻
+    # 无进度暂停档:进度快照 + 上次进度增长的时刻(长期不增长 → 暂停)
+    last_progress: Mapped[float] = mapped_column(Float, default=0.0)
+    progress_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     subscription: Mapped[Subscription] = relationship(back_populates="torrents")
     episodes: Mapped[list[Episode]] = relationship(secondary="torrent_episode")
@@ -205,6 +210,43 @@ class VideoFile(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)  # v2 切换翻转
 
     torrent: Mapped[Torrent] = relationship(back_populates="files")
+
+
+class BdRelease(Base):
+    """一套蓝光发行:番剧下的收藏/特典实体(ADR-0004),与剧集/VideoFile 解耦。"""
+    __tablename__ = "bd_release"
+    __table_args__ = (UniqueConstraint("root_path"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    bangumi_id: Mapped[int | None] = mapped_column(ForeignKey("bangumi.id"))   # 未绑定=None
+    title: Mapped[str] = mapped_column(String(512))            # 发行文件夹名
+    source_kind: Mapped[str] = mapped_column(String(16), default="bdrip")   # bdrip | raw_disc
+    root_path: Mapped[str] = mapped_column(String(1024))       # 相对下载根 / 已购原盘挂载
+    owned: Mapped[bool] = mapped_column(Boolean, default=False)   # 已购买(有碟)
+    disc_count: Mapped[int] = mapped_column(Integer, default=1)
+    total_size: Mapped[int | None] = mapped_column(Integer)    # 字节(SQLite INTEGER 为 64 位)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    extras: Mapped[list[BdExtra]] = relationship(
+        back_populates="release", cascade="all, delete-orphan")
+
+
+class BdExtra(Base):
+    """BD 发行里的一个特典条目(ADR-0004)。含非视频:音频(FLAC)、图片(JPG)。"""
+    __tablename__ = "bd_extra"
+    __table_args__ = (UniqueConstraint("bd_release_id", "relative_path"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    bd_release_id: Mapped[int] = mapped_column(ForeignKey("bd_release.id"))
+    # sp_anime/short_drama/credits/menu/pv/audio/gallery/scans/other
+    category: Mapped[str] = mapped_column(String(24))
+    media_kind: Mapped[str] = mapped_column(String(8))        # video | audio | image | other
+    name: Mapped[str] = mapped_column(String(512))
+    relative_path: Mapped[str] = mapped_column(String(1024))  # 相对下载根(串流端点用)
+    size: Mapped[int | None] = mapped_column(Integer)
+    resolution: Mapped[str | None] = mapped_column(String(32))   # 视频特典可探测
+
+    release: Mapped[BdRelease] = relationship(back_populates="extras")
 
 
 class NotificationConfig(Base):
