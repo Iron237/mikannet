@@ -21,6 +21,10 @@ log = logging.getLogger(__name__)
 
 ACTIVE_INTERVAL = 2
 IDLE_INTERVAL = 10
+# 下载器侧「活跃下载」状态:错误任务若在 qB 恢复成这些状态 → 自愈回 DOWNLOADING
+# (pausedDL/stoppedDL 不在内 → 无进度暂停的任务保持暂停,不被自愈打回)
+_RECOVER_DL_STATES = {"downloading", "stalledDL", "metaDL", "forcedDL", "forcedMetaDL",
+                      "queuedDL", "checkingDL", "allocating"}
 
 
 class WsManager:
@@ -125,7 +129,8 @@ def _sync_once() -> tuple[list[dict], bool]:
     """同步一轮:回写快照 + 状态迁移。返回 (广播数据, 是否有活动任务)。"""
     with db_session() as db:
         rows = db.execute(select(Torrent).where(Torrent.status.in_(
-            [TorrentStatus.DOWNLOADING, TorrentStatus.COMPLETED]))).scalars().all()
+            [TorrentStatus.DOWNLOADING, TorrentStatus.COMPLETED,
+             TorrentStatus.DOWNLOAD_ERROR]))).scalars().all()
         if not rows:
             return [], False
 
@@ -157,6 +162,22 @@ def _sync_once() -> tuple[list[dict], bool]:
                 elif _check_dead(db, t, lt):
                     pass            # 坏种已自动清理/换源,本轮不再计为活动
                 else:
+                    active = True
+            elif t.status == TorrentStatus.DOWNLOAD_ERROR and lt is not None and not lt.error:
+                # 下载器侧已恢复(手动 recheck/恢复种子)→ 回写状态,别一直卡「出错」
+                if lt.done or lt.progress >= 1.0:
+                    t.status = TorrentStatus.COMPLETED
+                    t.completed_at = datetime.now(timezone.utc)
+                    t.progress = 1.0
+                    log.info("错误任务在下载器已完成,恢复入库 #%s %s", t.id, t.title_raw[:40])
+                    _emit("on_complete", t)
+                    from app.services.postprocess import enqueue
+                    enqueue(t.id)
+                elif lt.state in _RECOVER_DL_STATES:
+                    t.status = TorrentStatus.DOWNLOADING
+                    t.error_message = None
+                    t.progress_at = None
+                    log.info("错误任务在下载器已恢复下载 #%s %s", t.id, t.title_raw[:40])
                     active = True
             if lt is not None:
                 t.size = lt.size
