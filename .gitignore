@@ -20,3 +20,5 @@ mikan cookie.json
 *cookie*.json
 # 根目录里的参考截图(AutoBangumi 页面等,临时素材,不入库)
 /*.png
+# 发行构建产物(git archive 生成的 zip 等;通过 GitHub Release 分发,不入源码仓库)
+dist/
