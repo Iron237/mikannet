@@ -93,6 +93,39 @@ async function downloadHandler() {
   window.location.href = '/api/launch/handler.bat'
 }
 
+// ---- 存储(NAS / SMB,可在此重配;复用首次向导的端点)----
+const stor = ref({ mode: 'smb', smb_host_path: '', smb_username: '', smb_password: '', smb_vers: '3.0' })
+const storState = ref(null)
+const storMsg = ref('')
+const storBusy = ref(false)
+async function loadStorage() {
+  try {
+    const s = await api.get('/api/setup/storage')
+    storState.value = s
+    stor.value.mode = s.mode || 'smb'
+    stor.value.smb_host_path = s.smb_host_path || ''
+    stor.value.smb_username = s.smb_username || ''
+    stor.value.smb_vers = s.smb_vers || '3.0'
+  } catch { /* ignore */ }
+}
+async function testStorage() {
+  storBusy.value = true; storMsg.value = '测试中…'
+  try {
+    const r = await api.post('/api/setup/storage/test', stor.value)
+    storMsg.value = r.ok
+      ? `可连接${r.writable === false ? '(只读!写入失败)' : '·可写'};样例:${(r.sample || []).slice(0, 3).join(' / ') || '(空)'}`
+      : '失败:' + r.error
+  } catch (e) { storMsg.value = '失败:' + e.message } finally { storBusy.value = false }
+}
+async function saveStorage() {
+  storBusy.value = true; storMsg.value = '保存并挂载中…'
+  try {
+    await api.post('/api/setup/storage', stor.value)
+    storMsg.value = '已保存并挂载'
+    await loadStorage()
+  } catch (e) { storMsg.value = '失败:' + e.message } finally { storBusy.value = false }
+}
+
 // ---- 数据备份 / 迁移 ----
 const backupSettings = ref(false)
 const importFile = ref(null)
@@ -113,7 +146,7 @@ async function importData() {
   } catch (e) { backupMsg.value = '导入失败:' + e.message }
 }
 
-onMounted(load)
+onMounted(() => { load(); loadStorage() })
 </script>
 
 <template>
@@ -129,6 +162,35 @@ onMounted(load)
         <span class="muted" v-if="health?.info"> {{ health.info.version }} </span>
         <div class="spacer" />
         <button class="btn sm" @click="pollNow">立即检查订阅更新</button>
+      </div>
+    </div>
+
+    <!-- 存储(NAS / SMB;App 在容器内挂载到 /downloads) -->
+    <div class="card" style="margin-bottom: 16px;">
+      <div class="row" style="margin-bottom: 10px;">
+        <h3 style="margin: 0; font-size: 15px;">存储</h3>
+        <span v-if="storState" class="tag" :class="storState.mounted ? 'green' : 'red'">
+          {{ storState.mounted ? '已挂载' : '未挂载' }}
+        </span>
+        <span v-if="storState?.error" class="muted" style="font-size: 12px; color: var(--red);">{{ storState.error }}</span>
+        <div class="spacer" />
+        <span class="muted" style="font-size: 12px;">{{ storMsg }}</span>
+      </div>
+      <div class="row" style="gap: 10px; margin-bottom: 10px;">
+        <label class="row" style="gap: 5px; cursor: pointer;"><input type="radio" value="smb" v-model="stor.mode" /> NAS / SMB</label>
+        <label class="row" style="gap: 5px; cursor: pointer;"><input type="radio" value="local" v-model="stor.mode" /> 本地 / Docker 路径</label>
+      </div>
+      <div v-if="stor.mode === 'smb'" class="cfg-grid">
+        <label class="cfg-field"><span>共享地址(//主机/共享)</span><input class="input" v-model="stor.smb_host_path" placeholder="//192.168.1.100/anime/mikanarr" /></label>
+        <label class="cfg-field"><span>SMB 版本</span><input class="input" v-model="stor.smb_vers" placeholder="3.0" /></label>
+        <label class="cfg-field"><span>用户名</span><input class="input" v-model="stor.smb_username" /></label>
+        <label class="cfg-field"><span>密码(留空=不改)</span><input class="input" type="password" v-model="stor.smb_password" placeholder="留空保留原密码" /></label>
+      </div>
+      <p v-else class="muted" style="font-size: 12.5px;">使用容器内 <code>/downloads</code>(由 compose 绑定提供)。</p>
+      <div class="row" style="gap: 10px; margin-top: 10px;">
+        <button class="btn sm" :disabled="storBusy" @click="testStorage">测试连接</button>
+        <button class="btn primary sm" :disabled="storBusy" @click="saveStorage">保存并挂载</button>
+        <span class="muted" style="font-size: 12px;">挂载需容器 cap_add: SYS_ADMIN(发行 compose 已带)</span>
       </div>
     </div>
 
