@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../api'
+import Icon from '../components/Icon.vue'
 
 const health = ref(null)
 const cfg = ref({})            // key -> { value, group, type, secret }
@@ -92,6 +93,26 @@ async function downloadHandler() {
   window.location.href = '/api/launch/handler.bat'
 }
 
+// ---- 数据备份 / 迁移 ----
+const backupSettings = ref(false)
+const importFile = ref(null)
+const backupMsg = ref('')
+function exportData() {
+  window.location.href = '/api/backup/export' + (backupSettings.value ? '?include_settings=1' : '')
+}
+function onImportFile(e) { importFile.value = e.target.files[0] || null; backupMsg.value = '' }
+async function importData() {
+  if (!importFile.value) return
+  const extra = backupSettings.value ? ',并覆盖设置与通知' : ''
+  if (!window.confirm(`导入会用备份覆盖当前的番剧库 / 订阅 / 剧集 / 下载记录 / 文件路径${extra}。确定继续?`)) return
+  backupMsg.value = '导入中…'
+  try {
+    const data = JSON.parse(await importFile.value.text())
+    const r = await api.post('/api/backup/import' + (backupSettings.value ? '?include_settings=1' : ''), data)
+    backupMsg.value = `导入完成:共写入 ${r.total} 条。建议刷新页面查看番剧库。`
+  } catch (e) { backupMsg.value = '导入失败:' + e.message }
+}
+
 onMounted(load)
 </script>
 
@@ -151,6 +172,28 @@ onMounted(load)
           保存配置并下载协议处理器(.bat)
         </button>
         <span class="muted" style="font-size: 12px;">{{ cfgSaved }}</span>
+      </div>
+    </div>
+
+    <!-- 数据备份 / 迁移 -->
+    <div class="card" style="margin-bottom: 12px;">
+      <h4 style="margin: 0 0 8px; color: var(--accent);">数据备份 / 迁移</h4>
+      <p class="muted" style="font-size: 12.5px; line-height: 1.7;">
+        导出<strong>番剧库 / 订阅 / 剧集 / 下载记录 / 本地文件路径 / BD</strong> 为一个 JSON 备份;
+        在另一台(如全新部署的)实例<strong>导入</strong>即可迁移历史数据——只要 NAS 文件仍在下载根下的<strong>相同相对路径</strong>,虚拟库即可原样复现。导入为<strong>整表替换</strong>,会覆盖当前数据。
+      </p>
+      <label class="row" style="cursor: pointer; gap: 6px; font-size: 12.5px; margin: 8px 0;">
+        <input type="checkbox" v-model="backupSettings" />
+        同时含设置与通知(cookie / 凭据 / 路径前缀,跨机器慎用)
+      </label>
+      <div class="row" style="gap: 10px; flex-wrap: wrap; align-items: center;">
+        <button class="btn sm" @click="exportData"><Icon name="download" :size="13" /> 导出备份</button>
+        <input type="file" accept=".json,application/json" @change="onImportFile"
+               style="font-size: 12px; max-width: 220px;" />
+        <button class="btn sm danger" :disabled="!importFile" @click="importData">
+          <Icon name="folder-in" :size="13" /> 导入(覆盖当前数据)
+        </button>
+        <span class="muted" style="font-size: 12px;">{{ backupMsg }}</span>
       </div>
     </div>
 
