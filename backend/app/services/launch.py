@@ -1,8 +1,9 @@
 """原生启动:容器相对路径 → 宿主机真实路径 → mikanarr:// 协议 URL,并生成协议处理器安装包。
 
 后端跑在 Linux 容器、UI 是浏览器,都无法直接拉起本机 explorer / 默认播放器 / PowerDVD。
-方案:Windows 上注册自定义协议 mikanarr://,UI 点链接 → 浏览器唤起协议 → 本机 PowerShell
-处理器按动作启动程序。处理器只放行「白名单根目录下 + 令牌匹配」的请求,挡掉其他网页滥用。
+方案:Windows 上注册自定义协议 mikanarr://,UI 点链接 → 浏览器唤起协议 → 本机 JScript 处理器
+(经 wscript 无窗口运行,无控制台闪)按动作启动程序。处理器只放行「白名单根目录下 + 令牌匹配」
+的请求,挡掉其他网页滥用。安装包用 certutil 解码、reg 注册,全程不依赖 PowerShell。
 """
 from __future__ import annotations
 
@@ -89,82 +90,94 @@ def configured() -> bool:
 
 # ---- 协议处理器安装包(自包含 .bat,双击即装)--------------------------------
 
-def _handler_ps1() -> str:
-    """生成本机协议处理器(PowerShell)。令牌/白名单根/PowerDVD 路径在生成时嵌入。"""
+def _handler_js() -> str:
+    """生成本机协议处理器(JScript,经 wscript 无窗口运行 → 无控制台闪)。
+
+    令牌/白名单根/PowerDVD 路径以 JSON 字面量嵌入(json.dumps 把反斜杠转义、中文转 \\uXXXX,
+    故整份 .js 是纯 ASCII,落盘无编码问题)。decodeURIComponent 正确还原中文路径。
+    """
+    import json
     roots = [r for r in (settings.media_host_root, settings.bd_owned_host_root) if r]
-    roots_lit = ",".join("'" + r.replace("'", "''") + "'" for r in roots) or "''"
-    token = get_token().replace("'", "''")
-    pdvd = (settings.powerdvd_path or "").replace("'", "''")
-    return f"""param([string]$Uri)
-$ErrorActionPreference = 'SilentlyContinue'
-$TOKEN = '{token}'
-$ROOTS = @({roots_lit})
-$POWERDVD = '{pdvd}'
-if ($Uri -notmatch '^mikanarr://([a-zA-Z]+)/?\\?(.+)$') {{ exit 1 }}
-$action = $Matches[1].ToLower()
-$path = $null; $tok = $null
-foreach ($p in $Matches[2].Split('&')) {{
-  $i = $p.IndexOf('=')
-  if ($i -lt 0) {{ continue }}
-  $k = $p.Substring(0, $i); $v = [Uri]::UnescapeDataString($p.Substring($i + 1))
-  if ($k -eq 'path') {{ $path = $v }} elseif ($k -eq 'token') {{ $tok = $v }}
-}}
-if ($tok -ne $TOKEN -or -not $path) {{ exit 2 }}
-$pl = $path.ToLower()
-$ok = $false
-foreach ($r in $ROOTS) {{
-  if (-not $r) {{ continue }}
-  $rl = $r.ToLower().TrimEnd('\\')
-  if ($pl -eq $rl -or $pl.StartsWith($rl + '\\')) {{ $ok = $true; break }}
-}}
-if (-not $ok) {{ exit 3 }}
-switch ($action) {{
-  'play'   {{ Start-Process -FilePath $path }}
-  'reveal' {{ Start-Process explorer.exe -ArgumentList ('/select,"{{0}}"' -f $path) }}
-  'bd'     {{
-    $pd = $POWERDVD
-    if (-not $pd -or -not (Test-Path $pd)) {{
-      $pd = $null
-      foreach ($g in @("$env:ProgramFiles\\CyberLink\\PowerDVD*\\PowerDVD*.exe",
-                       "${{env:ProgramFiles(x86)}}\\CyberLink\\PowerDVD*\\PowerDVD*.exe")) {{
-        $f = Get-ChildItem -Path $g -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($f) {{ $pd = $f.FullName; break }}
-      }}
-    }}
-    if ($pd) {{ Start-Process -FilePath $pd -ArgumentList ('"{{0}}"' -f $path) }}
-    else {{ Start-Process explorer.exe -ArgumentList ('"{{0}}"' -f $path) }}
-  }}
-}}
-"""
+    js = r'''var TOKEN = __TOKEN__;
+var ROOTS = __ROOTS__;
+var POWERDVD = __POWERDVD__;
+var uri = WScript.Arguments.length ? WScript.Arguments(0) : "";
+var m = /^mikanarr:\/\/([a-zA-Z]+)\/?\?(.+)$/.exec(uri);
+if (!m) { WScript.Quit(1); }
+var action = m[1].toLowerCase();
+var parts = m[2].split("&"), path = "", token = "";
+for (var i = 0; i < parts.length; i++) {
+  var eq = parts[i].indexOf("=");
+  if (eq < 0) { continue; }
+  var k = parts[i].substring(0, eq), v = decodeURIComponent(parts[i].substring(eq + 1));
+  if (k === "path") { path = v; } else if (k === "token") { token = v; }
+}
+if (token !== TOKEN || !path) { WScript.Quit(2); }
+var pl = path.toLowerCase(), ok = false;
+for (var j = 0; j < ROOTS.length; j++) {
+  var r = ROOTS[j].toLowerCase().replace(/[\\]+$/, "");
+  if (pl === r || pl.indexOf(r + "\\") === 0) { ok = true; break; }   // exact or boundary match
+}
+if (!ok) { WScript.Quit(3); }
+var sh = new ActiveXObject("Shell.Application");
+var wsh = new ActiveXObject("WScript.Shell");
+var fso = new ActiveXObject("Scripting.FileSystemObject");
+function findPowerDVD() {
+  var bases = [wsh.ExpandEnvironmentStrings("%ProgramFiles%") + "\\CyberLink",
+               wsh.ExpandEnvironmentStrings("%ProgramFiles(x86)%") + "\\CyberLink"];
+  for (var b = 0; b < bases.length; b++) {
+    if (!fso.FolderExists(bases[b])) { continue; }
+    var subs = new Enumerator(fso.GetFolder(bases[b]).SubFolders);
+    for (; !subs.atEnd(); subs.moveNext()) {
+      if (subs.item().Name.toLowerCase().indexOf("powerdvd") !== 0) { continue; }
+      var files = new Enumerator(subs.item().Files);
+      for (; !files.atEnd(); files.moveNext()) {
+        if (/^powerdvd.*\.exe$/i.test(files.item().Name)) { return files.item().Path; }
+      }
+    }
+  }
+  return "";
+}
+if (action === "play") {
+  sh.ShellExecute(path);                                   // default app, no window
+} else if (action === "reveal") {
+  wsh.Run('explorer.exe /select,"' + path + '"', 1, false);
+} else if (action === "bd") {
+  var pd = POWERDVD;
+  if (!pd || !fso.FileExists(pd)) { pd = findPowerDVD(); }
+  if (pd) { wsh.Run('"' + pd + '" "' + path + '"', 1, false); }
+  else { wsh.Run('explorer.exe "' + path + '"', 1, false); }  // fallback: open disc folder
+}
+'''
+    return (js.replace("__TOKEN__", json.dumps(get_token()))
+              .replace("__ROOTS__", json.dumps(roots))
+              .replace("__POWERDVD__", json.dumps(settings.powerdvd_path or "")))
 
 
 def installer_bat() -> str:
-    """生成自安装 .bat:把处理器写到 %LOCALAPPDATA%\\mikanarr\\handler.ps1 + 注册 mikanarr:// 协议。"""
-    # ps1 以 UTF-8(含 BOM)落盘,保证 PowerShell 正确读取其中的中文路径
-    ps1_bytes = b"\xef\xbb\xbf" + _handler_ps1().encode("utf-8")
-    b64 = base64.b64encode(ps1_bytes).decode("ascii")
-    cmd = (
-        'powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass '
-        '-File \\"%DIR%\\handler.ps1\\" \\"%%1\\"'
-    )
+    """生成自安装 .bat:写入 JScript 处理器(%LOCALAPPDATA%\\mikanarr\\handler.js)+ 注册
+    mikanarr:// → wscript(无窗口闪)。全程不用 PowerShell:certutil 解 base64,reg 写注册表。"""
+    b64 = base64.b64encode(_handler_js().encode("ascii")).decode("ascii")   # 纯 ASCII
+    cmd = 'wscript.exe \\"%DIR%\\handler.js\\" \\"%%1\\"'
     return (
         "@echo off\r\n"
         "setlocal\r\n"
         'set "DIR=%LOCALAPPDATA%\\mikanarr"\r\n'
         'if not exist "%DIR%" mkdir "%DIR%"\r\n'
         f'set "B64={b64}"\r\n'
-        "powershell -NoProfile -Command "
-        "\"[IO.File]::WriteAllBytes('%DIR%\\handler.ps1',"
-        "[Convert]::FromBase64String($env:B64))\"\r\n"
+        '> "%DIR%\\handler.b64" echo %B64%\r\n'
+        'certutil -decode -f "%DIR%\\handler.b64" "%DIR%\\handler.js" >nul\r\n'
+        'del "%DIR%\\handler.b64" >nul 2>&1\r\n'
         'reg add "HKCU\\Software\\Classes\\mikanarr" /ve /t REG_SZ '
         '/d "URL:Mikanarr Protocol" /f >nul\r\n'
         'reg add "HKCU\\Software\\Classes\\mikanarr" /v "URL Protocol" /t REG_SZ /d "" /f >nul\r\n'
         'reg add "HKCU\\Software\\Classes\\mikanarr\\shell\\open\\command" /ve /t REG_SZ '
         f'/d "{cmd}" /f >nul\r\n'
         "echo.\r\n"
-        "echo Mikanarr protocol handler installed:\r\n"
-        "echo   %DIR%\\handler.ps1\r\n"
-        "echo You can now click play / open / PowerDVD buttons in the web UI.\r\n"
+        "echo Mikanarr protocol handler installed (JScript via wscript - no console flash):\r\n"
+        "echo   %DIR%\\handler.js\r\n"
+        "echo On first click the browser asks once to open Mikanarr - tick "
+        "\"Always allow\", then it is seamless.\r\n"
         "echo.\r\n"
         "pause\r\n"
     )

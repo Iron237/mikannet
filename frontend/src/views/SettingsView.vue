@@ -140,9 +140,11 @@ onMounted(load)
       <p class="muted" style="font-size: 12.5px; line-height: 1.7;">
         详情页的「播放 / 打开目录」「PowerDVD」按钮通过自定义协议
         <code>mikanarr://</code> 在你本机拉起默认播放器 / 资源管理器 / PowerDVD。
-        需先在上方<strong>「播放」</strong>填好宿主机路径前缀,然后下载下面的安装包<strong>在该 Windows
-        电脑上双击运行</strong>一次(写入处理器 + 注册协议,无常驻进程)。路径或前缀变更后重新下载安装即可。
-        仅在装了处理器的本机有效,手机/其他设备点击无效。
+        处理器是 Windows 自带的 JScript(经 <code>wscript</code> 运行,<strong>无窗口闪、无需 PowerShell/Python</strong>)。
+        用法:先在上方<strong>「播放」</strong>填好宿主机路径前缀,下载下面的安装包<strong>在该 Windows
+        电脑上双击运行</strong>一次(certutil 解码 + 注册协议,无常驻进程、无需管理员)。
+        首次点击时浏览器会问一次「打开 Mikanarr?」,勾<strong>「始终允许」</strong>后即免提示。
+        路径或前缀变更后重新下载安装即可。仅在装了处理器的本机有效,手机/其他设备无效。
       </p>
       <div class="row" style="margin-top: 10px;">
         <button class="btn primary sm" @click="downloadHandler">
