@@ -3,6 +3,7 @@ import { computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useTasksStore } from './stores/tasks'
 import Icon from './components/Icon.vue'
+import NativeLaunchModal from './components/NativeLaunchModal.vue'
 
 const route = useRoute()
 const bare = computed(() => route.name === 'setup')   // 首次配置向导:全屏,无侧边栏
@@ -40,6 +41,7 @@ onMounted(() => {
     <main class="content">
       <RouterView />
     </main>
+    <NativeLaunchModal />
   </div>
 </template>
 

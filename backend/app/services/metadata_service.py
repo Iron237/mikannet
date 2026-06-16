@@ -8,19 +8,26 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+import threading
 from datetime import datetime, timezone
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.clients.bgmtv import bgmtv_client
 from app.clients.mikan import mikan_client
 from app.clients.tmdb import tmdb_client
 from app.config import settings
+from app.database import db_session
 from app.models import AiringStatus, Bangumi, Kind
 
 log = logging.getLogger(__name__)
 
 IMAGES_DIR = settings.data_dir / "images"
+
+# 批量重拉元数据/封面(迁移到新机后图片文件没带过来时用):前端轮询此状态
+refresh_state: dict = {"running": False, "done": 0, "total": 0, "current": "",
+                       "fixed_covers": 0, "errors": 0}
 
 
 def _kind_from_platform(platform: str | None) -> Kind:
@@ -149,3 +156,43 @@ def enrich_bangumi(db: Session, bangumi: Bangumi,
 
     db.flush()
     return bangumi
+
+
+def _refresh_all() -> None:
+    """批量重拉:对每部番剧,若封面/背景图文件已不在(如迁移到新机后没带图片),
+    清掉对应路径再 enrich 重新下载;文件还在的保持不动。后台线程,前端轮询 refresh_state。"""
+    with db_session() as db:
+        ids = db.execute(select(Bangumi.id)).scalars().all()
+    refresh_state.update(running=True, done=0, total=len(ids), current="",
+                         fixed_covers=0, errors=0)
+    try:
+        for bid in ids:
+            try:
+                with db_session() as db:
+                    b = db.get(Bangumi, bid)
+                    if not b:
+                        continue
+                    refresh_state["current"] = b.title
+                    before = (b.poster_path, b.backdrop_path)
+                    for attr in ("poster_path", "backdrop_path"):
+                        p = getattr(b, attr)
+                        if p and not (settings.data_dir / p).exists():
+                            setattr(b, attr, None)   # 文件丢了 → 清路径,让 enrich 重下
+                    enrich_bangumi(db, b)
+                    if (b.poster_path, b.backdrop_path) != before or \
+                            (not before[0] and b.poster_path) or (not before[1] and b.backdrop_path):
+                        refresh_state["fixed_covers"] += 1
+            except Exception as e:  # noqa: BLE001 — 单部失败不拖垮整批
+                log.warning("重拉元数据 #%s 失败: %s", bid, e)
+                refresh_state["errors"] += 1
+            finally:
+                refresh_state["done"] += 1
+    finally:
+        refresh_state.update(running=False, current="")
+
+
+def start_refresh_all() -> bool:
+    if refresh_state["running"]:
+        return False
+    threading.Thread(target=_refresh_all, daemon=True).start()
+    return True

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api } from '../api'
 import Icon from '../components/Icon.vue'
 
@@ -66,7 +66,10 @@ async function load() {
 async function saveConfig() {
   cfgSaved.value = '保存中…'
   try {
-    const payload = Object.fromEntries(Object.entries(cfg.value).map(([k, o]) => [k, o.value]))
+    // 注意:表单 v-model 绑的是 groups 里的副本({key,...o}),不是 cfg.value 原对象。
+    // 必须从 groups 读用户改过的值,否则会提交旧值、保存后回退。
+    const payload = {}
+    for (const g of groups.value) for (const it of g.items) payload[it.key] = it.value
     const r = await api.put('/api/config', payload)
     cfgSaved.value = `已保存并生效(${r.applied.length} 项)`
     await load()
@@ -142,9 +145,23 @@ async function importData() {
   try {
     const data = JSON.parse(await importFile.value.text())
     const r = await api.post('/api/backup/import' + (backupSettings.value ? '?include_settings=1' : ''), data)
-    backupMsg.value = `导入完成:共写入 ${r.total} 条。建议刷新页面查看番剧库。`
+    backupMsg.value = `导入完成:共写入 ${r.total} 条。封面没显示的话,点下方「重新拉取封面/元数据」。`
   } catch (e) { backupMsg.value = '导入失败:' + e.message }
 }
+
+// 迁移后封面/banner 没带过来 → 重新从 bgm.tv/Mikan/TMDB 拉(只补缺失的图)
+const refreshMeta = ref(null)
+let refreshTimer = null
+async function refetchCovers() {
+  backupMsg.value = ''
+  try { await api.post('/api/bangumi/refresh-metadata-all', {}); pollRefresh() }
+  catch (e) { backupMsg.value = e.message }
+}
+async function pollRefresh() {
+  refreshMeta.value = await api.get('/api/bangumi/refresh-metadata-all/status')
+  if (refreshMeta.value.running) refreshTimer = setTimeout(pollRefresh, 1500)
+}
+onUnmounted(() => clearTimeout(refreshTimer))
 
 onMounted(() => { load(); loadStorage() })
 </script>
@@ -256,6 +273,16 @@ onMounted(() => { load(); loadStorage() })
           <Icon name="folder-in" :size="13" /> 导入(覆盖当前数据)
         </button>
         <span class="muted" style="font-size: 12px;">{{ backupMsg }}</span>
+      </div>
+      <div class="row" style="gap: 10px; margin-top: 10px; align-items: center; flex-wrap: wrap;">
+        <button class="btn sm" :disabled="refreshMeta?.running" @click="refetchCovers">
+          <Icon name="refresh" :size="13" /> 重新拉取封面 / 元数据
+        </button>
+        <span class="muted" style="font-size: 12px;">
+          <template v-if="refreshMeta?.running">拉取中 {{ refreshMeta.done }}/{{ refreshMeta.total }} … {{ refreshMeta.current }}</template>
+          <template v-else-if="refreshMeta">完成:补回封面 {{ refreshMeta.fixed_covers }} 部{{ refreshMeta.errors ? ` · 失败 ${refreshMeta.errors}` : '' }}(刷新页面看封面)</template>
+          <template v-else>迁移后封面/banner 没显示?点这个从 bgm.tv/Mikan/TMDB 重新下载(需代理可达)</template>
+        </span>
       </div>
     </div>
 

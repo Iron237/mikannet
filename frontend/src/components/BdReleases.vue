@@ -1,6 +1,7 @@
 <script setup>
 import { ref } from 'vue'
 import Icon from './Icon.vue'
+import { requestNative } from '../native'
 
 defineProps({ releases: { type: Array, default: () => [] } })
 
@@ -14,8 +15,8 @@ function fmtSize(n) {
 }
 const SRC_BADGE = { bdrip: ['BDRip', 'accent'], raw_disc: ['自购原盘', 'green'] }
 
-// 原生启动:导航到 mikanarr:// 协议 URL(本机协议处理器拉起 PowerDVD / 资源管理器)
-function open(url) { if (url) window.location.href = url }
+// 原生启动:未配置/未装处理器 → 弹引导框(见 NativeLaunchModal)
+function open(url) { requestNative(url) }
 </script>
 
 <template>

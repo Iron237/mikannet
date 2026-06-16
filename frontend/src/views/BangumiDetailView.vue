@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
+import { requestNative } from '../native'
 import Icon from '../components/Icon.vue'
 import FileTags from '../components/FileTags.vue'
 import BdReleases from '../components/BdReleases.vue'
@@ -117,14 +118,8 @@ async function reprobeFile(f) {
   catch (e) { opMsg.value = e.message } finally { fileBusy.value = 0 }
 }
 
-// 原生启动:导航到 mikanarr:// 协议 URL,由本机协议处理器拉起播放器/资源管理器/PowerDVD
-function native(url) {
-  if (!url) {
-    opMsg.value = '需先在「设置 → 播放」配置宿主机路径前缀,并下载安装协议处理器'
-    return
-  }
-  window.location.href = url
-}
+// 原生启动:未配置宿主机路径(url 空)或本机未装协议处理器 → 弹引导框(见 NativeLaunchModal)
+function native(url) { requestNative(url) }
 // 番剧外链
 const bgmUrl = computed(() => b.value?.bgmtv_subject_id
   ? `https://bgm.tv/subject/${b.value.bgmtv_subject_id}` : null)

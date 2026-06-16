@@ -376,6 +376,21 @@ def refresh(bangumi_id: int, db: Session = Depends(get_db)):
     return {"ok": True, "title": b.title}
 
 
+@router.post("/refresh-metadata-all")
+def refresh_all_metadata():
+    """批量重拉所有番剧元数据/封面(迁移到新机、图片没带过来时一键补齐)。后台执行。"""
+    from app.services.metadata_service import start_refresh_all
+    if not start_refresh_all():
+        raise HTTPException(409, "已有重拉任务在进行中")
+    return {"started": True}
+
+
+@router.get("/refresh-metadata-all/status")
+def refresh_all_metadata_status():
+    from app.services.metadata_service import refresh_state
+    return refresh_state
+
+
 # ---- 智能下载(扫所有字幕组挑最佳源:BD>Web、严格分辨率/简中)--------------------
 
 @router.get("/auto-scan/status")

@@ -3,7 +3,7 @@ import { onMounted, ref } from 'vue'
 import { api } from '../api'
 import Icon from '../components/Icon.vue'
 
-const STEPS = ['存储', '下载器', '代理', '元数据', '完成']
+const STEPS = ['存储', '下载器', '代理', '元数据', '原生播放', '完成']
 const step = ref(0)
 const busy = ref(false)
 const msg = ref('')
@@ -16,6 +16,7 @@ const cfg = ref({
   downloader: 'qb', qb_host: 'host.docker.internal', qb_port: 8080,
   qb_username: 'admin', qb_password: '', download_root: '/downloads',
   proxy_url: '', tmdb_api_key: '', mikan_cookie: '',
+  media_host_root: '', bd_owned_host_root: '',
 })
 const dlHealth = ref('')
 
@@ -54,12 +55,23 @@ async function next() {
       await api.put('/api/config', { proxy_url: cfg.value.proxy_url })
     } else if (step.value === 3) {
       await api.put('/api/config', { tmdb_api_key: cfg.value.tmdb_api_key, mikan_cookie: cfg.value.mikan_cookie })
+    } else if (step.value === 4) {
+      await api.put('/api/config', { media_host_root: cfg.value.media_host_root, bd_owned_host_root: cfg.value.bd_owned_host_root })
     }
     step.value++
   } catch (e) { msg.value = e.message } finally { busy.value = false }
 }
 function back() { msg.value = ''; if (step.value > 0) step.value-- }
-function skip() { msg.value = ''; step.value++ }   // 元数据可跳过
+function skip() { msg.value = ''; step.value++ }   // 元数据 / 原生播放 可跳过
+
+// 原生播放:先存宿主机路径前缀,再下载协议处理器 .bat(在本机双击运行)
+async function downloadHandler() {
+  busy.value = true; msg.value = ''
+  try {
+    await api.put('/api/config', { media_host_root: cfg.value.media_host_root, bd_owned_host_root: cfg.value.bd_owned_host_root })
+    window.location.href = '/api/launch/handler.bat'
+  } catch (e) { msg.value = e.message } finally { busy.value = false }
+}
 
 async function testDownloader() {
   busy.value = true; dlHealth.value = '测试中…'
@@ -152,7 +164,20 @@ async function finish() {
         <label class="fld"><span>蜜柑 Cookie</span><textarea class="input" rows="2" v-model="cfg.mikan_cookie" placeholder="可留空"></textarea></label>
       </div>
 
-      <!-- 4 完成 -->
+      <!-- 4 原生播放(可跳) -->
+      <div v-else-if="step === 4" class="body">
+        <h3>原生播放(可跳过)</h3>
+        <p class="muted">想用本机默认播放器播放、在资源管理器打开、PowerDVD 放蓝光?填这台电脑看 NAS 的<strong>路径前缀</strong>,
+          再下载协议处理器在本机双击装一次。不需要可跳过,以后在设置页随时配。</p>
+        <label class="fld"><span>番剧库宿主机根(如 Z:\番剧\mikanarr)</span><input class="input" v-model="cfg.media_host_root" placeholder="Z:\番剧\mikanarr" /></label>
+        <label class="fld"><span>已购原盘宿主机根(可选,如 Z:\BD\已购BD翻录)</span><input class="input" v-model="cfg.bd_owned_host_root" placeholder="可留空" /></label>
+        <div class="row" style="gap:10px;">
+          <button class="btn" :disabled="busy || !cfg.media_host_root" @click="downloadHandler">保存并下载协议处理器(.bat)</button>
+          <span class="muted" style="font-size:12px;">下载后在这台 Windows 双击运行一次</span>
+        </div>
+      </div>
+
+      <!-- 5 完成 -->
       <div v-else class="body">
         <h3>完成 🎉</h3>
         <p class="muted">配置已保存。点「进入 Mikanarr」开始用——搜索番剧、建订阅、导入历史数据(设置页「数据备份/迁移」)。</p>
@@ -160,10 +185,10 @@ async function finish() {
 
       <p v-if="msg" class="err" style="font-size:12.5px;">{{ msg }}</p>
       <div class="row foot">
-        <button class="btn" v-if="step > 0 && step < 4" @click="back">上一步</button>
+        <button class="btn" v-if="step > 0 && step < 5" @click="back">上一步</button>
         <div class="spacer" />
-        <button class="btn" v-if="step === 3" :disabled="busy" @click="skip">跳过</button>
-        <button class="btn primary" v-if="step < 4" :disabled="busy" @click="next">
+        <button class="btn" v-if="step === 3 || step === 4" :disabled="busy" @click="skip">跳过</button>
+        <button class="btn primary" v-if="step < 5" :disabled="busy" @click="next">
           {{ busy ? '处理中…' : '下一步' }}
         </button>
         <button class="btn primary" v-else :disabled="busy" @click="finish">
