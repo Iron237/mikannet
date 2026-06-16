@@ -85,6 +85,13 @@ class Settings(BaseSettings):
     # 已购原盘目录(BD 收藏:MAKEMKV 原盘等;独立 CIFS 挂载到容器内 /bd-owned,缺失则跳过)
     bd_owned_mount: str = "/bd-owned"
 
+    # 原生启动(自定义协议头 mikanarr://;详见 docs/系统运行与判别逻辑.md)
+    # 容器只存相对 download_root 的路径,这里配「你电脑上看到的根」用于映射成宿主机真实路径
+    media_host_root: str = ""        # 番剧库根(如 Z:\番剧\mikanarr)
+    bd_owned_host_root: str = ""     # 已购原盘根(如 Z:\BD\已购BD翻录)
+    powerdvd_path: str = ""          # PowerDVD.exe 路径(留空 → 处理器自动探常见安装位)
+    launch_token: str = ""           # 协议头防滥用令牌(首次需要时自动生成并存 DB)
+
     # AniDB 剧集级元数据(ADR-0003;默认关,需注册 client 名)
     anidb_enabled: bool = False
     # 官方 HTTP API 要求每个客户端注册一个名字+版本(https://anidb.net/software/add)

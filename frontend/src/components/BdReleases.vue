@@ -13,6 +13,9 @@ function fmtSize(n) {
   return (n / 1024).toFixed(0) + ' KB'
 }
 const SRC_BADGE = { bdrip: ['BDRip', 'accent'], raw_disc: ['自购原盘', 'green'] }
+
+// 原生启动:导航到 mikanarr:// 协议 URL(本机协议处理器拉起 PowerDVD / 资源管理器)
+function open(url) { if (url) window.location.href = url }
 </script>
 
 <template>
@@ -27,8 +30,25 @@ const SRC_BADGE = { bdrip: ['BDRip', 'accent'], raw_disc: ['自购原盘', 'gree
       <span v-if="r.extra_count" class="tag">特典 {{ r.extra_count }} 项</span>
     </div>
 
-    <div v-if="r.source_kind === 'raw_disc' && !r.groups?.length" class="muted bd-raw">
-      自购原盘(BDMV)· 当前仅登记占位,m2ts 深度解析后续支持。
+    <!-- 自购原盘:逐碟 PowerDVD 蓝光播放 / 资源管理器定位 -->
+    <div v-if="r.source_kind === 'raw_disc'" class="bd-discs">
+      <template v-if="r.discs?.length">
+        <div v-for="d in r.discs" :key="d.name" class="bd-disc">
+          <Icon name="disc" :size="14" class="muted" />
+          <span class="bd-fname" :title="d.name">{{ d.name }}</span>
+          <div class="spacer" />
+          <button class="btn xs" :disabled="!d.bd_url" title="用 PowerDVD 蓝光播放(带菜单)" @click="open(d.bd_url)">
+            <Icon name="play" :size="12" /> PowerDVD
+          </button>
+          <button class="btn xs" :disabled="!d.reveal_url" title="在资源管理器中打开" @click="open(d.reveal_url)">
+            <Icon name="folder-open" :size="12" /> 打开目录
+          </button>
+        </div>
+        <div v-if="!r.discs[0].bd_url" class="muted bd-raw">
+          未配置「已购原盘宿主机根」— 在 设置 → 播放 填写并安装协议处理器后可一键播放
+        </div>
+      </template>
+      <div v-else class="muted bd-raw">自购原盘(BDMV)· 未发现可播放的碟结构(或目录未挂载)</div>
     </div>
 
     <div v-for="g in r.groups" :key="g.category" class="bd-group">
@@ -71,6 +91,8 @@ const SRC_BADGE = { bdrip: ['BDRip', 'accent'], raw_disc: ['自购原盘', 'gree
 .bd-rel { margin-bottom: 12px; padding: 13px 16px; }
 .bd-title { word-break: break-all; }
 .bd-raw { font-size: 12.5px; margin-top: 8px; }
+.bd-discs { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.bd-disc { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
 .bd-group { margin-top: 12px; }
 .bd-group-h { font-size: 13px; color: var(--accent); font-weight: 600; margin-bottom: 8px; }
 .bd-group-h .muted { font-weight: 400; font-size: 12px; }

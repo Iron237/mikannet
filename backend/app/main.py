@@ -10,8 +10,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import scheduler
-from app.api import (bangumi, bd, config, files, import_mikan, logs, notifications, search,
-                     subscriptions, system, tasks, ws)
+from app.api import (bangumi, bd, config, files, import_mikan, launch, logs, notifications,
+                     search, subscriptions, system, tasks, ws)
 from app.clients.downloader import downloader
 from app.config import settings
 from app.database import init_db
@@ -55,6 +55,7 @@ app.include_router(files.router)
 app.include_router(notifications.router)
 app.include_router(import_mikan.router)
 app.include_router(config.router)
+app.include_router(launch.router)
 app.include_router(logs.router)
 
 (settings.data_dir / "images").mkdir(parents=True, exist_ok=True)

@@ -71,10 +71,14 @@ def create_subscription(payload: SubscriptionCreate, background: BackgroundTasks
 
 @router.get("", response_model=list[SubscriptionOut])
 def list_subscriptions(db: Session = Depends(get_db)):
-    # 排除「本地导入/智能下载」容器订阅(它们只是挂文件的载体,不是用户 RSS 订阅)
-    subs = db.execute(select(Subscription).where(
-        Subscription.mikan_subgroup_id.notin_(["local", "auto"]))).scalars().all()
+    # 显示所有来源:RSS 订阅 + 本地导入(local)+ 智能下载(auto)容器,前端按 source 区分操作
+    subs = db.execute(select(Subscription)).scalars().all()
     return [_to_out(s, s.bangumi.title) for s in subs]
+
+
+def _sub_source(sub: Subscription) -> str:
+    """订阅来源:rss / local(本地导入)/ auto(智能下载)。"""
+    return {"local": "local", "auto": "auto"}.get(sub.mikan_subgroup_id, "rss")
 
 
 @router.patch("/{sub_id}", response_model=SubscriptionOut)
@@ -156,4 +160,4 @@ def _to_out(sub: Subscription, title: str) -> SubscriptionOut:
         last_poll_ok=sub.last_poll_ok if sub.last_poll_ok is not None else True,
         last_poll_error=sub.last_poll_error,
         exclude_batch=sub.exclude_batch, backfill=sub.backfill, save_path=sub.save_path,
-        enabled=sub.enabled, last_checked_at=sub.last_checked_at)
+        enabled=sub.enabled, last_checked_at=sub.last_checked_at, source=_sub_source(sub))

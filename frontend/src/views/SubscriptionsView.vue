@@ -6,6 +6,7 @@ import LocalImportModal from '../components/LocalImportModal.vue'
 import SubscribeWizard from '../components/SubscribeWizard.vue'
 import Icon from '../components/Icon.vue'
 
+const SRC = { auto: '智能下载', local: '本地导入' }
 const subs = ref([])
 const showWizard = ref(false)
 const editing = ref(null)
@@ -131,26 +132,38 @@ onUnmounted(() => { clearTimeout(pollTimer); clearTimeout(allTimer) })
     <div v-for="s in subs" :key="s.id" class="card sub-row" :class="{ sel: isSel(s.id) }">
       <div class="row">
         <input type="checkbox" class="ck" :checked="isSel(s.id)" @change="toggleSel(s.id)" />
-        <span class="health" :class="s.last_poll_ok ? 'ok' : 'bad'"
+        <span v-if="s.source === 'rss'" class="health" :class="s.last_poll_ok ? 'ok' : 'bad'"
               :title="s.last_poll_error || 'RSS 正常'">●</span>
+        <Icon v-else :name="s.source === 'auto' ? 'zap' : 'folder'" :size="15" class="muted" />
         <div>
-          <div style="font-weight: 600;">{{ s.bangumi_title }}</div>
+          <div style="font-weight: 600;">
+            <RouterLink :to="`/bangumi/${s.bangumi_id}`" class="b-link">{{ s.bangumi_title }}</RouterLink>
+            <span v-if="s.source !== 'rss'" class="tag" style="margin-left: 8px;">{{ SRC[s.source] }}</span>
+          </div>
           <div class="muted" style="font-size: 12.5px; margin-top: 2px;">
-            {{ s.subgroup_name || '字幕组 #' + s.mikan_subgroup_id }}
-            <span v-if="s.include_keywords.length"> · 包含: {{ s.include_keywords.join(' + ') }}</span>
-            <span v-if="s.exclude_keywords.length"> · 排除: {{ s.exclude_keywords.join(' / ') }}</span>
-            <span> · {{ s.exclude_batch ? '排除合集' : '允许合集' }}</span>
-            <span> · {{ s.backfill ? '补齐历史' : '只追新' }}</span>
+            <template v-if="s.source === 'rss'">
+              {{ s.subgroup_name || '字幕组 #' + s.mikan_subgroup_id }}
+              <span v-if="s.include_keywords.length"> · 包含: {{ s.include_keywords.join(' + ') }}</span>
+              <span v-if="s.exclude_keywords.length"> · 排除: {{ s.exclude_keywords.join(' / ') }}</span>
+              <span> · {{ s.exclude_batch ? '排除合集' : '允许合集' }}</span>
+              <span> · {{ s.backfill ? '补齐历史' : '只追新' }}</span>
+            </template>
+            <template v-else>
+              {{ s.source === 'auto' ? '智能下载补全的源(随番剧库扫描自动维护)' : '本地导入的文件容器' }}
+            </template>
           </div>
         </div>
         <div class="spacer" />
-        <span class="muted" style="font-size: 12px;" v-if="s.last_checked_at">
-          上次检查 {{ new Date(s.last_checked_at + 'Z').toLocaleString('zh-CN') }}
-        </span>
-        <button class="btn sm" @click="editing = s"><Icon name="edit" :size="13" /> 编辑规则</button>
-        <button class="btn sm" :class="{ primary: s.enabled }" @click="toggle(s)">
-          {{ s.enabled ? '已启用' : '已停用' }}
-        </button>
+        <template v-if="s.source === 'rss'">
+          <span class="muted" style="font-size: 12px;" v-if="s.last_checked_at">
+            上次检查 {{ new Date(s.last_checked_at + 'Z').toLocaleString('zh-CN') }}
+          </span>
+          <button class="btn sm" @click="editing = s"><Icon name="edit" :size="13" /> 编辑规则</button>
+          <button class="btn sm" :class="{ primary: s.enabled }" @click="toggle(s)">
+            {{ s.enabled ? '已启用' : '已停用' }}
+          </button>
+        </template>
+        <RouterLink v-else class="btn sm" :to="`/bangumi/${s.bangumi_id}`"><Icon name="library" :size="13" /> 查看</RouterLink>
         <button class="btn sm danger" @click="delConfirm = { ids: [s.id] }"><Icon name="trash" :size="13" /> 删除</button>
       </div>
     </div>
@@ -264,6 +277,8 @@ onUnmounted(() => { clearTimeout(pollTimer); clearTimeout(allTimer) })
 .health { font-size: 10px; }
 .health.ok { color: var(--green); }
 .health.bad { color: var(--red); }
+.b-link { color: var(--text); text-decoration: none; }
+.b-link:hover { color: var(--accent); }
 .batch-bar {
   display: flex; align-items: center; gap: 8px; padding: 10px 16px; margin-bottom: 12px;
   position: sticky; top: 8px; z-index: 10; border-color: var(--accent-dim);

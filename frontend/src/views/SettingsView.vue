@@ -34,8 +34,12 @@ const LABELS = {
   auto_dl_sub_lang: '字幕语言要求(简中 = 必须含简体)',
   auto_dl_prefer_bd: '片源优先 BD > Web(并把已有 Web 升级为 BD)',
   auto_dl_interval_min: '定期智能扫描间隔(分钟,0=关闭)',
+  media_host_root: '番剧库宿主机根(你电脑上看到的,如 Z:\\番剧\\mikanarr)',
+  bd_owned_host_root: '已购原盘宿主机根(如 Z:\\BD\\已购BD翻录)',
+  powerdvd_path: 'PowerDVD.exe 路径(留空 → 自动探测常见安装位)',
 }
-const GROUP_ORDER = ['常规', '智能下载', '下载器', '代理', '搜索源', '整理', '坏种清理', 'AniDB', 'LLM']
+const GROUP_ORDER = ['常规', '智能下载', '下载器', '代理', '搜索源', '整理', '播放',
+  '坏种清理', 'AniDB', 'LLM']
 
 const channelMeta = {
   telegram: { name: 'Telegram Bot', fields: [['bot_token', 'Bot Token'], ['chat_id', 'Chat ID']] },
@@ -82,6 +86,12 @@ async function testCh(ch) {
 }
 async function pollNow() { await api.post('/api/system/poll') }
 
+// 先保存配置(让 .bat 嵌入当前路径前缀 + 令牌),再下载自安装协议处理器
+async function downloadHandler() {
+  await saveConfig()
+  window.location.href = '/api/launch/handler.bat'
+}
+
 onMounted(load)
 </script>
 
@@ -121,6 +131,24 @@ onMounted(load)
                  :type="it.secret ? 'password' : 'text'"
                  :placeholder="it.secret ? '已设置(留空不改)' : ''" />
         </label>
+      </div>
+    </div>
+
+    <!-- 原生播放:协议处理器 -->
+    <div class="card" style="margin-bottom: 12px;">
+      <h4 style="margin: 0 0 8px; color: var(--accent);">原生播放 / 协议处理器</h4>
+      <p class="muted" style="font-size: 12.5px; line-height: 1.7;">
+        详情页的「播放 / 打开目录」「PowerDVD」按钮通过自定义协议
+        <code>mikanarr://</code> 在你本机拉起默认播放器 / 资源管理器 / PowerDVD。
+        需先在上方<strong>「播放」</strong>填好宿主机路径前缀,然后下载下面的安装包<strong>在该 Windows
+        电脑上双击运行</strong>一次(写入处理器 + 注册协议,无常驻进程)。路径或前缀变更后重新下载安装即可。
+        仅在装了处理器的本机有效,手机/其他设备点击无效。
+      </p>
+      <div class="row" style="margin-top: 10px;">
+        <button class="btn primary sm" @click="downloadHandler">
+          保存配置并下载协议处理器(.bat)
+        </button>
+        <span class="muted" style="font-size: 12px;">{{ cfgSaved }}</span>
       </div>
     </div>
 

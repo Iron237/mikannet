@@ -16,14 +16,19 @@ def _poster_url(b: Bangumi) -> str | None:
 
 
 def _file_out(f) -> dict:
-    """视频文件展示信息:分辨率/字幕组/片源/编码/色深/HDR/码率 + 音轨(含声道)/字幕轨(含外挂)。"""
+    """视频文件展示信息:分辨率/字幕组/片源/编码/色深/HDR/码率 + 音轨(含声道)/字幕轨(含外挂)
+    + 原生启动 URL(本机默认播放器播放 / 资源管理器定位;未配置宿主前缀则为 None)。"""
     from pathlib import PurePosixPath
+
+    from app.services import launch
     return {
         "id": f.id, "path": f.relative_path, "name": PurePosixPath(f.relative_path).name,
         "size": f.size, "resolution": f.resolution, "subgroup": f.subgroup,
         "source": f.source, "codec": f.video_codec,
         "color_depth": f.color_depth, "hdr": f.hdr, "bitrate": f.bitrate,
         "audio_tracks": f.audio_tracks, "subtitle_tracks": f.subtitle_tracks,
+        "play_url": launch.media_launch("play", f.relative_path),
+        "reveal_url": launch.media_launch("reveal", f.relative_path),
     }
 
 
@@ -176,12 +181,17 @@ def _bd_releases_out(db: Session, bangumi_id: int) -> list[dict]:
     return [bd_release_out(r) for r in rows]
 
 
+def _sub_source(s: Subscription) -> str:
+    """订阅来源:rss(用户 RSS 订阅)/ local(本地导入容器)/ auto(智能下载容器)。"""
+    return {"local": "local", "auto": "auto"}.get(s.mikan_subgroup_id, "rss")
+
+
 def _sub_out(s: Subscription) -> dict:
-    """订阅源详情(详情页订阅卡):字幕组 / 规则 / RSS 健康 / 上次检查 / 本地容器标记。"""
+    """订阅源详情(详情页订阅卡):字幕组 / 规则 / RSS 健康 / 上次检查 / 来源标记。"""
     is_local = s.mikan_subgroup_id == LOCAL_SUBGROUP_ID
     return {
         "id": s.id, "subgroup_name": s.subgroup_name, "mikan_subgroup_id": s.mikan_subgroup_id,
-        "enabled": s.enabled, "is_local": is_local,
+        "enabled": s.enabled, "is_local": is_local, "source": _sub_source(s),
         "exclude_batch": s.exclude_batch, "backfill": s.backfill,
         "include_keywords": s.include_keywords or [], "exclude_keywords": s.exclude_keywords or [],
         "pinned_guids": s.pinned_guids or [], "blocked_guids": s.blocked_guids or [],

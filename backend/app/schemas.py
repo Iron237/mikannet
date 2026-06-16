@@ -38,6 +38,7 @@ class SubscriptionOut(BaseModel):
     save_path: str
     enabled: bool
     last_checked_at: datetime | None
+    source: str = "rss"          # rss / local(本地导入)/ auto(智能下载)
 
     model_config = {"from_attributes": True}
 

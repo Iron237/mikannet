@@ -116,6 +116,20 @@ async function reprobeFile(f) {
   try { await api.post(`/api/files/${f.id}/reprobe`, {}); await load() }
   catch (e) { opMsg.value = e.message } finally { fileBusy.value = 0 }
 }
+
+// 原生启动:导航到 mikanarr:// 协议 URL,由本机协议处理器拉起播放器/资源管理器/PowerDVD
+function native(url) {
+  if (!url) {
+    opMsg.value = '需先在「设置 → 播放」配置宿主机路径前缀,并下载安装协议处理器'
+    return
+  }
+  window.location.href = url
+}
+// 番剧外链
+const bgmUrl = computed(() => b.value?.bgmtv_subject_id
+  ? `https://bgm.tv/subject/${b.value.bgmtv_subject_id}` : null)
+const moegirlUrl = computed(() => b.value?.title
+  ? `https://zh.moegirl.org.cn/${encodeURIComponent(b.value.title)}` : null)
 async function confirmDelFile() {
   const f = delFile.value
   opMsg.value = ''
@@ -219,6 +233,13 @@ onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
               {{ b.airing_status === 'airing' ? '连载中' : '已完结' }}
             </span>
             <span v-if="b.score" class="tag accent"><Icon name="star" :size="12" /> {{ b.score }}</span>
+            <a v-if="bgmUrl" :href="bgmUrl" target="_blank" rel="noopener" class="tag ext-link">
+              <Icon name="external" :size="12" /> Bangumi
+            </a>
+            <a :href="moegirlUrl" target="_blank" rel="noopener" class="tag ext-link"
+               title="按中文名跳转萌娘百科,不存在则落到搜索/创建页">
+              <Icon name="external" :size="12" /> 萌娘百科
+            </a>
           </div>
           <p class="summary muted" v-if="b.summary">{{ b.summary }}</p>
           <div class="row" style="margin-top: 12px; gap: 8px; align-items: center; flex-wrap: wrap;">
@@ -316,6 +337,14 @@ onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
           <span class="tag" :class="epStatus[ep.status]?.[1]">{{ epStatus[ep.status]?.[0] ?? ep.status }}</span>
           <span v-if="ep.version > 1" class="tag accent">v{{ ep.version }}</span>
           <div class="spacer" />
+          <template v-if="ep.files.length">
+            <button class="btn xs" title="用默认播放器播放" @click.stop="native(ep.files[0].play_url)">
+              <Icon name="play" :size="12" /> 播放
+            </button>
+            <button class="btn xs" title="在资源管理器中打开" @click.stop="native(ep.files[0].reveal_url)">
+              <Icon name="folder-open" :size="12" /> 打开目录
+            </button>
+          </template>
           <span class="muted" style="font-size: 12px;" v-if="ep.files.length">{{ ep.files.length }} 个文件</span>
           <Icon v-if="ep.files.length" :name="expanded.has(ep.id) ? 'chevron-down' : 'chevron-right'" :size="15" class="muted" />
         </div>
@@ -323,6 +352,8 @@ onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
           <div v-for="f in ep.files" :key="f.id" class="file">
             <FileTags :file="f" :show-path="true" />
             <div class="file-ops">
+              <button class="btn xs" title="用默认播放器播放" @click="native(f.play_url)"><Icon name="play" :size="12" /> 播放</button>
+              <button class="btn xs" title="在资源管理器中打开" @click="native(f.reveal_url)"><Icon name="folder-open" :size="12" /> 打开目录</button>
               <button class="btn xs" :disabled="fileBusy === f.id" @click="reprobeFile(f)"><Icon name="refresh" :size="12" /> 重探测</button>
               <button class="btn xs" @click="startFileEdit(f, ep)"><Icon name="folder-in" :size="12" /> 归位/改类型</button>
               <button class="btn xs" :disabled="fileBusy === f.id" @click="unassignFile(f)">移出</button>
@@ -351,6 +382,8 @@ onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
         <div v-for="f in b.unmapped_files" :key="'u' + f.id" class="card file unmapped">
           <FileTags :file="f" :show-path="true" />
           <div class="file-ops">
+            <button class="btn xs" title="用默认播放器播放" @click="native(f.play_url)"><Icon name="play" :size="12" /> 播放</button>
+            <button class="btn xs" title="在资源管理器中打开" @click="native(f.reveal_url)"><Icon name="folder-open" :size="12" /> 打开目录</button>
             <button class="btn xs" :disabled="fileBusy === f.id" @click="reprobeFile(f)"><Icon name="refresh" :size="12" /> 重探测</button>
             <button class="btn xs" @click="startFileEdit(f)"><Icon name="folder-in" :size="12" /> 归位到集</button>
             <button class="btn xs danger" @click="delFile = f"><Icon name="trash" :size="12" /> 删除</button>
@@ -448,6 +481,8 @@ onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
 }
 .hero-info h1 { font-size: 26px; }
 .kind { display: inline-flex; align-items: center; gap: 4px; }
+.ext-link { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; cursor: pointer; }
+.ext-link:hover { border-color: var(--accent); color: var(--accent); }
 .summary {
   margin-top: 12px; font-size: 13px; max-width: 720px;
   display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;

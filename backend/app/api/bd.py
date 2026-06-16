@@ -22,14 +22,42 @@ _CATEGORY_ORDER = ["sp_anime", "short_drama", "credits", "pv", "menu",
                    "audio", "gallery", "scans", "other"]
 
 
+def _owned_discs(r: BdRelease) -> list[dict]:
+    """自购原盘:枚举含 BDMV 的碟子目录 → PowerDVD 蓝光播放 / 资源管理器定位目标(按碟)。"""
+    from pathlib import Path
+
+    from app.services import launch
+    if r.source_kind != "raw_disc" or not (r.root_path or "").startswith("@owned/"):
+        return []
+    folder = r.root_path[len("@owned/"):]
+    mount = Path(settings.bd_owned_mount) / folder
+    if not mount.is_dir():
+        return []
+    out: list[dict] = []
+    for d in sorted([x for x in mount.iterdir() if x.is_dir()], key=lambda x: x.name):
+        if (d / "BDMV").is_dir():
+            host = launch.owned_host_path(f"{folder}/{d.name}")
+            out.append({"name": d.name, "bd_url": launch.launch_url("bd", host),
+                        "reveal_url": launch.launch_url("reveal", host)})
+    if not out and (mount / "BDMV").is_dir():   # 单碟直接在发行根
+        host = launch.owned_host_path(folder)
+        out.append({"name": r.title, "bd_url": launch.launch_url("bd", host),
+                    "reveal_url": launch.launch_url("reveal", host)})
+    return out
+
+
 def bd_release_out(r: BdRelease) -> dict:
-    """一套 BD 发行 → 展示结构(特典按类别分组)。"""
+    """一套 BD 发行 → 展示结构(特典按类别分组;自购原盘附逐碟 PowerDVD 启动)。"""
+    from app.services import launch
     by_cat: dict[str, list] = {}
     for e in r.extras:
         by_cat.setdefault(e.category, []).append({
             "id": e.id, "name": e.name, "media_kind": e.media_kind,
             "size": e.size, "resolution": e.resolution,
             "url": f"/api/bd/extra/{e.id}/raw",
+            "play_url": launch.media_launch("play", e.relative_path) if e.media_kind == "video"
+            else None,
+            "reveal_url": launch.media_launch("reveal", e.relative_path),
         })
     groups = [{"category": c, "label": CATEGORY_LABELS.get(c, c), "items": by_cat[c]}
               for c in _CATEGORY_ORDER if c in by_cat]
@@ -37,6 +65,7 @@ def bd_release_out(r: BdRelease) -> dict:
         "id": r.id, "title": r.title, "source_kind": r.source_kind, "owned": r.owned,
         "disc_count": r.disc_count, "total_size": r.total_size,
         "bangumi_id": r.bangumi_id, "extra_count": len(r.extras), "groups": groups,
+        "discs": _owned_discs(r),
     }
 
 

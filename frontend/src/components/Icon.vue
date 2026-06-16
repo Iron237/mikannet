@@ -42,6 +42,8 @@ const ICONS = {
   disc: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.4"/>',
   edit: '<path d="M4 20h4l10-10-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
   link: '<path d="M9 15l6-6"/><path d="M10.5 6.5l1.8-1.8a3.5 3.5 0 0 1 5 5L14.5 12"/><path d="M13.5 17.5l-1.8 1.8a3.5 3.5 0 0 1-5-5L9.5 12"/>',
+  external: '<path d="M14 4h6v6"/><path d="M20 4l-8.5 8.5"/><path d="M19 13.5V19a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 19V8a1.5 1.5 0 0 1 1.5-1.5H12"/>',
+  'folder-open': '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v1H6.5a2 2 0 0 0-1.9 1.4L3 17z"/><path d="M3 17l1.6-5.6A2 2 0 0 1 6.5 10H21l-2 7a1 1 0 0 1-1 0.8H4a1 1 0 0 1-1-1z"/>',
   clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
   database: '<ellipse cx="12" cy="5.5" rx="7.5" ry="3"/><path d="M4.5 5.5v12c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-12"/><path d="M4.5 11.5c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3"/>',
   'chevron-right': '<path d="M9 6l6 6-6 6"/>',
