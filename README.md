@@ -23,42 +23,20 @@ docker compose up -d --build
 ```
 
 - WebUI: http://localhost:8008
-- 下载器:**桌面 qBittorrent**(.env 里 `QB_HOST=host.docker.internal` `QB_PORT=19897`)——绕开 Docker Desktop 双重 NAT 的入站连通性问题,下载走桌面那条单层 NAT 的快网。
-  - 桌面 qB 需开 WebUI、关「Host 头校验」、能写 NAS;mikanarr 把下载存到 `DOWNLOAD_ROOT` 指的 NAS UNC,自己从 `/downloads` 读同一份。
-  - 容器版 qB(`qbittorrent:18080`)仍在 compose 里(已 stop),改回 `QB_HOST=qbittorrent`/`QB_PORT=18080`/`DOWNLOAD_ROOT=/downloads` 即可回退。
 
-### 重要约定
+### 注意事项
 
-- **qB 5.x Host 头校验**:WebUI 内外端口必须一致(compose 已统一 18080),否则一律 401。
+- **qBittorrent Host 头校验**:WebUI 内外端口必须一致(compose 已统一 18080)。
 - **代理**:国内环境 Mikan/bgm.tv/TMDB/Telegram 基本都需要代理;容器内访问宿主代理用 `host.docker.internal`。
 - **`.torrent` 由 app 经代理取回字节再投给 qB**,qB 容器本身不需要代理。
 
-### 迁移到 NAS Docker
+### 迁移到 Docker
 
-容器内路径(`/downloads`、`/config`)是稳定契约,数据库记录的都是相对路径。迁移步骤:
+容器内路径(`/downloads`、`/config`),数据库记录的都是相对路径。迁移步骤:
 
 1. 停止 compose,把 `./data/` 目录拷到 NAS
 2. 修改 `docker-compose.yml` 的 `downloads` 卷:删掉 CIFS `driver_opts`,改为 NAS 本地路径绑定
 3. NAS 上 `docker compose up -d`,启动对账会自动校正任务状态
-
-## 开发
-
-```bash
-# 后端(Python 3.11)
-cd backend
-python -m venv .venv && .venv/Scripts/pip install -e .[dev]
-.venv/Scripts/python -m uvicorn app.main:app --port 8008 --reload
-
-# 前端
-cd frontend
-npm install && npm run dev    # http://localhost:5173,代理到 8008
-
-# 测试(标题解析语料回归 + Mikan HTML 快照 + 状态机)
-cd backend && .venv/Scripts/python -m pytest tests/ -q
-```
-
-开发期 qBittorrent:`docker run -d --name qb -p 18080:18080 -e WEBUI_PORT=18080 linuxserver/qbittorrent`,
-`backend/.env` 里配置 `MIKANARR_DOWNLOAD_ROOT_LOCAL` 指向 qB 下载目录的本机视角路径。
 
 ## 架构速览
 
@@ -71,5 +49,3 @@ RSS 轮询(APScheduler 15min)
   → 完成 → ffprobe 串行队列 → 文件↔剧集映射 → v2 切换 → 入库(ARCHIVED)
   → 事件总线 → 通知(Telegram/Server酱/PushPlus)
 ```
-
-核心不变式(ADR-0001):**下载文件永不移动/重命名**,番剧库是数据库上的虚拟视图。
