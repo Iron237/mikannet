@@ -23,6 +23,8 @@ echo ^> 构建并启动 Mikanarr ...
 docker compose up -d --build
 if errorlevel 1 (
   echo [X] 启动失败,请检查上方错误与 .env 配置。
+  echo     若是拉取基础镜像超时^(auth.docker.io / registry-1.docker.io^) = 连不上 Docker Hub:
+  echo     Docker Desktop ^> Settings ^> Docker Engine 加 registry-mirrors 后 Apply ^& Restart^(见 DEPLOY.md^),再重试。
   pause & exit /b 1
 )
 echo.

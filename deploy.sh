@@ -28,7 +28,13 @@ if [ ! -f .env ]; then
 fi
 
 echo "▶ 构建并启动 Mikanarr ..."
-$DC $FILES up -d --build
+if ! $DC $FILES up -d --build; then
+  echo
+  echo "✗ 构建/启动失败。"
+  echo "  若错误是拉取基础镜像超时(auth.docker.io / registry-1.docker.io)→ 本机连不上 Docker Hub:"
+  echo "  编辑 /etc/docker/daemon.json 加 registry-mirrors 后重启 docker(见 DEPLOY.md「构建时拉基础镜像超时」),再重试。"
+  exit 1
+fi
 echo
 echo "✓ 已启动。WebUI:  http://localhost:8008"
 echo "  查看日志:        ./deploy.sh logs"
