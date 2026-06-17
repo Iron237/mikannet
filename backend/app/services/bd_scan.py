@@ -42,6 +42,7 @@ _CAT_DIR: list[tuple[re.Pattern, str]] = [
     (re.compile(r"图集|圖集|Images?|Gallery|Pictures?|Pixiv|插画|插畫", re.I), "gallery"),
     (re.compile(r"Scans?|扫描|掃描|书子|書子|Booklet|BK\b", re.I), "scans"),
     (re.compile(r"^CDs?$|原声|原聲|Soundtrack|\bOST\b|サウンドトラック|角色歌|Audio|Music", re.I), "audio"),
+    (re.compile(r"特典映像|映像特典|特典|Bonus|Extras?\b", re.I), "other"),
 ]
 # 文件名标记 → 类别(不在归类子目录里时用)
 _CAT_FILE: list[tuple[re.Pattern, str]] = [

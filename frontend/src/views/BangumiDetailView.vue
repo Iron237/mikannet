@@ -41,8 +41,6 @@ const KIND = { tv: ['tv', 'TV 连载'], movie: ['film', '剧场版'], ova: ['dis
 const EP_TYPE = { special: '特别篇', credits: 'OP/ED', trailer: 'PV/预告', other: '映像特典' }
 // 正片导入向导
 const importReleases = ref(null)   // 非空 = 打开向导(传入的发行数组)
-const bdripReleases = computed(() => (b.value?.bd_releases || []).filter(
-  x => x.source_kind === 'bdrip' && x.bangumi_id))
 function onImported() { importReleases.value = null; load() }
 const EP_TYPE_OPTS = [['regular', '正片'], ['special', '特别篇'], ['credits', 'OP/ED'], ['trailer', 'PV/预告'], ['other', '其他']]
 const epStatus = {
@@ -400,20 +398,12 @@ onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
         </div>
       </template>
 
-      <!-- BD 发行 -->
+      <!-- BD 发行(导入按钮在每套发行行内,见 BdReleases)-->
       <template v-if="b.bd_releases && b.bd_releases.length">
-        <div class="row" style="margin-top: 22px; align-items: baseline; gap: 10px;">
-          <div class="page-title" style="margin: 0;">BD 发行
-            <span class="muted" style="font-size: 12px; font-weight: 400;">
-              (正片可导入替换 web;特典 / 扫描 / CD 点「打开目录」用本机应用浏览)
-            </span>
-          </div>
-          <div class="spacer" />
-          <button v-if="bdripReleases.length" class="btn sm primary"
-                  title="把 BD 发行的视频按集号登记为正片(替换 web);支持自动匹配 + 逐个手动指定"
-                  @click="importReleases = bdripReleases">
-            <Icon name="download" :size="14" /> 导入BD正片
-          </button>
+        <div class="page-title" style="margin-top: 22px;">BD 发行
+          <span class="muted" style="font-size: 12px; font-weight: 400;">
+            (正片可导入替换 web;特典 / 扫描 / CD 点「打开目录」用本机应用浏览)
+          </span>
         </div>
         <BdReleases :releases="b.bd_releases" @import="ir => importReleases = [ir]" />
       </template>

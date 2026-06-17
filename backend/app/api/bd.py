@@ -100,37 +100,41 @@ def _require_bdrip_bound(db: Session, release_id: int) -> BdRelease:
 
 @router.get("/releases/{release_id}/candidates")
 def import_candidates(release_id: int, db: Session = Depends(get_db)):
-    """正片导入向导:列发行目录内全部视频 + 每个的自动猜测(集号 / 是否特典)+ 当前登记。
+    """正片导入向导:列**整个番剧目录**内全部视频(含 Season 等子文件夹)+ 自动猜测 + 当前登记。
 
-    弃用「后台自动判断」,改由用户在向导里逐个确认:返回 guess(按文件名序号)作为预填,
-    用户可改集号 / 标为特典(不导入)。同时返回该番已有正片集号,供参考。
+    扫整个番剧目录而非仅发行文件夹:整理器(organize)会把 BD 剧集改名移进 `番剧名/Season xx/`,
+    与发行文件夹平级 → 只扫发行文件夹会漏掉剧集。返回 guess(按文件名序号)作预填,用户可改集号 /
+    标为特典(不导入)。folder = 文件相对番剧目录的所在子目录,供前端区分(Season / 特典 / 散落)。
     """
-    from pathlib import Path
+    from pathlib import Path, PurePosixPath
 
     from app.parsers.title_parser import parse
     from app.models import Episode, EpisodeType, Subscription, Torrent, VideoFile
     from app.services import media_probe
-    from app.services.bd_scan import bd_is_extra_video
+    from app.services.bd_scan import bd_is_extra_video, is_extra_dir
 
     r = _require_bdrip_bound(db, release_id)
     b = db.get(Bangumi, r.bangumi_id)
     root = Path(settings.download_root_local)
-    rel_dir = root / r.root_path
+    bangumi_dir = root / PurePosixPath(r.root_path).parts[0]   # 番剧目录(发行 root_path 首段)
     try:
-        vids = sorted([p for p in rel_dir.rglob("*")
-                       if p.is_file() and media_probe.is_video(p)], key=lambda p: p.name)
+        vids = sorted([p for p in bangumi_dir.rglob("*")
+                       if p.is_file() and media_probe.is_video(p)],
+                      key=lambda p: str(p.relative_to(bangumi_dir)))   # 按相对路径排 → 同目录聚拢
     except OSError:
         vids = []
-    # 该番在本发行目录下的现有登记(显示「当前第几集」+ 预选)
+    # 该番全部现有登记(显示「当前第几集」+ 预选;不再限定发行文件夹内)
     cur = {vf.relative_path: vf for vf in db.execute(
         select(VideoFile).join(Torrent).join(Subscription).where(
-            Subscription.bangumi_id == b.id)).scalars()
-        if vf.relative_path == r.root_path or vf.relative_path.startswith(r.root_path + "/")}
+            Subscription.bangumi_id == b.id)).scalars()}
     files = []
     for p in vids:
         rel = str(p.relative_to(root)).replace("\\", "/")
+        sub = p.relative_to(bangumi_dir)
+        folder = "" if str(sub.parent) == "." else str(sub.parent).replace("\\", "/")
         parsed = parse(p.name)
         guess = parsed.episodes[0] if len(parsed.episodes) == 1 and parsed.episodes[0] > 0 else None
+        in_extra_dir = any(is_extra_dir(seg) for seg in sub.parts[:-1])
         vf = cur.get(rel)
         cur_num = None
         if vf and vf.episode_id:
@@ -141,8 +145,9 @@ def import_candidates(release_id: int, db: Session = Depends(get_db)):
         except OSError:
             size = None
         files.append({
-            "path": rel, "name": p.name, "size": size,
-            "guess_number": guess, "guess_extra": bd_is_extra_video(p.name),
+            "path": rel, "name": p.name, "folder": folder, "size": size,
+            "guess_number": guess,
+            "guess_extra": bd_is_extra_video(p.name) or in_extra_dir,
             "current_number": cur_num, "registered": vf is not None,
         })
     eps = db.execute(select(Episode).where(
@@ -183,11 +188,11 @@ def import_main(release_id: int, payload: dict, db: Session = Depends(get_db)):
             raise HTTPException(400, f"集号非法:{num}") from None
 
     t = _container_torrent(db, b)
-    # 该番在本发行目录下现有的 BD 登记(权威重映射/移除的对象)
+    rel_prefix = r.root_path
+    # 该番全部现有登记:选中文件可能在 Season 等任意子目录 → 全量查,避免重复建。
     cur = {vf.relative_path: vf for vf in db.execute(
         select(VideoFile).join(Torrent).join(Subscription).where(
-            Subscription.bangumi_id == b.id)).scalars()
-        if vf.relative_path == r.root_path or vf.relative_path.startswith(r.root_path + "/")}
+            Subscription.bangumi_id == b.id)).scalars()}
 
     touched: set[int] = set()
     imported = removed = 0
@@ -221,9 +226,11 @@ def import_main(release_id: int, payload: dict, db: Session = Depends(get_db)):
         touched.add(ep.id)
         if old_ep and old_ep != ep.id:
             touched.add(old_ep)
-    # 未选中的该发行 BD 文件 → 移出剧集网格(不动磁盘)
+    # 权威移除只作用于 BD 发行文件夹内、未选中的登记(不碰 Season / web 里没选的)
     for path, vf in cur.items():
         if path in want:
+            continue
+        if not (path == rel_prefix or path.startswith(rel_prefix + "/")):
             continue
         if vf.episode_id:
             touched.add(vf.episode_id)

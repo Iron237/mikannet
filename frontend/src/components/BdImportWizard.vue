@@ -20,7 +20,7 @@ const err = ref('')
 
 function initRows(files) {
   rows.value = files.map(f => ({
-    path: f.path, name: f.name, size: f.size,
+    path: f.path, name: f.name, folder: f.folder, size: f.size,
     guess_number: f.guess_number, guess_extra: f.guess_extra,
     current_number: f.current_number, registered: f.registered,
     // 预选:已登记为某集→沿用;否则按猜测(非特典且有集号才默认正片)
@@ -100,7 +100,9 @@ async function save() {
             <input v-if="r.main" class="input num" type="number" step="0.5" min="0"
                    v-model="r.number" placeholder="集号" />
             <span v-else class="num-spacer" />
-            <span class="fname" :title="r.name">{{ r.name }}</span>
+            <span class="fname" :title="r.path">
+              <span v-if="r.folder" class="ffolder">{{ r.folder }}/</span>{{ r.name }}
+            </span>
             <span class="muted hint">
               <template v-if="r.current_number != null">当前 {{ r.current_number }} · </template>
               <template v-if="r.guess_extra">疑似特典</template>
@@ -142,6 +144,7 @@ async function save() {
 .num { width: 66px; flex-shrink: 0; padding: 3px 6px; }
 .num-spacer { width: 66px; flex-shrink: 0; }
 .fname { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ffolder { color: var(--text-dim); }
 .hint { flex-shrink: 0; }
 .wiz-foot { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
 </style>
