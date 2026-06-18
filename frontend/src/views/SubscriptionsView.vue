@@ -138,7 +138,7 @@ onUnmounted(() => { mounted = false; clearTimeout(pollTimer); clearTimeout(allTi
         <span v-if="s.source === 'rss'" class="health" :class="s.last_poll_ok ? 'ok' : 'bad'"
               :title="s.last_poll_error || 'RSS 正常'">●</span>
         <Icon v-else :name="s.source === 'auto' ? 'zap' : 'folder'" :size="15" class="muted" />
-        <div>
+        <div class="sub-main">
           <div style="font-weight: 600;">
             <RouterLink :to="`/bangumi/${s.bangumi_id}`" class="b-link">{{ s.bangumi_title }}</RouterLink>
             <span v-if="s.source !== 'rss'" class="tag" style="margin-left: 8px;">{{ SRC[s.source] }}</span>
@@ -285,5 +285,14 @@ onUnmounted(() => { mounted = false; clearTimeout(pollTimer); clearTimeout(allTi
 .batch-bar {
   display: flex; align-items: center; gap: 8px; padding: 10px 16px; margin-bottom: 12px;
   position: sticky; top: 8px; z-index: 10; border-color: var(--accent-dim);
+}
+.sub-main { min-width: 0; }
+.b-link { word-break: break-all; }
+
+@media (max-width: 768px) {
+  /* 手机端:标题/规则占首行铺满,按钮换到下一行,避免标题被挤成一字一行 */
+  .sub-row > .row { flex-wrap: wrap; row-gap: 8px; }
+  .sub-row .sub-main { flex: 1 1 200px; }
+  .sub-row > .row > .spacer { display: none; }
 }
 </style>

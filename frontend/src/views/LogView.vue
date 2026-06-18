@@ -101,4 +101,12 @@ onUnmounted(() => clearInterval(timer))
 .msg { flex: 1; }
 .logdir { display: flex; align-items: center; gap: 8px; padding: 10px 16px; font-size: 12.5px; }
 .logdir-hint { font-size: 12px; margin-top: 8px; }
+
+@media (max-width: 768px) {
+  /* 手机端日志行换行:级别/时间/logger 占首行,消息整段另起一行铺满(不再一字一行)*/
+  .logbox { font-size: 11px; height: 60vh; }
+  .logline { flex-wrap: wrap; gap: 6px; }
+  .lg { max-width: 100%; }
+  .msg { flex-basis: 100%; }
+}
 </style>

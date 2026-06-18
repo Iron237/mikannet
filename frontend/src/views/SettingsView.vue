@@ -177,7 +177,7 @@ onMounted(() => { load(); loadStorage() })
     <div class="page-title">设置</div>
 
     <div class="card" style="margin-bottom: 16px;">
-      <div class="row">
+      <div class="row health-row">
         <h3 style="margin: 0;">系统状态</h3>
         <span class="tag" :class="health?.status === 'ok' ? 'green' : 'red'" v-if="health">
           下载器[{{ health.downloader }}] {{ health.status === 'ok' ? '已连接' : '不可达' }}
@@ -334,5 +334,11 @@ onMounted(() => { load(); loadStorage() })
 .cfg-field.toggle input { accent-color: var(--accent); }
 .cred-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .cred-grid label { font-size: 12.5px; color: var(--text-dim); display: flex; flex-direction: column; gap: 5px; }
-@media (max-width: 768px) { .cfg-grid, .cred-grid { grid-template-columns: 1fr; } }
+@media (max-width: 768px) {
+  .cfg-grid, .cred-grid { grid-template-columns: 1fr; }
+  /* 系统状态:标题独占一行,状态标签/按钮换行,不再把「系统状态」挤成竖排 */
+  .health-row { flex-wrap: wrap; }
+  .health-row h3 { flex-basis: 100%; }
+  .health-row > .spacer { display: none; }
+}
 </style>

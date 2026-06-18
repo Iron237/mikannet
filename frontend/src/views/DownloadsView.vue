@@ -173,4 +173,11 @@ async function doDelete() {
 .hist { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; padding: 10px 14px; }
 .hist.sel { border-color: var(--accent); }
 .hist-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55%; font-size: 13px; }
+
+@media (max-width: 768px) {
+  /* 历史行:标题占首行铺满,重试/删除换到下一行,避免被挤出屏幕 */
+  .hist { flex-wrap: wrap; row-gap: 6px; }
+  .hist-title { max-width: 100%; flex: 1 1 140px; }
+  .hist > .spacer { display: none; }
+}
 </style>
