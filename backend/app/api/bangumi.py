@@ -58,6 +58,29 @@ def library(db: Session = Depends(get_db)):
     } for b in rows]
 
 
+@router.post("/from-mikan")
+def ensure_from_mikan(payload: dict, db: Session = Depends(get_db)):
+    """从蜜柑番剧 ID 建/取本地番剧(不建 web 订阅);供「添加BD源」先把番入库,再绑 BD 发行 + 导入正片。"""
+    mid = payload.get("mikan_bangumi_id")
+    if mid is None:
+        raise HTTPException(400, "缺少 mikan_bangumi_id")
+    b = db.execute(select(Bangumi).where(
+        Bangumi.mikan_bangumi_id == int(mid))).scalar_one_or_none()
+    if b is None:
+        from app.services.metadata_service import enrich_bangumi
+        from app.services.organize import detect_season
+        b = Bangumi(mikan_bangumi_id=int(mid), title=payload.get("title") or f"bangumi {mid}")
+        db.add(b)
+        db.flush()
+        try:
+            enrich_bangumi(db, b)                  # 三级降级,失败不抛
+            b.season_number = detect_season(b.title)
+        except Exception:  # noqa: BLE001 — 元数据失败不阻塞入库
+            pass
+    db.commit()
+    return {"id": b.id, "title": b.title, "mikan_bangumi_id": b.mikan_bangumi_id}
+
+
 def _eps_done(db: Session, b: Bangumi) -> int:
     """已入库集数:只数有 active 文件的**正片**集(不含 SP/菜单/NC/特典),并封顶到总集数。
 
