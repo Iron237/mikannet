@@ -13,9 +13,10 @@ services:
       # 构建期 apt/pip 默认用清华镜像直连(见 Dockerfile ARG,可覆盖)
     container_name: mikanarr
     ports:
-      # 临时:8008/8014 都落在 Windows winnat 动态保留段(7930-8029)内,改用 8099(冷门端口);
-      # 恢复 8008:管理员跑 `net stop winnat & net start winnat` 后改回 "8008:8008" 再 up -d
-      - "8099:8008"
+      # winnat 动态保留段每次重启重排,8008/8014/8099 都可能被划进去导致 bind 失败。
+      # 宿主端口改用 .env 的 HOST_PORT 一行可改(默认 9000);若仍冲突换个数字再 up -d 即可,
+      # 或管理员跑 `net stop winnat & net start winnat` 释放保留段后再起。
+      - "${HOST_PORT:-9000}:8008"
     environment:
       MIKANARR_PROXY_URL: ${PROXY_URL:-}
       MIKANARR_TMDB_API_KEY: ${TMDB_API_KEY:-}
