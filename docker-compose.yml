@@ -12,6 +12,14 @@ services:
       dockerfile: docker/app.Dockerfile
       # 构建期 apt/pip 默认用清华镜像直连(见 Dockerfile ARG,可覆盖)
     container_name: mikanarr
+    # 首次向导「NAS/SMB 共享」模式 = App 在容器内自挂载 SMB(storage.py 的 mount() 系统调用),
+    # 需要这两项授权,否则报「挂载失败: Operation not permitted (errno 1)」。
+    # (compose 托管的 CIFS 卷由守护进程挂,不需要这些;两种方式都加上无害。)
+    cap_add:
+      - SYS_ADMIN
+      - DAC_READ_SEARCH
+    security_opt:
+      - apparmor:unconfined
     ports:
       # winnat 动态保留段每次重启重排,8008/8014/8099 都可能被划进去导致 bind 失败。
       # 宿主端口改用 .env 的 HOST_PORT 一行可改(默认 9000);若仍冲突换个数字再 up -d 即可,
