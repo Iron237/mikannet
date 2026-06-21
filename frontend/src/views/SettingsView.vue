@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { api } from '../api'
+import { api, fmtSize } from '../api'
 import Icon from '../components/Icon.vue'
 
 const health = ref(null)
@@ -91,6 +91,79 @@ async function testCh(ch) {
 }
 async function pollNow() { await api.post('/api/system/poll') }
 
+// ---- 自更新(检查 / 一键更新)----
+const ver = ref({ version: '', base_rev: '' })
+const updCheck = ref(null)         // /update/check 结果
+const updChecking = ref(false)
+const updApplying = ref(false)
+const updMsg = ref('')
+const updStatus = ref(null)        // /update/status 进度
+let updTimer = null
+const PHASE_LABEL = {
+  downloading: '下载代码包', verifying: '校验完整性', applying: '应用新版本',
+  recreating: '拉取新镜像 / 重建容器', restarting: '重启中',
+}
+async function loadVersion() { try { ver.value = await api.get('/api/system/version') } catch { /* ignore */ } }
+async function checkUpdate() {
+  updChecking.value = true; updMsg.value = ''; updCheck.value = null
+  try { updCheck.value = await api.get('/api/system/update/check') }
+  catch (e) { updMsg.value = '检查失败:' + e.message }
+  finally { updChecking.value = false }
+}
+const prerelease = computed({
+  get: () => !!cfg.value.update_channel_prerelease?.value,
+  set: (v) => {
+    if (cfg.value.update_channel_prerelease) cfg.value.update_channel_prerelease.value = v
+    api.put('/api/config', { update_channel_prerelease: v }).catch(() => {})
+    checkUpdate()
+  },
+})
+async function applyUpdate() {
+  if (!updCheck.value || updCheck.value.type === 'none') return
+  const full = updCheck.value.type === 'full'
+  const ok = window.confirm(full
+    ? `完整更新(换镜像)到 ${updCheck.value.latest}:拉新镜像并重建容器,期间短暂不可用。确定?`
+    : `更新到 ${updCheck.value.latest}:自动下载、校验并重启,期间短暂不可用。确定?`)
+  if (!ok) return
+  updApplying.value = true; updMsg.value = '正在启动更新…'; updStatus.value = null
+  try {
+    const r = await api.post('/api/system/update/apply')
+    updMsg.value = r.type === 'full' ? '完整更新中(换镜像)…' : '更新中…'
+    updTimer = setTimeout(pollUpdateStatus, 1000)
+  } catch (e) { updApplying.value = false; updMsg.value = '更新失败:' + e.message }
+}
+async function pollUpdateStatus() {
+  try {
+    updStatus.value = await api.get('/api/system/update/status')
+    if (updStatus.value.phase === 'error') {
+      updApplying.value = false; updMsg.value = '更新失败:' + updStatus.value.error; return
+    }
+    if (updStatus.value.phase === 'restarting') { waitForRestart(); return }
+  } catch {
+    // 后端可能已开始重启 → 转为等待新版本起来
+    waitForRestart(); return
+  }
+  updTimer = setTimeout(pollUpdateStatus, 1200)
+}
+function waitForRestart() {
+  updMsg.value = '应用重启中,等待新版本起来…'
+  const target = updCheck.value?.latest
+  const tick = async () => {
+    try {
+      const v = await api.get('/api/system/version')
+      if (!target || v.version === target) {
+        ver.value = v; updApplying.value = false
+        updMsg.value = `更新完成:当前 ${v.version}`
+        updCheck.value = { ...(updCheck.value || {}), type: 'none', latest: v.version }
+        return
+      }
+    } catch { /* 仍在重启,继续等 */ }
+    updTimer = setTimeout(tick, 2000)
+  }
+  tick()
+}
+onUnmounted(() => clearTimeout(updTimer))
+
 // 先保存配置(让 .bat 嵌入当前路径前缀 + 令牌),再下载自安装协议处理器
 async function downloadHandler() {
   await saveConfig()
@@ -169,7 +242,7 @@ async function pollRefresh() {
 }
 onUnmounted(() => clearTimeout(refreshTimer))
 
-onMounted(() => { load(); loadStorage() })
+onMounted(() => { load(); loadStorage(); loadVersion() })
 </script>
 
 <template>
@@ -185,6 +258,46 @@ onMounted(() => { load(); loadStorage() })
         <span class="muted" v-if="health?.info"> {{ health.info.version }} </span>
         <div class="spacer" />
         <button class="btn sm" @click="pollNow">立即检查订阅更新</button>
+      </div>
+    </div>
+
+    <!-- 自更新:检查更新 + 一键更新 -->
+    <div class="card" style="margin-bottom: 16px;">
+      <div class="row update-head" style="margin-bottom: 10px;">
+        <h3 style="margin: 0; font-size: 15px;">更新</h3>
+        <span class="tag">当前 v{{ ver.version || '—' }}</span>
+        <label class="row" style="gap: 5px; cursor: pointer; font-size: 12.5px;">
+          <input type="checkbox" v-model="prerelease" /> 包含预发布
+        </label>
+        <div class="spacer" />
+        <span class="muted" style="font-size: 12px;">{{ updMsg }}</span>
+        <button class="btn sm" :disabled="updChecking || updApplying" @click="checkUpdate">
+          {{ updChecking ? '检查中…' : '检查更新' }}
+        </button>
+      </div>
+      <template v-if="updCheck">
+        <div v-if="updCheck.type === 'none'" class="muted" style="font-size: 12.5px;">
+          已是最新(v{{ updCheck.current }})。
+        </div>
+        <div v-else>
+          <div class="row" style="gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+            <span class="tag green">新版 v{{ updCheck.latest }}</span>
+            <span class="tag" :class="updCheck.type === 'full' ? 'red' : ''">
+              {{ updCheck.type === 'full' ? '完整更新(换镜像)' : '纯代码更新' }}
+            </span>
+            <span v-if="updCheck.prerelease" class="tag">预发布</span>
+            <span v-if="updCheck.size" class="muted" style="font-size: 12px;">{{ fmtSize(updCheck.size) }}</span>
+            <div class="spacer" />
+            <button class="btn primary sm" :disabled="updApplying" @click="applyUpdate">
+              {{ updApplying ? '更新中…' : '立即更新' }}
+            </button>
+          </div>
+          <pre v-if="updCheck.changelog" class="changelog">{{ updCheck.changelog }}</pre>
+        </div>
+      </template>
+      <div v-if="updApplying && updStatus" class="muted" style="font-size: 12px; margin-top: 8px;">
+        {{ PHASE_LABEL[updStatus.phase] || updStatus.phase }}<template
+          v-if="updStatus.phase === 'downloading' && updStatus.progress"> · {{ updStatus.progress }}%</template>
       </div>
     </div>
 
@@ -328,6 +441,10 @@ onMounted(() => { load(); loadStorage() })
 </template>
 
 <style scoped>
+.changelog { white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.6;
+  background: var(--bg-soft, rgba(127,127,127,.08)); border-radius: 6px; padding: 8px 10px;
+  max-height: 220px; overflow: auto; margin: 0; }
+.update-head { flex-wrap: wrap; gap: 8px; }
 .cfg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .cfg-field { font-size: 12.5px; color: var(--text-dim); display: flex; flex-direction: column; gap: 5px; }
 .cfg-field.toggle { flex-direction: row; align-items: center; gap: 8px; }

@@ -1,0 +1,97 @@
+name: release
+
+# 发布一个(预)release 时:构 amd64 镜像推 GHCR + 打代码包 + 生成 manifest 并作为资产上传。
+# 自更新地基(docs/adr/0005 切片 1)。
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write   # 上传 release 资产
+  packages: write   # 推 GHCR
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 解析版本号(去掉 tag 前缀 v)
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 计算 base_rev(依赖 + apt 清单哈希)
+        id: baserev
+        run: echo "base_rev=$(python scripts/compute_base_rev.py)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 构建并推送镜像(linux/amd64)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/app.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/iron237/mikanarr:${{ steps.ver.outputs.version }}
+            ghcr.io/iron237/mikanarr:latest
+          build-args: |
+            VERSION=${{ steps.ver.outputs.version }}
+            BASE_REV=${{ steps.baserev.outputs.base_rev }}
+            DEBIAN_MIRROR=deb.debian.org
+            PIP_INDEX=https://pypi.org/simple
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: 构建前端(代码包用)
+        working-directory: frontend
+        run: |
+          npm ci || npm install --no-fund --no-audit
+          npm run build
+
+      - name: 打代码包 + 生成 manifest.json
+        env:
+          RELEASE_CHANGELOG: ${{ github.event.release.body }}
+        run: |
+          python scripts/make_release_assets.py \
+            --version "${{ steps.ver.outputs.version }}" \
+            --base-rev "${{ steps.baserev.outputs.base_rev }}" \
+            --image-ref "ghcr.io/iron237/mikanarr:${{ steps.ver.outputs.version }}" \
+            --image-digest "${{ steps.build.outputs.digest }}" \
+            --repo "${{ github.repository }}" \
+            --tag "${{ github.event.release.tag_name }}" \
+            --prerelease "${{ github.event.release.prerelease }}" \
+            --out dist/release
+
+      - name: 上传 release 资产
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            dist/release/manifest.json \
+            "dist/release/mikanarr-${{ steps.ver.outputs.version }}-code.tar.gz" \
+            --clobber
+
+      - name: 设置 GHCR 包为 public(便于匿名 pull;失败不阻断)
+        continue-on-error: true
+        run: |
+          gh api -X PATCH "user/packages/container/mikanarr/visibility" \
+            -f visibility=public || \
+          echo "若失败,请在 GitHub Packages 页面手动把 mikanarr 设为 public"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

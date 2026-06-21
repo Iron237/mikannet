@@ -26,6 +26,8 @@ services:
       # 或管理员跑 `net stop winnat & net start winnat` 释放保留段后再起。
       - "${HOST_PORT:-9000}:8008"
     environment:
+      # dev:同版本号重建镜像后,wrapper 强制把卷代码刷成新构建(生产/发布包不设此项)
+      MIKANARR_DEV_RESEED: "1"
       MIKANARR_PROXY_URL: ${PROXY_URL:-}
       MIKANARR_TMDB_API_KEY: ${TMDB_API_KEY:-}
       # 下载器后端:bitcomet | qb(改 .env 的 DOWNLOADER + 重启即切换)
@@ -38,6 +40,9 @@ services:
       # 下载器写盘根目录(接桌面 qB 时改成 NAS 的 Windows 路径;mikanarr 仍从 /downloads 读同一份)
       MIKANARR_DOWNLOAD_ROOT: ${DOWNLOAD_ROOT:-/downloads}
       MIKANARR_POLL_INTERVAL_MIN: ${POLL_INTERVAL_MIN:-15}
+      # 完整更新(换镜像):helper 需要 compose 项目名 + 宿主上的 compose 目录(daemon 视角)
+      MIKANARR_COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME:-rssvideo}
+      MIKANARR_COMPOSE_HOST_DIR: ${PWD}
       # 本地导入源的主机路径前缀(用于把粘贴的 Win/NAS 路径翻译成容器内 /import、/import-nas)
       MIKANARR_IMPORT_WIN_HOST: ${LOCAL_IMPORT_PATH:-./import}
       MIKANARR_IMPORT_NAS_HOST: ${NAS_IMPORT_PATH:-//192.168.2.4/Minecraft 独行侠/番剧}
@@ -45,6 +50,11 @@ services:
       MIKANARR_NAS_SMB_PATH: ${NAS_SMB_PATH}
     volumes:
       - ./data/mikanarr:/config
+      # 自更新代码卷:wrapper 从 /code/current 跑应用,多版本并存可回滚(用命名卷=ext4,symlink 可靠)
+      - code:/code
+      # 完整更新:挂 docker.sock(=宿主 root 等价权限,信任权衡见 ADR-0005/README)+ compose 目录只读
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/compose:ro
       - downloads:/downloads
       # 本地番剧导入源:/import = Windows 本机磁盘(.env LOCAL_IMPORT_PATH,可填 G:/Anime 等)
       - ${LOCAL_IMPORT_PATH:-./import}:/import
@@ -57,6 +67,9 @@ services:
   # 原 Docker qBittorrent 服务已移除(同 BitComet)。app 仍挂 downloads 卷读 NAS 上的成品文件。
 
 volumes:
+  # 自更新代码卷(命名卷,存于 WSL2 VM 的 ext4,symlink/原子重指可靠)
+  code:
+    driver: local
   downloads:
     # 当前阶段:Win PC Docker 直写 NAS 的 SMB 共享(CIFS)
     # 迁移 NAS 后:删掉 driver_opts,换成 driver: local + 本地路径绑定

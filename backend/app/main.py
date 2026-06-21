@@ -5,11 +5,12 @@ from contextlib import asynccontextmanager
 
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import scheduler
+from app._version import VERSION
 from app.api import (backup, bangumi, bd, config, files, import_mikan, launch, logs,
                      notifications, search, setup, subscriptions, system, tasks, ws)
 from app.clients.downloader import downloader
@@ -45,7 +46,19 @@ async def lifespan(_app: FastAPI):
     scheduler.stop()
 
 
-app = FastAPI(title="Mikanarr", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Mikanarr", version=VERSION, lifespan=lifespan)
+
+
+@app.middleware("http")
+async def _updating_guard(request: Request, call_next):
+    """自更新应用期间挡掉新的写请求(更新端点自身放行),避免半更新状态下写库。"""
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        from app.services import update_gate
+        if update_gate.is_updating() and "/api/system/update/" not in request.url.path:
+            return JSONResponse({"detail": "系统正在更新,请稍候…"}, status_code=503)
+    return await call_next(request)
+
+
 app.include_router(subscriptions.router)
 app.include_router(tasks.router)
 app.include_router(system.router)

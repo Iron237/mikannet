@@ -22,7 +22,7 @@ docker compose up -d --build
 # docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 ```
 
-- WebUI: http://localhost:8008
+- WebUI: http://localhost:9000(端口见 `.env` 的 `HOST_PORT`)
 
 ### 注意事项
 
@@ -37,6 +37,21 @@ docker compose up -d --build
 1. 停止 compose,把 `./data/` 目录拷到 NAS
 2. 修改 `docker-compose.yml` 的 `downloads` 卷:删掉 CIFS `driver_opts`,改为 NAS 本地路径绑定
 3. NAS 上 `docker compose up -d`,启动对账会自动校正任务状态
+
+## 网页一键自更新
+
+设置页「更新」区可检查并一键更新,全程自动(下载 → 校验 → 应用 → 重启 → 重连)。架构与权衡详见 **[docs/adr/0005-self-update-architecture.md](docs/adr/0005-self-update-architecture.md)**。两类更新:
+
+- **纯代码**(依赖未变,`base_rev` 相同):下载代码包 → 校验 sha256 → 落可写代码卷 → 原子重指 `current` → 重启;失败由 PID-1 wrapper 自动回滚。
+- **完整(换镜像)**(`base_rev` 不同):经 docker socket 启一次性 helper 跑 `docker compose up -d` 换 GHCR 镜像重建容器。
+
+发布流水线 `.github/workflows/release.yml` 在每次 release published 时构建并推送 `ghcr.io/iron237/mikanarr:<version>`,并上传 `manifest.json` + 代码包作为 release 资产。
+
+**运维须知 / 信任权衡**:
+
+- **GHCR 包须为 public**:匿名 `docker pull` 与完整更新依赖镜像公开;CI 会尝试自动设为 public,失败则在 GitHub → Packages 手动设置。
+- **完整更新需挂 `docker.sock`**:`/var/run/docker.sock` 挂进 app = **宿主 root 等价权限**(与既有 `SYS_ADMIN` 同级)。只用纯代码更新可不挂 socket(完整更新降级为手动 `docker compose pull && up -d`)。
+- **回滚**:纯代码失败自动回滚;完整失败为手动——把 `.env` 的 `MIKANARR_IMAGE_REF` 改回上一个可用 tag 后 `docker compose up -d`(步骤见 ADR-0005)。
 
 ## 架构速览
 

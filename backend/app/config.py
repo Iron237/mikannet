@@ -16,11 +16,21 @@ class Settings(BaseSettings):
 
     # 数据目录(SQLite、图片缓存、日志)
     data_dir: Path = BASE_DIR / "data"
+    # 自更新:可写代码卷根(wrapper 从 <code>/current 跑应用;updater 往这里落新版本)
+    code_dir: Path = Path("/code")
+    # 自更新发布源仓库(GitHub Releases API,公开免认证)
+    update_repo: str = "Iron237/mikanarr"
+    # 通道:包含预发布(当前仅发 pre-release → 默认开;切正式稳定后改默认)
+    update_channel_prerelease: bool = True
+    # 完整更新(换镜像):经 docker socket + 一次性 helper 跑 `docker compose up -d` 重建本容器
+    compose_project: str = "mikanarr"        # compose 项目名(helper -p 用)
+    compose_host_dir: str = ""               # 宿主上 compose 目录(helper 绑定挂载源;compose 注入 ${PWD})
 
     # 外部网络:本机所有外部服务必须走代理(见 PROBE-NOTES)
     proxy_url: str = "http://127.0.0.1:10808"
     # 走代理的服务名单;qB 等本地服务永远直连
-    proxy_services: set[str] = {"mikan", "bgmtv", "tmdb", "telegram", "nyaa", "dmhy", "anidb"}
+    proxy_services: set[str] = {"mikan", "bgmtv", "tmdb", "telegram", "nyaa", "dmhy", "anidb",
+                                "github"}
 
     # Mikan(域名可配,镜像切换)
     mikan_base_url: str = "https://mikanani.me"

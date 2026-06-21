@@ -60,6 +60,8 @@ EDITABLE: dict[str, tuple[str, type, bool]] = {
     "anidb_client_ver": ("AniDB", int, False),
     "anidb_search_base": ("AniDB", str, False),
     "anidb_lang": ("AniDB", str, False),
+    # 自更新
+    "update_channel_prerelease": ("自更新", bool, False),
     # LLM 兜底
     "llm_enabled": ("LLM", bool, False),
     "llm_base_url": ("LLM", str, False),

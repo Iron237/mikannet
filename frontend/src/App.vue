@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { api } from './api'
 import { useTasksStore } from './stores/tasks'
 import Icon from './components/Icon.vue'
 import NativeLaunchModal from './components/NativeLaunchModal.vue'
@@ -10,9 +11,27 @@ const bare = computed(() => route.name === 'setup')   // 首次配置向导:全�
 const drawerOpen = ref(false)                          // 手机端左侧抽屉
 watch(() => route.fullPath, () => { drawerOpen.value = false })   // 切页自动收起抽屉
 const tasksStore = useTasksStore()
+
+// 每日一次后台检查更新:有新版则设置项出小红点(不自动安装)
+const updateAvailable = ref(false)
+async function dailyUpdateCheck() {
+  try {
+    const last = Number(localStorage.getItem('mikanarr_upd_check') || 0)
+    if (Date.now() - last < 24 * 3600 * 1000) {
+      updateAvailable.value = localStorage.getItem('mikanarr_upd_avail') === '1'
+      return
+    }
+    const r = await api.get('/api/system/update/check')
+    updateAvailable.value = !!r.type && r.type !== 'none'
+    localStorage.setItem('mikanarr_upd_check', String(Date.now()))
+    localStorage.setItem('mikanarr_upd_avail', updateAvailable.value ? '1' : '0')
+  } catch { /* GitHub 不可达 → 忽略,下次再试 */ }
+}
+
 onMounted(() => {
   tasksStore.load()
   tasksStore.connect()
+  dailyUpdateCheck()
 })
 </script>
 
@@ -40,7 +59,10 @@ onMounted(() => {
                 class="badge">{{ tasksStore.active.filter(t => t.status === 'downloading').length }}</span>
         </RouterLink>
         <RouterLink to="/logs" class="nav-item"><Icon name="logs" :size="17" /> 日志</RouterLink>
-        <RouterLink to="/settings" class="nav-item"><Icon name="settings" :size="17" /> 设置</RouterLink>
+        <RouterLink to="/settings" class="nav-item">
+          <Icon name="settings" :size="17" /> 设置
+          <span v-if="updateAvailable" class="dot" title="有可用更新" />
+        </RouterLink>
       </nav>
       <div class="spacer" />
       <div class="ws-status" :class="{ ok: tasksStore.wsConnected }">
@@ -74,6 +96,10 @@ onMounted(() => {
 .badge {
   margin-left: auto; background: var(--accent); color: #1a1207;
   border-radius: 10px; padding: 0 7px; font-size: 11px; font-weight: 700;
+}
+.dot {
+  margin-left: auto; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--red, #e5484d); flex-shrink: 0;
 }
 .ws-status { font-size: 12px; color: var(--text-dim); padding: 0 10px; }
 .ws-status.ok { color: var(--green); }
