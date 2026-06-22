@@ -67,6 +67,29 @@ def test_ver_key_ordering(tmp_path):
     assert w.ver_key("0.1.0") == w.ver_key("v0.1.0")
 
 
+def test_start_app_injects_current_version(tmp_path, monkeypatch):
+    """子进程的 MIKANARR_VERSION 必须 = current 实际版本(rel.name),而非镜像烤死 env。
+
+    回归:纯代码更新只换卷代码不换镜像;若沿用镜像 env 的旧版本号,/version 永远报旧值,
+    导致检查更新死循环 + 前端「等待新版本」永久卡住。不依赖 symlink,始终跑。
+    """
+    code, baked = tmp_path / "code", tmp_path / "baked"
+    make_baked(baked)
+    w = load_wrapper(code, baked, "0.1.0")            # 镜像烤死版本 = 0.1.0
+    rel = code / "releases" / "0.1.3"                  # current 指向的纯代码新版
+    (rel / "backend" / "app").mkdir(parents=True)
+    (rel / "backend" / "app" / "main.py").write_text("# v013\n")
+    captured = {}
+
+    class FakePopen:
+        def __init__(self, cmd, cwd=None, env=None):
+            captured["env"] = env
+
+    monkeypatch.setattr(w.subprocess, "Popen", FakePopen)
+    w.start_app(rel)
+    assert captured["env"]["MIKANARR_VERSION"] == "0.1.3"   # 跟随 current,非烤死 0.1.0
+
+
 def test_first_seed(tmp_path):
     if not _symlinks_ok(tmp_path):
         pytest.skip("symlink 无权限(非 Linux/未开开发者模式)")

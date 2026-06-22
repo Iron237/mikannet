@@ -167,6 +167,11 @@ def start_app(rel: Path) -> subprocess.Popen:
     env = dict(os.environ)
     backend = str(rel / "backend")
     env["PYTHONPATH"] = backend + os.pathsep + env.get("PYTHONPATH", "")
+    # 关键:让 app 报告的版本 = current 实际指向的版本,而非镜像烤死的 env。
+    # 纯代码更新只换卷代码不换镜像,若沿用镜像 env 版本号,/version 会一直报旧值,
+    # 导致「检查更新」永远判定有新版 + 前端「等待新版本起来」永久卡住。base_rev 纯代码
+    # 更新不变,仍由镜像 env 提供(故不在此覆盖 MIKANARR_BASE_REV)。
+    env["MIKANARR_VERSION"] = rel.name
     cmd = [sys.executable, "-m", "uvicorn", "app.main:app",
            "--host", "0.0.0.0", "--port", str(PORT)]
     log(f"starting app from {rel} (v={rel.name})")
