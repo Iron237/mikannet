@@ -235,6 +235,10 @@ onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
             <a v-if="bgmUrl" :href="bgmUrl" target="_blank" rel="noopener" class="tag ext-link">
               <Icon name="external" :size="12" /> Bangumi
             </a>
+            <a v-if="b.mikan_url" :href="b.mikan_url" target="_blank" rel="noopener" class="tag ext-link"
+               title="在蜜柑计划打开该番剧页面">
+              <Icon name="external" :size="12" /> 蜜柑
+            </a>
             <a :href="moegirlUrl" target="_blank" rel="noopener" class="tag ext-link"
                title="按中文名跳转萌娘百科,不存在则落到搜索/创建页">
               <Icon name="external" :size="12" /> 萌娘百科

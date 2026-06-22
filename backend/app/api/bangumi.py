@@ -228,6 +228,8 @@ def detail(bangumi_id: int, db: Session = Depends(get_db)):
         Subscription.mikan_subgroup_id != "auto")).scalars().all()
     return {
         "id": b.id, "mikan_bangumi_id": b.mikan_bangumi_id,
+        "mikan_url": (f"{settings.mikan_base_url.rstrip('/')}/Home/Bangumi/{b.mikan_bangumi_id}"
+                      if b.mikan_bangumi_id else None),
         "title": b.title, "title_original": b.title_original,
         "year": b.year, "season": b.season_str, "studio": b.studio, "score": b.score,
         "summary": b.summary, "airing_status": b.airing_status.value, "kind": b.kind.value,

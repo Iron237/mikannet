@@ -35,12 +35,12 @@ onMounted(async () => {
               <div class="cal-title">{{ b.title }}</div>
               <div class="muted cal-eps">
                 <template v-if="b.eps_aired != null">
-                  已播 {{ b.eps_aired }}{{ b.eps_total ? '/' + b.eps_total : '' }}
-                  · 有 {{ b.eps_downloaded }}
+                  <span :title="`本周更新到第 ${b.eps_aired} 集`">第 {{ b.eps_aired }} 集</span>
+                  · 已下载 {{ b.eps_downloaded }}
                   <span v-if="b.eps_aired > b.eps_downloaded" class="new-ep" title="有未下载的新集">● 新集</span>
                 </template>
                 <template v-else>
-                  {{ b.eps_downloaded }}{{ b.eps_total ? '/' + b.eps_total : '' }} 集
+                  已下载 {{ b.eps_downloaded }}{{ b.eps_total ? '/' + b.eps_total : '' }} 集
                 </template>
                 <span v-if="b.score" style="color: var(--accent);">★{{ b.score }}</span>
               </div>
