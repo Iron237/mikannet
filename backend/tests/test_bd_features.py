@@ -45,6 +45,20 @@ def test_release_out_open_url_no_extras(db, monkeypatch):
         assert gone not in out
 
 
+def test_handler_js_ascii_and_reveal_opens_dir(monkeypatch):
+    """协议处理器 JS 必须纯 ASCII(否则 installer_bat 的 .encode('ascii') 抛错、重装失效),
+    且 reveal 对目录直接打开(不用 /select,后者对特殊字符路径会退回资源管理器主页)。"""
+    from app.config import settings
+    from app.services import launch
+    monkeypatch.setattr(settings, "media_host_root", "Z:\\番剧\\mikanarr")
+    monkeypatch.setattr(settings, "launch_token", "tok")
+    js = launch._handler_js()
+    js.encode("ascii")                      # 非 ASCII 会在此抛 UnicodeEncodeError
+    assert "FolderExists(path)" in js       # 目录:直接打开
+    assert 'explorer.exe "' in js           # 直接打开分支
+    launch.installer_bat("http://localhost:9000").encode("ascii")  # 整包也必须可 ASCII 编码
+
+
 # ---- 生命周期 ----------------------------------------------------------------
 def _ep(db, b, n, typ=EpisodeType.REGULAR):
     e = Episode(bangumi_id=b.id, number=float(n), type=typ)

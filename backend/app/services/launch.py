@@ -149,7 +149,11 @@ function findPowerDVD() {
 if (action === "play") {
   sh.ShellExecute(path);                                   // default app, no window
 } else if (action === "reveal") {
-  wsh.Run('explorer.exe /select,"' + path + '"', 1, false);
+  // directory (e.g. BD "open folder"): open it directly to browse contents. /select only
+  // highlights it in the parent and often falls back to Home for paths with special chars.
+  // file (locate one episode): keep /select to highlight the file in its folder.
+  if (fso.FolderExists(path)) { wsh.Run('explorer.exe "' + path + '"', 1, false); }
+  else { wsh.Run('explorer.exe /select,"' + path + '"', 1, false); }
 } else if (action === "bd") {
   var pd = POWERDVD;
   if (!pd || !fso.FileExists(pd)) { pd = findPowerDVD(); }

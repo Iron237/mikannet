@@ -248,11 +248,28 @@ def detail(bangumi_id: int, db: Session = Depends(get_db)):
 
 
 def _bd_releases_out(db: Session, bangumi_id: int) -> list[dict]:
-    """详情页返发行实体 + 打开目录 URL(去特典分支:特典不编目、不在网页展示)。"""
+    """详情页返发行实体 + 打开目录 URL(去特典分支:特典不编目、不在网页展示)。
+
+    跨季 BD:一套发行可横跨多季(连续编号的整盘),其正片被「分别导入」到不同季的番剧。
+    除主绑定外,凡有本番剧的 BD 正片(active)落在某发行目录内的,也在本页展示该发行卡片
+    —— 这样同一张碟在 S1 / S2 详情页都能看到并「打开目录」。
+    """
     from app.api.bd import bd_release_out
     from app.models import BdRelease
-    rows = db.execute(select(BdRelease).where(
-        BdRelease.bangumi_id == bangumi_id)).scalars().all()
+    rows = list(db.execute(select(BdRelease).where(
+        BdRelease.bangumi_id == bangumi_id)).scalars().all())
+    seen = {r.id for r in rows}
+    bd_paths = db.execute(
+        select(VideoFile.relative_path).join(Torrent).join(Subscription).where(
+            Subscription.bangumi_id == bangumi_id, VideoFile.source == "BD",
+            VideoFile.is_active.is_(True))).scalars().all()
+    if bd_paths:
+        for r in db.execute(select(BdRelease)).scalars().all():
+            if r.id in seen:
+                continue
+            if any(p == r.root_path or p.startswith(r.root_path + "/") for p in bd_paths):
+                rows.append(r)
+                seen.add(r.id)
     return [bd_release_out(r) for r in rows]
 
 
