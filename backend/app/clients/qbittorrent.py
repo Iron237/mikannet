@@ -48,10 +48,17 @@ class QbClient:
             self.client.torrent_categories.create_category(name=settings.qb_category)
 
     def add_torrent(self, torrent_bytes: bytes, save_path: str) -> str:
-        """添加种子,返回 info_hash。已存在同 hash 时 qB 幂等。"""
+        """添加种子,返回 info_hash。已存在同 hash 时按幂等处理。
+
+        qB 5.x 对重复 add 返回 409 Conflict(而非旧版的静默 "Ok.")→ 捕获后视为已添加,
+        否则手动加过/补番重复会卡在 SUBMIT_FAILED,重试也一直失败。
+        """
         ih = info_hash_of(torrent_bytes)
-        self.client.torrents.add(torrent_files=torrent_bytes,
-                                 category=settings.qb_category, save_path=save_path)
+        try:
+            self.client.torrents.add(torrent_files=torrent_bytes,
+                                     category=settings.qb_category, save_path=save_path)
+        except qbittorrentapi.exceptions.Conflict409Error:
+            log.info("种子已存在于 qB(409 Conflict),按幂等成功处理 %s", ih[:12])
         return ih
 
     def list_tasks(self) -> list[DlTask]:

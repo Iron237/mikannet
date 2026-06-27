@@ -114,3 +114,42 @@ def test_manual_delete_not_revived(db, sub):
     t.error_message = rss_engine.MANUAL_SKIP_REASON
     db.flush()
     assert rss_engine.reevaluate_skipped(db, sub) == 0
+
+
+def test_resume_resubmits_submit_failed(db, sub, monkeypatch):
+    """提交失败(无 info_hash)的种子点重试 → 走重新提交而非 qB resume(否则必 409)。"""
+    from app.api import tasks
+    t = Torrent(subscription_id=sub.id, guid="g-sf", title_raw="测试番剧 - 05",
+                torrent_url="http://x/g-sf.torrent", status=TorrentStatus.SUBMIT_FAILED,
+                parsed_json={})
+    db.add(t)
+    db.flush()
+    called = {}
+
+    def fake_submit(db_, sub_, tor_):
+        called["id"] = tor_.id
+        tor_.status = TorrentStatus.DOWNLOADING
+
+    monkeypatch.setattr("app.services.rss_engine._submit", fake_submit)
+    tasks.resume(t.id, db)
+    assert called.get("id") == t.id
+    assert t.status == TorrentStatus.DOWNLOADING
+
+
+def test_add_torrent_idempotent_on_409(monkeypatch):
+    """qB 5.x 对重复 add 返回 409 Conflict → add_torrent 按幂等成功处理,不抛异常。"""
+    import qbittorrentapi
+    from app.clients import qbittorrent as qb
+
+    monkeypatch.setattr(qb, "info_hash_of", lambda b: "deadbeef")
+
+    class _Torrents:
+        def add(self, **kw):
+            raise qbittorrentapi.exceptions.Conflict409Error("torrent already exists")
+
+    class _Client:
+        torrents = _Torrents()
+
+    c = qb.QbClient()
+    c._client = _Client()
+    assert c.add_torrent(b"whatever", "/downloads/x") == "deadbeef"

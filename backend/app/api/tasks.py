@@ -100,6 +100,9 @@ def batch(payload: dict, db: Session = Depends(get_db)):
                 if action == "resume" and t.status == TorrentStatus.DOWNLOAD_ERROR:
                     t.status = TorrentStatus.DOWNLOADING   # 恢复无进度暂停/错误 → 重新跟踪
                     t.error_message = None
+            elif action == "resume" and t.status == TorrentStatus.SUBMIT_FAILED and t.subscription:
+                from app.services.rss_engine import _submit   # 重试提交失败的种子 = 重新提交
+                _submit(db, t.subscription, t)
             done.append(tid)
         except Exception:  # noqa: BLE001 — 单条失败不阻断其余
             log.warning("批量 %s 失败 task=%s", action, tid, exc_info=True)
@@ -119,7 +122,18 @@ def pause(task_id: int, db: Session = Depends(get_db)):
 
 @router.post("/{task_id}/resume", status_code=204)
 def resume(task_id: int, db: Session = Depends(get_db)):
-    t = _get_with_hash(db, task_id)
+    t = db.get(Torrent, task_id)
+    if not t:
+        raise HTTPException(404)
+    # 提交失败的种子从未进 qB(无 info_hash)→ 「重试」= 重新提交,而非 qB resume
+    # (前端对 submit_failed / download_error 共用 resume 按钮;不修则 submit_failed 必 409)
+    if not t.info_hash:
+        if t.status == TorrentStatus.SUBMIT_FAILED and t.subscription:
+            from app.services.rss_engine import _submit
+            _submit(db, t.subscription, t)
+            db.commit()
+            return
+        raise HTTPException(409, "任务未提交到 qB(无 info_hash)")
     downloader.resume(t.info_hash)
     t.stalled_since = None   # 恢复后重新计时,避免残留计时导致刚恢复又被判坏种
     t.progress_at = None
