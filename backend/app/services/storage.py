@@ -12,6 +12,7 @@ storage_mode:
 from __future__ import annotations
 
 import ctypes
+import errno
 import logging
 import os
 import tempfile
@@ -71,14 +72,29 @@ def _mount(src: str, target: str, data: str, ro: bool = False) -> None:
         raise OSError(e, os.strerror(e))
 
 
+_MNT_DETACH = 2   # umount2 懒卸载:僵尸/忙挂载也能从命名空间摘除
+
+
 def _umount(target: str) -> None:
     try:
-        _libc().umount(target.encode())
+        # 懒卸载优先:SMB 断线留下的僵尸挂载普通 umount 会 EBUSY/ESTALE 失败
+        if _libc().umount2(target.encode(), _MNT_DETACH) != 0:
+            _libc().umount(target.encode())
     except Exception:  # noqa: BLE001
         pass
 
 
+def _proc_mounted(target: str) -> bool:
+    """/proc/mounts 是否记录了该挂载点 —— 对僵尸挂载也为真(os.path.ismount 会漏判)。"""
+    try:
+        with open("/proc/mounts") as f:
+            return any(line.split()[1] == target for line in f if len(line.split()) > 1)
+    except OSError:
+        return False
+
+
 def is_mounted(target: str | None = None) -> bool:
+    """挂载点是否**活着可用**:僵尸挂载(stale file handle)对 os.path.ismount 为 False,即视为不可用。"""
     t = target or str(settings.download_root_local)
     try:
         return os.path.ismount(t)
@@ -138,15 +154,29 @@ def apply() -> dict:
         if not settings.smb_host_path:
             state.update(mounted=False, error="SMB 未配置")
             return state
-        if is_mounted(target):
+        # 先清理任何已存在挂载:含 SMB 断线留下的僵尸挂载(os.path.ismount 漏判,故也查 /proc/mounts),
+        # 否则 mount() 会因目标已有挂载记录而报 EEXIST(File exists)。
+        if is_mounted(target) or _proc_mounted(target):
             _umount(target)
-        try:
-            _mount(settings.smb_host_path, target,   # src = //host/share → target = /downloads
-                   _mount_data(settings.smb_username, settings.smb_password, settings.smb_vers))
+        data = _mount_data(settings.smb_username, settings.smb_password, settings.smb_vers)
+        err = None
+        for attempt in (1, 2):
+            try:
+                _mount(settings.smb_host_path, target, data)   # //host/share → /downloads
+                err = None
+                break
+            except OSError as e:
+                err = e
+                # 僵尸挂载没摘净 → 再懒卸载一次后重试(EEXIST=残留挂载 / EBUSY=忙)
+                if attempt == 1 and e.errno in (errno.EEXIST, errno.EBUSY):
+                    _umount(target)
+                    continue
+                break
+        if err is None:
             state.update(mounted=True, error=None)
             log.info("SMB 已挂载 %s → %s", settings.smb_host_path, target)
-        except OSError as e:
-            state.update(mounted=False, error=f"挂载失败: {e.strerror} (errno {e.errno})")
+        else:
+            state.update(mounted=False, error=f"挂载失败: {err.strerror} (errno {err.errno})")
             log.warning("SMB 挂载失败 %s: %s", settings.smb_host_path, state["error"])
     else:
         state.update(mounted=is_mounted(target))   # local/compose:不由 App 挂载

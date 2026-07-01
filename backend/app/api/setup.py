@@ -65,6 +65,17 @@ def save_storage(payload: dict):
     return {"ok": True, **storage.status()}
 
 
+@router.post("/storage/remount")
+def remount_storage():
+    """按现有配置重新挂载(不改配置)。SMB 断线留下僵尸挂载导致「连不上」时,一键恢复。"""
+    if settings.storage_mode != "smb":
+        return {"ok": True, **storage.status()}
+    result = storage.apply()
+    if not result.get("mounted"):
+        raise HTTPException(400, result.get("error") or "挂载失败")
+    return {"ok": True, **storage.status()}
+
+
 @router.post("/finish")
 def finish():
     """标记首次配置完成,放行进主页。"""

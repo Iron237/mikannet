@@ -203,6 +203,15 @@ async function saveStorage() {
     await loadStorage()
   } catch (e) { storMsg.value = '失败:' + e.message } finally { storBusy.value = false }
 }
+// SMB 断线留下僵尸挂载导致「未连接」时,按现有配置一键重挂(不改配置)
+async function remountStorage() {
+  storBusy.value = true; storMsg.value = '重新挂载中…'
+  try {
+    await api.post('/api/setup/storage/remount', {})
+    storMsg.value = '已重新挂载'
+    await loadStorage()
+  } catch (e) { storMsg.value = '失败:' + e.message } finally { storBusy.value = false }
+}
 
 // ---- 数据备份 / 迁移 ----
 const backupSettings = ref(false)
@@ -326,6 +335,10 @@ onMounted(() => { load(); loadStorage(); loadVersion() })
       <div class="row" style="gap: 10px; margin-top: 10px;">
         <button class="btn sm" :disabled="storBusy" @click="testStorage">测试连接</button>
         <button class="btn primary sm" :disabled="storBusy" @click="saveStorage">保存并连接</button>
+        <button v-if="stor.mode === 'smb'" class="btn sm" :disabled="storBusy" @click="remountStorage"
+                title="断线后留下僵尸挂载导致「未连接」时,按现有配置重挂(不改配置)">
+          <Icon name="refresh" :size="13" /> 重新挂载
+        </button>
         <span class="muted" style="font-size: 12px;">连接 NAS 所需的容器权限,发行版镜像已自带</span>
       </div>
     </div>
