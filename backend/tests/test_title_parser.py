@@ -48,6 +48,17 @@ def test_star_separated():
     p = parse("六四位元字幕组★躲在超市后门抽烟的两人 Super no Ura de Yani Suu Futari★04(abema先行版)★1920x1080★AVC AAC MP4★繁体中文")
     assert p.episodes == [4.0]
     assert p.resolution == "1080p"
+    assert p.is_preview        # 标题带「先行版」→ 先行
+
+
+def test_preview_detection():
+    """先行(抢先/先行配信版)识别:带「先行」标记 → is_preview;正式发布无标记 → False。"""
+    assert parse("[某字幕组] 某番 - 01 [先行版][1080p]").is_preview
+    assert parse("[ANi] 某番 - 01 [先行配信][WEB-DL]").is_preview
+    assert not parse("[某字幕组] 某番 - 01 [1080p][简繁内封]").is_preview
+    # 阶段信息随 to_dict / from_dict 往返(parsed_json 缓存用)
+    from app.parsers.title_parser import ParsedTitle
+    assert ParsedTitle.from_dict(parse("某番 01 先行版").to_dict()).is_preview
 
 
 def test_zhengli_banyun_is_batch():

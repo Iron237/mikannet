@@ -90,7 +90,10 @@ def organize_torrent(db: Session, t: Torrent) -> None:
         season_n = (b.season_number or 1) if ep.type == EpisodeType.REGULAR else 0
         ext = Path(vf.relative_path).suffix
         new_name = f"{show} S{season_n:02d}E{_epfmt(ep.number)}{ext}"
-        new_rel_sp = f"Season {season_n:02d}/{new_name}"
+        # 先行(抢先版)单独归到「先行版」子目录(不进 Season,Jellyfin 不当正片集扫描);
+        # 正式版照常落 Season SS。同集先行/正式各留一份,互不覆盖。
+        new_rel_sp = (f"先行版/{new_name}" if t.is_preview
+                      else f"Season {season_n:02d}/{new_name}")
         new_full = (f"{prefix}/{new_rel_sp}" if prefix else new_rel_sp)
         old_rel_root = vf.relative_path.replace("\\", "/")
         old_rel_sp = (old_rel_root[len(prefix) + 1:]

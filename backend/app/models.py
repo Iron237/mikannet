@@ -156,6 +156,9 @@ class Torrent(Base):
     torrent_url: Mapped[str] = mapped_column(String(1024))
     is_batch: Mapped[bool] = mapped_column(Boolean, default=False)
     version: Mapped[int] = mapped_column(Integer, default=1)        # v2/v3
+    # 先行(抢先/先行配信版):发布早于官方开播日(bgm.tv air_date)或标题带「先行」。
+    # 与正式版是两条独立的去重流,文件单独归档到「番名/先行版/」,详情页分段展示。
+    is_preview: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     status: Mapped[TorrentStatus] = mapped_column(Enum(TorrentStatus), index=True,

@@ -108,6 +108,45 @@ def test_episode_offset_autodetect(db, sub):
     assert t2.episodes[0].number == 2.0
 
 
+def test_preview_and_official_separate_streams(db, sub):
+    """先行 ep8 与正式 ep8 是两条独立流:互不去重,各自入库;同阶段内仍去重。"""
+    prev = rss_engine.process_item(db, sub, item("p1", "[字幕组] 测试番剧 - 08 [先行版][1080p]"))
+    assert prev.status == TorrentStatus.DOWNLOADING and prev.is_preview
+    off = rss_engine.process_item(db, sub, item("o1", "[字幕组] 测试番剧 - 08 [1080p]"))
+    assert off.status == TorrentStatus.DOWNLOADING and not off.is_preview
+    # 同为先行的另一 ep8 → 与先行流去重 → 跳过
+    prev2 = rss_engine.process_item(db, sub, item("p2", "[字幕组] 测试番剧 - 08 [先行版][720p]"))
+    assert prev2.status == TorrentStatus.SKIPPED
+
+
+def test_preview_by_air_date_fallback(db, sub):
+    """无先行标记但发布明显早于官方开播日(bgm.tv air_date)→ 兜底判先行;开播后 → 正式。"""
+    sub.bangumi.air_date = "2026-07-09"
+    db.flush()
+    early = RssItem(guid="e1", title="[字幕组] 测试番剧 - 01 [1080p]",
+                    torrent_url="http://x/e1.torrent", size=100,
+                    published_at=datetime(2026, 6, 1))
+    assert rss_engine.process_item(db, sub, early).is_preview
+    late = RssItem(guid="l1", title="[字幕组] 测试番剧 - 01 [1080p]",
+                   torrent_url="http://x/l1.torrent", size=100,
+                   published_at=datetime(2026, 7, 10))
+    t2 = rss_engine.process_item(db, sub, late)
+    assert not t2.is_preview and t2.status == TorrentStatus.DOWNLOADING
+
+
+def test_version_switch_per_phase(db, sub):
+    """is_active 每阶段各留一个:同集的先行文件与正式文件互不置灰。"""
+    prev = rss_engine.process_item(db, sub, item("p1", "[字幕组] 测试番剧 - 08 [先行版][1080p]"))
+    off = rss_engine.process_item(db, sub, item("o1", "[字幕组] 测试番剧 - 08 [1080p]"))
+    ep_id = off.episodes[0].id
+    fp = VideoFile(torrent_id=prev.id, episode_id=ep_id, relative_path="先行版/08.mkv")
+    fo = VideoFile(torrent_id=off.id, episode_id=ep_id, relative_path="Season 01/08.mkv")
+    db.add_all([fp, fo])
+    db.flush()
+    _apply_version_switch(db, ep_id)
+    assert fp.is_active is True and fo.is_active is True
+
+
 def test_manual_delete_not_revived(db, sub):
     t = rss_engine.process_item(db, sub, item("g1", "[组] 测试番剧 - 05 [1080p]"))
     t.status = TorrentStatus.SKIPPED

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -44,14 +44,20 @@ def _passes_filters(sub: Subscription, title: str, parsed: ParsedTitle) -> tuple
 
 # ---- 去重 / v2 ----------------------------------------------------------------
 
-def _dedup_verdict(db: Session, sub: Subscription, parsed: ParsedTitle) -> tuple[bool, str]:
-    """同订阅同集去重:无既有→接受;新版本更高→接受(v2);其余→跳过。"""
+def _dedup_verdict(db: Session, sub: Subscription, parsed: ParsedTitle,
+                   is_preview: bool) -> tuple[bool, str]:
+    """同订阅同集去重:无既有→接受;新版本更高→接受(v2);其余→跳过。
+
+    先行与正式是两条独立的流:只在同阶段内去重(先行 ep4 不顶替正式 ep4,反之亦然),
+    这样官方开播后正式集能照常下载,先行版仍保留。
+    """
     if not parsed.episodes:
         return True, ""   # 集数未知(低置信度)不拦,下载后人工确认
     ep_set = set(parsed.episodes)
     rows = db.execute(
         select(Torrent).where(
             Torrent.subscription_id == sub.id,
+            Torrent.is_preview.is_(is_preview),
             Torrent.status.notin_([TorrentStatus.SKIPPED, TorrentStatus.SUBMIT_FAILED]))
     ).scalars().all()
     covering = [t for t in rows
@@ -66,6 +72,25 @@ def _dedup_verdict(db: Session, sub: Subscription, parsed: ParsedTitle) -> tuple
 
 
 # ---- 剧集行 -------------------------------------------------------------------
+
+# 发布日兜底判先行:比官方开播日早这么多天以上,才算先行(避开时区/开播当天的误差)
+_PREVIEW_DATE_MARGIN_DAYS = 2
+
+
+def _is_preview(sub: Subscription, parsed: ParsedTitle,
+                published_at: datetime | None) -> bool:
+    """判定该条目是否「先行」:标题带先行标记,或发布明显早于官方开播日(bgm.tv air_date)。"""
+    if parsed.is_preview:
+        return True
+    air = getattr(sub.bangumi, "air_date", None)
+    if not published_at or not air:
+        return False
+    try:
+        air_d = date.fromisoformat(air[:10].replace("/", "-"))
+    except ValueError:
+        return False
+    return (air_d - published_at.date()).days > _PREVIEW_DATE_MARGIN_DAYS
+
 
 def _effective_episodes(sub: Subscription, numbers: list[float]) -> list[float]:
     """应用集数偏移(Mikan 跨季连续编号 → 本季集号)。"""
@@ -110,10 +135,11 @@ def process_item(db: Session, sub: Subscription, item: RssItem) -> Torrent | Non
         return None
 
     parsed = parse(item.title)
+    is_preview = _is_preview(sub, parsed, item.published_at)
     torrent = Torrent(
         subscription_id=sub.id, guid=item.guid, title_raw=item.title,
         parsed_json=parsed.to_dict(), torrent_url=item.torrent_url,
-        is_batch=parsed.is_batch, version=parsed.version,
+        is_batch=parsed.is_batch, version=parsed.version, is_preview=is_preview,
         published_at=item.published_at, size=item.size,
     )
 
@@ -125,7 +151,7 @@ def process_item(db: Session, sub: Subscription, item: RssItem) -> Torrent | Non
     else:
         ok, reason = _passes_filters(sub, item.title, parsed)
         if ok:
-            ok, reason = _dedup_verdict(db, sub, parsed)
+            ok, reason = _dedup_verdict(db, sub, parsed, is_preview)
     if not ok:
         torrent.status = TorrentStatus.SKIPPED
         torrent.error_message = reason
@@ -198,7 +224,7 @@ def reevaluate_skipped(db: Session, sub: Subscription) -> int:
         else:
             ok, _ = _passes_filters(sub, t.title_raw, parsed)
             if ok:
-                ok, _ = _dedup_verdict(db, sub, parsed)
+                ok, _ = _dedup_verdict(db, sub, parsed, bool(t.is_preview))
         if not ok:
             continue
         t.status = TorrentStatus.PENDING

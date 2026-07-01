@@ -13,6 +13,8 @@ import EditSubscriptionModal from '../components/EditSubscriptionModal.vue'
 const route = useRoute()
 const router = useRouter()
 const b = ref(null)
+const phase = ref(null)          // 当前查看阶段:'official' | 'preview'(null=让后端选默认)
+const reorgMsg = ref('')
 const expanded = ref(new Set())
 const showWizard = ref(false)
 const confirmRemove = ref(false)
@@ -64,9 +66,24 @@ function fmtTime(iso) {
 }
 
 async function load() {
-  b.value = await api.get(`/api/bangumi/${route.params.id}`)
+  const q = phase.value ? `?phase=${phase.value}` : ''
+  b.value = await api.get(`/api/bangumi/${route.params.id}${q}`)
+  phase.value = b.value.phase          // 首次由后端定默认阶段,之后保持用户选择
   autoBest.value = !!b.value.auto_best
   bdOwned.value = !!b.value.bd_owned
+}
+
+// 先行 / 正式 分段切换:切阶段后重新拉取该阶段的剧集与文件
+function switchPhase(p) { if (p !== phase.value) { phase.value = p; load() } }
+
+// 重新整理:把先行种子归入「先行版/」目录(后台串行,仅下载器托管的种子)
+async function reorganize() {
+  reorgMsg.value = '整理中…'
+  try {
+    const r = await api.post(`/api/bangumi/${b.value.id}/reorganize`, {})
+    reorgMsg.value = r.torrents
+      ? `已提交整理 ${r.torrents} 个种子(后台执行,稍后刷新查看)` : '没有可整理的下载器种子'
+  } catch (e) { reorgMsg.value = e.message }
 }
 
 async function toggleBdOwned() {
@@ -328,7 +345,24 @@ onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
       </div>
 
       <!-- 剧集 -->
-      <div class="page-title" style="margin-top: 22px;">{{ b.kind === 'tv' ? '剧集' : '剧集 / 特典' }}</div>
+      <div class="row" style="margin-top: 22px; align-items: center; flex-wrap: wrap; gap: 10px;">
+        <div class="page-title" style="margin: 0;">{{ b.kind === 'tv' ? '剧集' : '剧集 / 特典' }}</div>
+        <!-- 先行 / 正式 分段切换:仅当存在先行内容时出现 -->
+        <div v-if="b.has_preview" class="seg">
+          <button class="seg-btn" :class="{ on: phase === 'official' }" @click="switchPhase('official')">正式</button>
+          <button class="seg-btn" :class="{ on: phase === 'preview' }" @click="switchPhase('preview')">先行</button>
+        </div>
+        <div class="spacer" />
+        <span v-if="phase === 'preview' && b.air_date" class="muted" style="font-size: 12px;">
+          <Icon name="clock" :size="12" /> 官方开播 {{ b.air_date }}
+        </span>
+        <button v-if="b.has_preview" class="btn sm" title="把先行种子归入「先行版/」目录(后台整理,仅下载器托管的种子)"
+                @click="reorganize"><Icon name="folder-in" :size="13" /> 整理先行版</button>
+      </div>
+      <p v-if="phase === 'preview'" class="muted" style="font-size: 12px; margin: 6px 0 12px;">
+        先行版(抢先/先行配信):单独归档在「先行版」目录,与正式版互不覆盖。
+      </p>
+      <p v-if="reorgMsg" class="muted" style="font-size: 12px; margin-bottom: 10px;">{{ reorgMsg }}</p>
       <p v-if="opMsg" class="op-msg">{{ opMsg }}</p>
       <div v-if="!b.episodes.length" class="muted">还没有剧集记录</div>
       <div v-for="ep in b.episodes" :key="(ep.type) + '-' + (ep.id ?? ep.number)" class="card ep-row"
@@ -520,6 +554,11 @@ onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
 .auto-toggle input { accent-color: var(--accent); }
 .auto-status { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-dim); }
 .op-msg { color: var(--red); font-size: 12.5px; margin-bottom: 10px; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg-btn { background: transparent; color: var(--text-dim); border: none; padding: 4px 14px;
+  font-size: 12.5px; cursor: pointer; }
+.seg-btn.on { background: var(--accent); color: #fff; }
+.seg-btn:not(.on):hover { color: var(--text); }
 .file-ops { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
 .file-edit { margin-top: 8px; gap: 8px; flex-wrap: wrap; align-items: center; }
 .btn.xs { font-size: 11.5px; padding: 3px 8px; }

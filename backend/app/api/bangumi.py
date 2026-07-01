@@ -1,5 +1,7 @@
 """番剧库与详情(虚拟库视图,ADR-0001:全部由数据库渲染)。"""
-from fastapi import APIRouter, Depends, HTTPException
+import logging
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -10,6 +12,7 @@ from app.models import (Bangumi, BdRelease, Episode, EpisodeType, Kind, Subscrip
 from app.services.local_import import LOCAL_SUBGROUP_ID
 
 router = APIRouter(prefix="/api/bangumi", tags=["bangumi"])
+log = logging.getLogger(__name__)
 
 
 def _poster_url(b: Bangumi) -> str | None:
@@ -170,11 +173,27 @@ def calendar(db: Session = Depends(get_db)):
     return {"days": days, "unknown": unknown}
 
 
+def _has_phase(db: Session, bangumi_id: int, is_preview: bool) -> bool:
+    """该番剧是否有指定阶段(先行/正式)的非留痕种子 → 决定详情页是否显示分段切换。"""
+    return bool(db.execute(
+        select(Torrent.id).join(Subscription, Torrent.subscription_id == Subscription.id)
+        .where(Subscription.bangumi_id == bangumi_id, Torrent.is_preview.is_(is_preview),
+               Torrent.status.notin_([TorrentStatus.SKIPPED, TorrentStatus.SUBMIT_FAILED]))
+        .limit(1)).first())
+
+
 @router.get("/{bangumi_id}")
-def detail(bangumi_id: int, db: Session = Depends(get_db)):
+def detail(bangumi_id: int, phase: str | None = None, db: Session = Depends(get_db)):
     b = db.get(Bangumi, bangumi_id)
     if not b:
         raise HTTPException(404)
+    has_preview = _has_phase(db, b.id, True)
+    has_official = _has_phase(db, b.id, False)
+    # 阶段:未指定时,只有先行没正式 → 默认先行;否则默认正式。
+    if phase not in ("preview", "official"):
+        phase = "preview" if (has_preview and not has_official) else "official"
+    want_preview = phase == "preview"
+
     # 正片按集号、非正片(SP/OP·ED/PV…)按类型+序号,统一排序
     _TYPE_ORDER = {EpisodeType.REGULAR: 0, EpisodeType.SPECIAL: 1, EpisodeType.CREDITS: 2,
                    EpisodeType.TRAILER: 3, EpisodeType.OTHER: 4}
@@ -182,19 +201,21 @@ def detail(bangumi_id: int, db: Session = Depends(get_db)):
     episodes.sort(key=lambda e: (_TYPE_ORDER.get(e.type, 9),
                                  e.number if e.number is not None else 1e9))
     eps_out = []
-    known_numbers = {ep.number for ep in episodes if ep.type == EpisodeType.REGULAR}
     for ep in episodes:
         torrents = db.execute(
             select(Torrent).join(TorrentEpisode)
-            .where(TorrentEpisode.episode_id == ep.id)
+            .where(TorrentEpisode.episode_id == ep.id, Torrent.is_preview.is_(want_preview))
             .order_by(Torrent.version.desc())).scalars().all()
         current = next((t for t in torrents if t.status not in
                         (TorrentStatus.SKIPPED, TorrentStatus.SUBMIT_FAILED)), None)
-        # 只取映射到「这一集」的文件,不是整个种子(合集/番剧库容器种子覆盖多集,
-        # 否则每集都会列出整包的全部文件)。is_active 处理 v2 切换。
+        # 只取映射到「这一集」且属当前阶段的文件(合集/容器种子覆盖多集,is_active 处理 v2 切换)。
         ep_files = db.execute(
-            select(VideoFile).where(VideoFile.episode_id == ep.id, VideoFile.is_active.is_(True))
+            select(VideoFile).join(Torrent, VideoFile.torrent_id == Torrent.id)
+            .where(VideoFile.episode_id == ep.id, VideoFile.is_active.is_(True),
+                   Torrent.is_preview.is_(want_preview))
             .order_by(VideoFile.relative_path)).scalars().all()
+        if current is None and not ep_files:
+            continue   # 这一集在当前阶段无任何内容 → 不列(正式阶段下面按总集数补缺占位)
         eps_out.append({
             "id": ep.id, "number": ep.number, "type": ep.type.value, "title": ep.title,
             "status": current.status.value if current else "missing",
@@ -202,9 +223,10 @@ def detail(bangumi_id: int, db: Session = Depends(get_db)):
             "torrent_id": current.id if current else None,
             "files": [_file_out(f) for f in ep_files],
         })
-    # 缺集占位:仅 tv 番剧 + 已知总集数时,把库里没有的正片集号渲染为"未下载"(补全入口依据)。
-    # movie/ova 没有"正片集"概念,不补占位。
-    if b.eps_total and b.kind == Kind.TV:
+    known_numbers = {e["number"] for e in eps_out if e["type"] == "regular"}
+    # 缺集占位:仅正式阶段 + tv 番剧 + 已知总集数时,把没有的正片集号渲染为"未下载"(补全入口依据)。
+    # 先行阶段只展示已有先行内容,不铺满占位;movie/ova 没有"正片集"概念,不补占位。
+    if not want_preview and b.eps_total and b.kind == Kind.TV:
         regular = [e for e in eps_out if e["type"] == "regular"]
         others = [e for e in eps_out if e["type"] != "regular"]
         for n in range(1, b.eps_total + 1):
@@ -219,7 +241,8 @@ def detail(bangumi_id: int, db: Session = Depends(get_db)):
     unmapped = db.execute(
         select(VideoFile).join(Torrent).join(Subscription)
         .where(Subscription.bangumi_id == b.id,
-               VideoFile.episode_id.is_(None), VideoFile.is_active.is_(True))
+               VideoFile.episode_id.is_(None), VideoFile.is_active.is_(True),
+               Torrent.is_preview.is_(want_preview))
         .order_by(VideoFile.relative_path)).scalars().all()
 
     # 不展示「智能下载」内部容器订阅(它的种子已按集出现在剧集列表里;本地导入容器仍展示)
@@ -240,6 +263,8 @@ def detail(bangumi_id: int, db: Session = Depends(get_db)):
         "anidb_synced_at": b.anidb_synced_at.isoformat() if b.anidb_synced_at else None,
         "season_number": b.season_number or 1,
         "auto_best": b.auto_best, "bd_owned": b.bd_owned,
+        "air_date": b.air_date,
+        "phase": phase, "has_preview": has_preview, "has_official": has_official,
         "bd_releases": _bd_releases_out(db, b.id),
         "episodes": eps_out,
         "unmapped_files": [_file_out(f) for f in unmapped],
@@ -397,6 +422,38 @@ def update_bangumi(bangumi_id: int, payload: dict, db: Session = Depends(get_db)
     db.commit()
     return {"ok": True, "season_number": b.season_number, "kind": b.kind.value,
             "auto_best": b.auto_best, "bd_owned": b.bd_owned}
+
+
+def _reorganize_bg(torrent_ids: list[int]) -> None:
+    """后台:逐个重跑整理(SMB 上串行,单个失败不影响其余)。先行种子会被移入「先行版/」。"""
+    from app.database import db_session
+    from app.services.organize import organize_torrent
+    for tid in torrent_ids:
+        try:
+            with db_session() as db:
+                t = db.get(Torrent, tid)
+                if t is not None:
+                    organize_torrent(db, t)
+        except Exception:  # noqa: BLE001
+            log.exception("重整理 #%s 失败", tid)
+
+
+@router.post("/{bangumi_id}/reorganize")
+def reorganize(bangumi_id: int, background: BackgroundTasks, db: Session = Depends(get_db)):
+    """重新整理该番剧已归档种子的文件(把先行种子归到「先行版/」、正片补规整命名)。
+
+    仅处理下载器托管(有 info_hash)的种子 —— 本地导入文件不经 qB 改名,不在此列。后台串行执行。
+    """
+    b = db.get(Bangumi, bangumi_id)
+    if not b:
+        raise HTTPException(404)
+    tids = list(db.execute(
+        select(Torrent.id).join(Subscription, Torrent.subscription_id == Subscription.id)
+        .where(Subscription.bangumi_id == bangumi_id,
+               Torrent.status == TorrentStatus.ARCHIVED,
+               Torrent.info_hash.isnot(None))).scalars().all())
+    background.add_task(_reorganize_bg, tids)
+    return {"started": True, "torrents": len(tids)}
 
 
 @router.post("/{bangumi_id}/sync-anidb")

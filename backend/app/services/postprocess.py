@@ -86,17 +86,22 @@ def _file_quality(f: VideoFile) -> tuple:
 
 
 def _apply_version_switch(db: Session, episode_id: int) -> None:
-    """同一剧集多文件:只保留**唯一**画质最优的为 is_active(BD>Web>未知、v2>v1、体积大),其余置 0。
+    """同一剧集多文件:**每个阶段(先行/正式)各**保留唯一画质最优的为 is_active,其余置 0。
 
-    覆盖 v2 决议 + 跨字幕组 Web→BD 升级(BD 完成后顶替 Web)+ 同集多源去重(只留一个)。
+    覆盖 v2 决议 + 跨字幕组 Web→BD 升级(BD 完成后顶替 Web)+ 同集多源去重。
+    先行与正式分开各留一个:官方开播后正式集入库,先行版仍保留一个 active 供详情页先行分段展示。
     """
     files = db.execute(select(VideoFile).join(Torrent).where(
         VideoFile.episode_id == episode_id)).scalars().all()
     if not files:
         return
-    best = min(files, key=_file_quality)
-    for f in files:
-        f.is_active = f is best
+    for phase in (False, True):
+        group = [f for f in files if bool(f.torrent.is_preview) is phase]
+        if not group:
+            continue
+        best = min(group, key=_file_quality)
+        for f in group:
+            f.is_active = f is best
     db.flush()
 
 

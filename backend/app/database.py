@@ -84,7 +84,8 @@ def _migrate_columns() -> None:
                     ("bd_owned", "BOOLEAN DEFAULT 0")],
         "torrent": [("stalled_since", "DATETIME"),
                     ("last_progress", "FLOAT DEFAULT 0"),
-                    ("progress_at", "DATETIME")],
+                    ("progress_at", "DATETIME"),
+                    ("is_preview", "BOOLEAN DEFAULT 0")],
         "episode": [("anidb_eid", "INTEGER")],
         "video_file": [("subgroup", "VARCHAR(128)"),
                        ("source", "VARCHAR(32)"),
@@ -109,6 +110,19 @@ def _migrate_columns() -> None:
                     conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
         conn.commit()
         _migrate_episode_type(conn)
+        _backfill_preview(conn)
+
+
+def _backfill_preview(conn) -> None:
+    """新增 is_preview 列后,把标题明显带「先行」的旧种子回填为先行(幂等,只置位不清零)。
+
+    发布日兜底(早于官方开播日)只对新入库条目生效;老库这里按标题一次性补,足够覆盖
+    「先行版/先行配信」这类明确标注的历史条目。
+    """
+    conn.exec_driver_sql(
+        "UPDATE torrent SET is_preview = 1 "
+        "WHERE is_preview = 0 AND (title_raw LIKE '%先行%' OR title_raw LIKE '%先行配信%')")
+    conn.commit()
 
 
 def _migrate_bangumi_nullable_mikan() -> None:
