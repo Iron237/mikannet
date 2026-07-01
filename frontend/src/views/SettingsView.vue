@@ -154,7 +154,10 @@ function waitForRestart() {
       if (!target || v.version === target) {
         ver.value = v; updApplying.value = false
         updMsg.value = `更新完成:当前 ${v.version}`
-        updCheck.value = { ...(updCheck.value || {}), type: 'none', latest: v.version }
+        // current 也要同步成新版本(否则「已是最新(vX)」仍显示更新前的版本);
+        // 系统状态卡的版本来自 /health,更新后一并刷新,别停在旧值。
+        updCheck.value = { type: 'none', current: v.version, latest: v.version }
+        try { health.value = await api.get('/api/system/health') } catch { /* 保留旧值 */ }
         return
       }
     } catch { /* 仍在重启,继续等 */ }

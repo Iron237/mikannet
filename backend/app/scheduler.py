@@ -47,6 +47,22 @@ def _lifecycle_job() -> None:
     daily_reconcile()
 
 
+def _storage_watchdog_job() -> None:
+    """SMB 挂载看门狗:运行中途 SMB 断线会留下僵尸挂载(/downloads 连不上),
+    仅靠启动/手动重挂无法自愈。定期检测,发现未正常挂载即自动重挂(重挂含清僵尸挂载)。"""
+    if settings.storage_mode != "smb" or not settings.smb_host_path:
+        return
+    from app.services import storage
+    if storage.is_mounted():
+        return
+    log.warning("存储看门狗:/downloads 未正常挂载,尝试自动重挂…")
+    result = storage.apply()
+    if result.get("mounted"):
+        log.info("存储看门狗:已自动重挂 /downloads")
+    else:
+        log.warning("存储看门狗:重挂未成功(SMB 可能仍不可达): %s", result.get("error"))
+
+
 def start() -> None:
     scheduler.add_job(_rss_job, "interval", minutes=settings.poll_interval_min,
                       id="rss_poll", coalesce=True, max_instances=1)
@@ -54,6 +70,9 @@ def start() -> None:
                       id="drain_completed", coalesce=True, max_instances=1)
     scheduler.add_job(_lifecycle_job, "interval", hours=24,
                       id="lifecycle", coalesce=True, max_instances=1)
+    if settings.storage_mode == "smb":
+        scheduler.add_job(_storage_watchdog_job, "interval", minutes=2,
+                          id="storage_watchdog", coalesce=True, max_instances=1)
     if settings.auto_dl_interval_min and settings.auto_dl_interval_min > 0:
         scheduler.add_job(_auto_best_job, "interval", minutes=settings.auto_dl_interval_min,
                           id="auto_best", coalesce=True, max_instances=1)

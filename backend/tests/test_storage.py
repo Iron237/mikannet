@@ -65,3 +65,26 @@ def test_apply_persistent_eexist_fails_gracefully(monkeypatch):
     st = storage.apply()
     assert st["mounted"] is False
     assert "17" in (st["error"] or "")
+
+
+def test_watchdog_remounts_when_stale(monkeypatch):
+    """看门狗:未正常挂载(含僵尸)→ 调 apply() 重挂。"""
+    from app import scheduler
+    _smb(monkeypatch)
+    monkeypatch.setattr(storage, "is_mounted", lambda t=None: False)
+    calls = {"n": 0}
+    monkeypatch.setattr(storage, "apply",
+                        lambda: (calls.__setitem__("n", calls["n"] + 1), {"mounted": True})[1])
+    scheduler._storage_watchdog_job()
+    assert calls["n"] == 1
+
+
+def test_watchdog_skips_when_healthy(monkeypatch):
+    """看门狗:挂载健康 → 不动。"""
+    from app import scheduler
+    _smb(monkeypatch)
+    monkeypatch.setattr(storage, "is_mounted", lambda t=None: True)
+    calls = {"n": 0}
+    monkeypatch.setattr(storage, "apply", lambda: calls.__setitem__("n", calls["n"] + 1))
+    scheduler._storage_watchdog_job()
+    assert calls["n"] == 0
