@@ -85,5 +85,9 @@ if _DIST.exists():
 
     @app.get("/{path:path}", include_in_schema=False)
     def spa(path: str):
-        # SPA 回退:非 API/静态路径一律返回 index.html
+        # dist 根目录的真实静态文件(favicon.svg 等)直接返回;其余非 API 路径回退 index.html
+        if path:
+            candidate = (_DIST / path).resolve()
+            if candidate.is_file() and candidate.is_relative_to(_DIST.resolve()):
+                return FileResponse(candidate)
         return FileResponse(_DIST / "index.html")
