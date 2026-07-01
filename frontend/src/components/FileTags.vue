@@ -50,6 +50,9 @@ const hasSub = computed(() => subs.value.length > 0)
 <template>
   <div class="ftags">
     <div v-if="showPath" class="muted path">{{ f.path || f.name }}</div>
+    <!-- 整理改名前的原始文件名(保留字幕组/版本等信息) -->
+    <div v-if="f.original_name && f.original_name !== f.name" class="muted orig"
+         title="整理改名前的原始文件名">原始:{{ f.original_name }}</div>
 
     <!-- 视频:分辨率 / 片源 / 色深 / HDR / 编码 / 码率 -->
     <div class="trow">
@@ -85,6 +88,7 @@ const hasSub = computed(() => subs.value.length > 0)
 <style scoped>
 .ftags { display: flex; flex-direction: column; gap: 5px; }
 .path { font-size: 12px; word-break: break-all; }
+.orig { font-size: 11.5px; word-break: break-all; opacity: .75; }
 .trow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .ti { color: var(--text-dim); opacity: .8; }
 .tag { display: inline-flex; align-items: center; gap: 3px; }

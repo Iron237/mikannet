@@ -306,6 +306,13 @@ def _import_group(group: dict) -> str:
         from app.services.postprocess import _apply_version_switch
         for ep_id in touched_eps:
             _apply_version_switch(db, ep_id)
+        # 统一存储标准:把导入的 active 正片整理进「Season NN/番名 SxxExx.ext」(文件系统 move)。
+        # 与 RSS 下载同一落盘结构;非 active(被更优源顶替)不动,留原名原地。
+        try:
+            from app.services.organize import organize_torrent
+            organize_torrent(db, torrent)
+        except Exception as e:  # noqa: BLE001 — 整理失败不影响导入结果(文件已入库)
+            log.warning("导入后整理失败 %s: %s", bangumi.title, e)
         return f"{bangumi.title}: {ok} 个文件" + (f"({failed} 个失败)" if failed else "")
 
 

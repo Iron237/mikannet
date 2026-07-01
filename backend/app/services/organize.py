@@ -1,16 +1,19 @@
-"""完成后整理(改 ADR-0001,可开关):qB 原地重命名成 Jellyfin 结构 + 写 NFO/封面。
+"""完成后整理(改 ADR-0001,可开关):把文件规整成 Jellyfin 结构 + 写 NFO/封面。
 
 布局:订阅 save_path 文件夹(= download_root/番剧名)直接作为 Jellyfin 剧集文件夹,
 内部 `Season SS/番剧名 SxxExx.ext`,根目录放 tvshow.nfo + poster.jpg + fanart.jpg。
-qB 用 renameFile 原地移动 → 仍按新路径做种(SMB 上仅一次改名,不复制)。
-仅对 qB 后端生效(BitComet 改名能力未知)。
+统一存储标准:两条整理路径落同一目录结构 ——
+- **下载器托管**(有 info_hash + qB 后端):qB renameFile 原地移动 → 仍按新路径做种(SMB 上仅一次改名)。
+- **非托管**(本地导入,无 info_hash):文件系统层面 move(os.replace,同一挂载内即改名,零复制)。
+改名前把原始文件名存进 VideoFile.original_name,保留字幕组/版本等信息可回溯、详情页展示。
 """
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from xml.sax.saxutils import escape
 
 from sqlalchemy.orm import Session
@@ -62,12 +65,36 @@ def _epfmt(n: float | None) -> str:
     return f"{int(n):02d}" if float(n).is_integer() else f"{n:g}"
 
 
+def _fs_move(old_rel_root: str, new_rel_root: str) -> None:
+    """非托管文件(本地导入)在挂载内直接 move:download_root_local 相对路径 → 同左。
+
+    os.replace 同一挂载即服务器端改名(零复制);目标已存在则报错交上层跳过。
+    """
+    base = Path(settings.download_root_local)
+    src = base / old_rel_root
+    dst = base / new_rel_root
+    if not src.exists():
+        raise FileNotFoundError(str(src))
+    if dst.exists():
+        raise FileExistsError(str(dst))
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(src, dst)
+
+
+def _rename_one(t: Torrent, old_rel_sp: str, new_rel_sp: str,
+                old_rel_root: str, new_rel_root: str) -> None:
+    """把一个文件从旧位置整理到新位置。托管种子走下载器改名,非托管走文件系统 move。"""
+    if t.info_hash and downloader.name == "qb":
+        downloader.rename_file(t.info_hash, old_rel_sp, new_rel_sp)   # 相对种子根(save_path)
+    elif not t.info_hash:
+        _fs_move(old_rel_root, new_rel_root)                          # 相对 download_root
+    else:
+        raise RuntimeError(f"下载器 {downloader.name} 托管的种子不支持整理改名")
+
+
 def organize_torrent(db: Session, t: Torrent) -> None:
-    """对一个已完成种子:重命名其(active 且已定集的)文件 + 写番剧 NFO/封面。幂等。"""
+    """对一个已完成种子:整理其(active 且已定集的)文件到 Season 结构 + 写番剧 NFO/封面。幂等。"""
     if not settings.organize_enabled:
-        return
-    if downloader.name != "qb":
-        log.info("整理跳过:下载器 %s 不支持原地重命名", downloader.name)
         return
     sub = t.subscription
     b = sub.bangumi
@@ -104,14 +131,16 @@ def organize_torrent(db: Session, t: Torrent) -> None:
             log.warning("整理 #%s 跳过撞名目标 %s(%s)", t.id, new_full, old_rel_sp)
             continue
         try:
-            downloader.rename_file(t.info_hash, old_rel_sp, new_rel_sp)
+            _rename_one(t, old_rel_sp, new_rel_sp, old_rel_root, new_full)
+            if not vf.original_name:   # 首次整理前的原始名(保留字幕组/版本等全部信息)
+                vf.original_name = PurePosixPath(old_rel_root).name
             used.discard(old_rel_root)
             vf.relative_path = new_full
             used.add(new_full)
             db.flush()
             log.info("整理 #%s → %s", t.id, vf.relative_path)
         except Exception as e:  # noqa: BLE001 — 单文件失败不阻断其余
-            log.warning("重命名失败 %s → %s: %s", old_rel_sp, new_rel_sp, e)
+            log.warning("整理失败 %s → %s: %s", old_rel_sp, new_rel_sp, e)
 
     if settings.nfo_enabled and prefix:
         try:

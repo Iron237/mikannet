@@ -199,6 +199,8 @@ class VideoFile(Base):
     episode_id: Mapped[int | None] = mapped_column(ForeignKey("episode.id"))  # None=待人工确认
 
     relative_path: Mapped[str] = mapped_column(String(1024))   # 相对 download_root
+    # 整理改名(SxxExx)前的原始文件名;保留字幕组/版本/原始命名等全部信息(详情页展示、可回溯)
+    original_name: Mapped[str | None] = mapped_column(String(1024))
     size: Mapped[int | None] = mapped_column(Integer)
     resolution: Mapped[str | None] = mapped_column(String(32))
     subgroup: Mapped[str | None] = mapped_column(String(128))   # 字幕组(从文件名解析)

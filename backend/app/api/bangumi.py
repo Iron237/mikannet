@@ -27,6 +27,7 @@ def _file_out(f) -> dict:
     from app.services import launch
     return {
         "id": f.id, "path": f.relative_path, "name": PurePosixPath(f.relative_path).name,
+        "original_name": f.original_name,   # 整理改名前的原始文件名(保留字幕组/版本等信息)
         "size": f.size, "resolution": f.resolution, "subgroup": f.subgroup,
         "source": f.source, "codec": f.video_codec,
         "color_depth": f.color_depth, "hdr": f.hdr, "bitrate": f.bitrate,
@@ -440,9 +441,9 @@ def _reorganize_bg(torrent_ids: list[int]) -> None:
 
 @router.post("/{bangumi_id}/reorganize")
 def reorganize(bangumi_id: int, background: BackgroundTasks, db: Session = Depends(get_db)):
-    """重新整理该番剧已归档种子的文件(把先行种子归到「先行版/」、正片补规整命名)。
+    """重新整理该番剧已归档种子的文件到统一的 Season 结构(先行→先行版、正片→Season NN)。
 
-    仅处理下载器托管(有 info_hash)的种子 —— 本地导入文件不经 qB 改名,不在此列。后台串行执行。
+    托管种子走下载器改名,本地导入(无 info_hash)走文件系统 move —— 两者都纳入。后台串行执行。
     """
     b = db.get(Bangumi, bangumi_id)
     if not b:
@@ -450,8 +451,7 @@ def reorganize(bangumi_id: int, background: BackgroundTasks, db: Session = Depen
     tids = list(db.execute(
         select(Torrent.id).join(Subscription, Torrent.subscription_id == Subscription.id)
         .where(Subscription.bangumi_id == bangumi_id,
-               Torrent.status == TorrentStatus.ARCHIVED,
-               Torrent.info_hash.isnot(None))).scalars().all())
+               Torrent.status == TorrentStatus.ARCHIVED)).scalars().all())
     background.add_task(_reorganize_bg, tids)
     return {"started": True, "torrents": len(tids)}
 
