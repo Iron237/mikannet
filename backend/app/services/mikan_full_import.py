@@ -2,7 +2,7 @@
 
 机制(已逆向实测):带 cookie 抓 /Home/MyBangumi → 解析季度下拉(data-year/data-season)→
 逐季度 GET /Home/BangumiCoverFlow?year=&seasonStr= 收集订阅番剧 id(去重,含跨季长篇)→
-每部番剧选"种子最多"的字幕组建 mikanarr 订阅(已存在跳过),补元数据 + 首轮轮询。
+每部番剧选"种子最多"的字幕组建 mikannet 订阅(已存在跳过),补元数据 + 首轮轮询。
 """
 from __future__ import annotations
 
@@ -43,26 +43,70 @@ def _quarter_key(year, season) -> int:
         return 0
 
 
+# 合法 cookie name(RFC6265 token);value 里去掉任何非法 header 字符(换行/引号等)
+_COOKIE_NAME_RE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+_COOKIE_VAL_BAD = re.compile(r"[\x00-\x20\"';,\\\x7f]")
+
+
 def _parse_cookie(raw: str) -> dict:
-    """支持粘贴完整 Cookie 头(name=value; …)或仅 .AspNetCore.Identity.Application 的值。"""
+    """支持三种粘贴形式,统一抽成 {name: value}:
+    1) 浏览器 Cookie 扩展(Cookie-Editor/EditThisCookie)导出的 JSON 数组/对象
+       —— 形如 [{"name":..,"value":..}, …],自动抽 name/value;
+    2) 完整 Cookie 头  name=value; name2=value2 …;
+    3) 仅 .AspNetCore.Identity.Application 的裸值。
+    只保留 name 合法、value 无非法 header 字符的项,避免拼进 Cookie 头时炸
+    Illegal header value。"""
+    import json
+
     raw = (raw or "").strip()
     if not raw:
         return {}
-    if "=" in raw:
+
+    # 形式 1:JSON(数组或单对象)——扩展导出格式
+    if raw[0] in "[{":
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            data = None
+        if data is not None:
+            items = data if isinstance(data, list) else [data]
+            out = {}
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                name = str(it.get("name", "")).strip()
+                val = str(it.get("value", "")).strip()
+                if name and _COOKIE_NAME_RE.match(name) and not _COOKIE_VAL_BAD.search(val):
+                    out[name] = val
+            if out:
+                return out
+
+    # 形式 2:Cookie 头(单行 name=value; …)
+    if "=" in raw and "\n" not in raw:
         out = {}
         for part in raw.split(";"):
             if "=" in part:
                 k, v = part.split("=", 1)
-                out[k.strip()] = v.strip()
-        return out
-    return {".AspNetCore.Identity.Application": raw}
+                k, v = k.strip(), v.strip()
+                if k and _COOKIE_NAME_RE.match(k) and not _COOKIE_VAL_BAD.search(v):
+                    out[k] = v
+        if out:
+            return out
+
+    # 形式 3:裸值(去掉可能被换行/空格截断的残留)
+    return {".AspNetCore.Identity.Application": re.sub(r"\s+", "", raw)}
+
+
+def _serialize_cookie(d: dict) -> str:
+    """把解析后的 cookie 还原成规范的单行 Cookie 头,用于存进设置(不再存原始 JSON)。"""
+    return "; ".join(f"{k}={v}" for k, v in d.items())
 
 
 def _client() -> httpx.Client:
     base = settings.mikan_base_url.rstrip("/")
     return httpx.Client(
         proxy=settings.proxy_for("mikan"), trust_env=False, timeout=30,
-        headers={"User-Agent": "Mozilla/5.0 (compatible; Mikanarr/0.1)",
+        headers={"User-Agent": "Mozilla/5.0 (compatible; Mikannet/0.1)",
                  "Referer": base + "/Home/MyBangumi"},
         cookies=_parse_cookie(settings.mikan_cookie), follow_redirects=True)
 
@@ -122,8 +166,13 @@ def _import_bangumi(mid: int) -> tuple[int, str] | None:
 def _run(cookie: str | None, since_key: int | None, until_key: int | None,
          auto_dl: bool) -> None:
     if cookie:
+        parsed = _parse_cookie(cookie)
+        if not parsed:
+            state.update(running=False, phase="完成",
+                         error="没能从粘贴内容里解析出 cookie,请贴 .AspNetCore.Identity.Application 的值")
+            return
         from app.services import settings_service
-        settings_service.update({"mikan_cookie": cookie})
+        settings_service.update({"mikan_cookie": _serialize_cookie(parsed)})
     state.update(running=True, phase="读取我的番组", done=0, total=0,
                  created=[], skipped=0, errors=0, error=None)
     created_ids: list[int] = []

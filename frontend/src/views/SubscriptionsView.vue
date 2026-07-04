@@ -196,8 +196,9 @@ onUnmounted(() => { mounted = false; clearTimeout(pollTimer); clearTimeout(allTi
           把订阅过的番剧加入番剧库(补元数据,已在库的跳过)。默认<strong>只入库不下载</strong>;
           需要的话勾选下方在入库后<strong>智能下载补齐</strong>。
           cookie 会存进设置(打码),过期后重新粘贴即可。<br>
-          取法:登录 mikanani.me → F12 → 网络 → 任意请求的 <code>Cookie</code> 整行;
-          或 应用→Cookies 里 <code>.AspNetCore.Identity.Application</code> 的值。
+          取法(任选一种):① 登录 mikanani.me → F12 → 网络 → 任意请求的 <code>Cookie</code> 整行;
+          ② 应用→Cookies 里 <code>.AspNetCore.Identity.Application</code> 的值;
+          ③ Cookie-Editor / EditThisCookie 扩展导出的整段 JSON 直接粘进来即可。
         </p>
         <textarea v-model="cookieInput" class="input" rows="3"
                   placeholder="粘贴 cookie(留空则用已保存的)"></textarea>
