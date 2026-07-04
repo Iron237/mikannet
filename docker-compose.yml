@@ -1,4 +1,4 @@
-# Mikanarr — app + qBittorrent
+# Mikannet — app + qBittorrent
 #
 # 迁移到 NAS 本机 Docker 时:只需把 downloads 卷的来源从 CIFS 改为本地路径,
 # 容器内路径(/downloads、/config)保持不变,数据库记录的相对路径不失效。
@@ -6,12 +6,12 @@
 # 注意(P0 探针结论):qB 5.x 强制 Host 头端口校验,
 # WEBUI_PORT 必须与宿主映射端口一致(此处统一 18080)。
 services:
-  mikanarr:
+  mikannet:
     build:
       context: .
       dockerfile: docker/app.Dockerfile
       # 构建期 apt/pip 默认用清华镜像直连(见 Dockerfile ARG,可覆盖)
-    container_name: mikanarr
+    container_name: mikannet
     # 首次向导「NAS/SMB 共享」模式 = App 在容器内自挂载 SMB(storage.py 的 mount() 系统调用),
     # 需要这两项授权,否则报「挂载失败: Operation not permitted (errno 1)」。
     # (compose 托管的 CIFS 卷由守护进程挂,不需要这些;两种方式都加上无害。)
@@ -27,29 +27,29 @@ services:
       - "${HOST_PORT:-9000}:8008"
     environment:
       # dev:同版本号重建镜像后,wrapper 强制把卷代码刷成新构建(生产/发布包不设此项)
-      MIKANARR_DEV_RESEED: "1"
-      MIKANARR_PROXY_URL: ${PROXY_URL:-}
-      MIKANARR_TMDB_API_KEY: ${TMDB_API_KEY:-}
+      MIKANNET_DEV_RESEED: "1"
+      MIKANNET_PROXY_URL: ${PROXY_URL:-}
+      MIKANNET_TMDB_API_KEY: ${TMDB_API_KEY:-}
       # 下载器后端:bitcomet | qb(改 .env 的 DOWNLOADER + 重启即切换)
-      MIKANARR_DOWNLOADER: ${DOWNLOADER:-bitcomet}
+      MIKANNET_DOWNLOADER: ${DOWNLOADER:-bitcomet}
       # qB 连接目标:容器内用 qbittorrent:18080;接桌面 qB 则用 host.docker.internal:<端口>
-      MIKANARR_QB_HOST: ${QB_HOST:-qbittorrent}
-      MIKANARR_QB_PORT: "${QB_PORT:-18080}"
-      MIKANARR_QB_USERNAME: ${QB_USER:-admin}
-      MIKANARR_QB_PASSWORD: ${QB_PASS:-adminadmin}
-      # 下载器写盘根目录(接桌面 qB 时改成 NAS 的 Windows 路径;mikanarr 仍从 /downloads 读同一份)
-      MIKANARR_DOWNLOAD_ROOT: ${DOWNLOAD_ROOT:-/downloads}
-      MIKANARR_POLL_INTERVAL_MIN: ${POLL_INTERVAL_MIN:-15}
+      MIKANNET_QB_HOST: ${QB_HOST:-qbittorrent}
+      MIKANNET_QB_PORT: "${QB_PORT:-18080}"
+      MIKANNET_QB_USERNAME: ${QB_USER:-admin}
+      MIKANNET_QB_PASSWORD: ${QB_PASS:-adminadmin}
+      # 下载器写盘根目录(接桌面 qB 时改成 NAS 的 Windows 路径;mikannet 仍从 /downloads 读同一份)
+      MIKANNET_DOWNLOAD_ROOT: ${DOWNLOAD_ROOT:-/downloads}
+      MIKANNET_POLL_INTERVAL_MIN: ${POLL_INTERVAL_MIN:-15}
       # 完整更新(换镜像):helper 需要 compose 项目名 + 宿主上的 compose 目录(daemon 视角)
-      MIKANARR_COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME:-rssvideo}
-      MIKANARR_COMPOSE_HOST_DIR: ${PWD}
+      MIKANNET_COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME:-rssvideo}
+      MIKANNET_COMPOSE_HOST_DIR: ${PWD}
       # 本地导入源的主机路径前缀(用于把粘贴的 Win/NAS 路径翻译成容器内 /import、/import-nas)
-      MIKANARR_IMPORT_WIN_HOST: ${LOCAL_IMPORT_PATH:-./import}
-      MIKANARR_IMPORT_NAS_HOST: ${NAS_IMPORT_PATH:-//192.168.2.4/Minecraft 独行侠/番剧}
-      # mikanarr 下载目录的 NAS 路径;若在 NAS_IMPORT_PATH 之下,NAS→NAS 导入走服务器端 rename
-      MIKANARR_NAS_SMB_PATH: ${NAS_SMB_PATH}
+      MIKANNET_IMPORT_WIN_HOST: ${LOCAL_IMPORT_PATH:-./import}
+      MIKANNET_IMPORT_NAS_HOST: ${NAS_IMPORT_PATH:-//192.168.2.4/Minecraft 独行侠/番剧}
+      # mikannet 下载目录的 NAS 路径;若在 NAS_IMPORT_PATH 之下,NAS→NAS 导入走服务器端 rename
+      MIKANNET_NAS_SMB_PATH: ${NAS_SMB_PATH}
     volumes:
-      - ./data/mikanarr:/config
+      - ./data/mikannet:/config
       # 自更新代码卷:wrapper 从 /code/current 跑应用,多版本并存可回滚(用命名卷=ext4,symlink 可靠)
       - code:/code
       # 完整更新:挂 docker.sock(=宿主 root 等价权限,信任权衡见 ADR-0005/README)+ compose 目录只读

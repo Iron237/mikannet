@@ -66,7 +66,7 @@ class BitCometClient:
                 raise RuntimeError(f"BitComet 登录失败: {r.text}")
             r = c.post("/api/device_token/get",
                        json={"invite_token": invite, "device_id": self._client_id,
-                             "device_name": "mikanarr", "platform": "webui"},
+                             "device_name": "mikannet", "platform": "webui"},
                        headers={"Authorization": "Bearer " + invite})
             r.raise_for_status()
             token = r.json().get("device_token")

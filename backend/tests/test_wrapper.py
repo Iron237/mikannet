@@ -37,9 +37,9 @@ def _symlinks_ok(tmp: Path) -> bool:
 
 
 def load_wrapper(code_dir: Path, baked_dir: Path, version: str):
-    os.environ["MIKANARR_CODE_DIR"] = str(code_dir)
-    os.environ["MIKANARR_BAKED_DIR"] = str(baked_dir)
-    os.environ["MIKANARR_VERSION"] = version
+    os.environ["MIKANNET_CODE_DIR"] = str(code_dir)
+    os.environ["MIKANNET_BAKED_DIR"] = str(baked_dir)
+    os.environ["MIKANNET_VERSION"] = version
     spec = importlib.util.spec_from_file_location(
         f"wrapper_{version}_{abs(hash(str(code_dir)))}", WRAPPER_PY)
     mod = importlib.util.module_from_spec(spec)
@@ -68,7 +68,7 @@ def test_ver_key_ordering(tmp_path):
 
 
 def test_start_app_injects_current_version(tmp_path, monkeypatch):
-    """子进程的 MIKANARR_VERSION 必须 = current 实际版本(rel.name),而非镜像烤死 env。
+    """子进程的 MIKANNET_VERSION 必须 = current 实际版本(rel.name),而非镜像烤死 env。
 
     回归:纯代码更新只换卷代码不换镜像;若沿用镜像 env 的旧版本号,/version 永远报旧值,
     导致检查更新死循环 + 前端「等待新版本」永久卡住。不依赖 symlink,始终跑。
@@ -87,7 +87,7 @@ def test_start_app_injects_current_version(tmp_path, monkeypatch):
 
     monkeypatch.setattr(w.subprocess, "Popen", FakePopen)
     w.start_app(rel)
-    assert captured["env"]["MIKANARR_VERSION"] == "0.1.3"   # 跟随 current,非烤死 0.1.0
+    assert captured["env"]["MIKANNET_VERSION"] == "0.1.3"   # 跟随 current,非烤死 0.1.0
 
 
 def test_first_seed(tmp_path):

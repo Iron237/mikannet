@@ -1,5 +1,5 @@
 # 逐组测试 CIFS 挂载参数,找到目录枚举正常的组合
-$device = "//192.168.2.4/Minecraft 独行侠/番剧/mikanarr"
+$device = "//192.168.2.4/Minecraft 独行侠/番剧/mikannet"
 $variants = @(
     @{name="noserverino";      o="username=IG,password=IGhwcc237,uid=1000,gid=1000,iocharset=utf8,vers=3.0,noserverino"},
     @{name="v311-noserverino"; o="username=IG,password=IGhwcc237,uid=1000,gid=1000,iocharset=utf8,vers=3.1.1,noserverino"},

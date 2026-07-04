@@ -39,15 +39,15 @@ def recent(level: str = "ALL", limit: int = 500) -> list[dict]:
 def archives() -> list[str]:
     if not LOG_DIR.exists():
         return []
-    return sorted((p.name for p in LOG_DIR.glob("mikanarr-*.log.gz")), reverse=True)
+    return sorted((p.name for p in LOG_DIR.glob("mikannet-*.log.gz")), reverse=True)
 
 
 def _archive_previous() -> None:
-    """启动时把上一次的 mikanarr.log 压成 mikanarr-<时间>.log.gz(全部保留,不删旧)。"""
-    cur = LOG_DIR / "mikanarr.log"
+    """启动时把上一次的 mikannet.log 压成 mikannet-<时间>.log.gz(全部保留,不删旧)。"""
+    cur = LOG_DIR / "mikannet.log"
     if cur.exists() and cur.stat().st_size > 0:
         ts = datetime.fromtimestamp(cur.stat().st_mtime).strftime("%Y%m%d-%H%M%S")
-        gz = LOG_DIR / f"mikanarr-{ts}.log.gz"
+        gz = LOG_DIR / f"mikannet-{ts}.log.gz"
         try:
             with open(cur, "rb") as fin, gzip.open(gz, "wb") as fout:
                 shutil.copyfileobj(fin, fout)
@@ -65,7 +65,7 @@ def setup() -> None:
     root.setLevel(logging.INFO)
     for h in list(root.handlers):       # 清掉可能已存在的 handler,避免重复
         root.removeHandler(h)
-    fh = logging.FileHandler(LOG_DIR / "mikanarr.log", encoding="utf-8")
+    fh = logging.FileHandler(LOG_DIR / "mikannet.log", encoding="utf-8")
     fh.setFormatter(fmt)
     root.addHandler(fh)
     root.addHandler(RingHandler())

@@ -160,8 +160,8 @@ _ILLEGAL = re.compile(r'[<>:"/\\|?*]')
 
 
 def _nas_target_root() -> str | None:
-    """若 /import-nas 挂载的 NAS 目录包含 mikanarr 下载目录,返回"经该挂载看到的 mikanarr 路径"
-    (如 /import-nas/mikanarr),否则 None。用于让 NAS→NAS 导入落在同一挂载 → 服务器端 rename。"""
+    """若 /import-nas 挂载的 NAS 目录包含 mikannet 下载目录,返回"经该挂载看到的 mikannet 路径"
+    (如 /import-nas/mikannet),否则 None。用于让 NAS→NAS 导入落在同一挂载 → 服务器端 rename。"""
     host = (settings.import_nas_host or "").replace("\\", "/").rstrip("/")
     target = (settings.nas_smb_path or "").replace("\\", "/").rstrip("/")
     if host and target and target.startswith(host + "/"):
@@ -170,8 +170,8 @@ def _nas_target_root() -> str | None:
 
 
 def _skip_roots() -> list[str]:
-    """扫描时要跳过的目录:已被 mikanarr 管理的下载目录(/downloads 及经 NAS 挂载看到的同一目录),
-    否则扫 /import-nas 会把里面的 mikanarr 子目录(已导入文件)当新文件重扫 → 重名冲突。"""
+    """扫描时要跳过的目录:已被 mikannet 管理的下载目录(/downloads 及经 NAS 挂载看到的同一目录),
+    否则扫 /import-nas 会把里面的 mikannet 子目录(已导入文件)当新文件重扫 → 重名冲突。"""
     roots = ["/downloads/"]
     nas_root = _nas_target_root()
     if nas_root:
@@ -238,7 +238,7 @@ def _import_group(group: dict) -> str:
         db.add(torrent)
         db.flush()
 
-        # 目标目录:若源在 NAS 挂载下、且该挂载含 mikanarr 目标 → 走同挂载(_safe_move 的 os.replace
+        # 目标目录:若源在 NAS 挂载下、且该挂载含 mikannet 目标 → 走同挂载(_safe_move 的 os.replace
         # 会触发 NAS 服务器端 rename,零网络传输);否则(本机盘源)落 download_root_local(字节复制)。
         nas_root = _nas_target_root()
         src_on_nas = bool(group["files"]) and \

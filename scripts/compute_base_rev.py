@@ -10,7 +10,7 @@ import sys
 
 _VERSION_PY = pathlib.Path(__file__).resolve().parents[1] / "backend" / "app" / "_version.py"
 
-spec = importlib.util.spec_from_file_location("_mikanarr_version", _VERSION_PY)
+spec = importlib.util.spec_from_file_location("_mikannet_version", _VERSION_PY)
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 sys.stdout.write(mod.compute_base_rev())

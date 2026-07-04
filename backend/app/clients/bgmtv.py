@@ -37,7 +37,7 @@ def _query_variants(title: str) -> list[str]:
     return out
 
 API = "https://api.bgm.tv"
-UA = {"User-Agent": "mikanarr/0.1 (https://github.com/local/mikanarr)"}
+UA = {"User-Agent": "mikannet/0.1 (https://github.com/local/mikannet)"}
 
 
 @dataclass

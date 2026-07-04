@@ -1,7 +1,7 @@
 """版本与依赖基线(base_rev)。
 
-VERSION / BASE_REV 由 CI 在**构建期烤进镜像**(env `MIKANARR_VERSION` /
-`MIKANARR_BASE_REV`)。未注入时(开发期源码直跑)回退到本地计算:
+VERSION / BASE_REV 由 CI 在**构建期烤进镜像**(env `MIKANNET_VERSION` /
+`MIKANNET_BASE_REV`)。未注入时(开发期源码直跑)回退到本地计算:
 - VERSION 取下方 `_DEFAULT_VERSION`;
 - BASE_REV 由 `pyproject` 依赖 + `docker/apt-packages.txt` 的确定性哈希得出。
 
@@ -24,7 +24,7 @@ def _read_deps() -> list[str]:
     """读取 [project].dependencies(排序,稳定)。兼容 repo 布局与镜像内布局。"""
     candidates = [
         Path(__file__).resolve().parents[1] / "pyproject.toml",   # backend/pyproject.toml
-        Path("/opt/mikanarr/backend/pyproject.toml"),             # 镜像内(从卷跑时回退)
+        Path("/opt/mikannet/backend/pyproject.toml"),             # 镜像内(从卷跑时回退)
     ]
     for f in candidates:
         if f.exists():
@@ -40,7 +40,7 @@ def _read_deps() -> list[str]:
 def _read_apt() -> list[str]:
     candidates = [
         Path(__file__).resolve().parents[2] / "docker" / "apt-packages.txt",  # repo docker/
-        Path("/opt/mikanarr/apt-packages.txt"),                               # 镜像内
+        Path("/opt/mikannet/apt-packages.txt"),                               # 镜像内
     ]
     for f in candidates:
         if f.exists():
@@ -59,5 +59,10 @@ def compute_base_rev() -> str:
     return h.hexdigest()[:12]
 
 
-VERSION: str = os.environ.get("MIKANARR_VERSION") or _DEFAULT_VERSION
-BASE_REV: str = os.environ.get("MIKANARR_BASE_REV") or compute_base_rev()
+# 兼容改名(mikanarr→mikannet):纯代码自更新可能把新代码落到改名前的旧 wrapper 上,
+# 那个 wrapper 仍导出 MIKANARR_VERSION;若只读新名会回退成默认版本号,触发「永远有新版」+
+# 前端「等待新版本起来」永久卡住。故新名优先、旧名兜底。
+VERSION: str = (os.environ.get("MIKANNET_VERSION") or os.environ.get("MIKANARR_VERSION")
+                or _DEFAULT_VERSION)
+BASE_REV: str = (os.environ.get("MIKANNET_BASE_REV") or os.environ.get("MIKANARR_BASE_REV")
+                 or compute_base_rev())

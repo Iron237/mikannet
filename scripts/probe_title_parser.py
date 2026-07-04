@@ -26,7 +26,7 @@ from bs4 import BeautifulSoup
 
 BASE = "https://mikanani.me"
 FIXTURES = Path(__file__).resolve().parent.parent / "backend" / "tests" / "fixtures"
-UA = {"User-Agent": "Mozilla/5.0 Mikanarr-probe"}
+UA = {"User-Agent": "Mozilla/5.0 Mikannet-probe"}
 
 BATCH_RE = re.compile(r"合集|全集|Batch|BOX|Fin\b|\[\s*\d{1,3}\s*-\s*\d{1,3}\s*(?:END|Fin)?\s*\]|【\d{1,3}-\d{1,3}】", re.I)
 VERSION_RE = re.compile(r"[\[\s（(]v(\d)[\]\s）)]|(?<=\d)v(\d)\b", re.I)

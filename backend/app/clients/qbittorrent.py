@@ -19,6 +19,7 @@ __all__ = ["qb_client", "info_hash_of"]
 _QB_ERROR_STATES = {"error", "missingFiles"}
 _QB_DONE_STATES = {"uploading", "stalledUP", "pausedUP", "stoppedUP", "queuedUP",
                    "forcedUP", "checkingUP"}
+_LEGACY_QB_CATEGORY = "mikanarr"   # 改名前的分类名;首启时把旧种子迁到新分类
 
 
 class QbClient:
@@ -46,6 +47,27 @@ class QbClient:
     def ensure_ready(self) -> None:
         if settings.qb_category not in self.client.torrent_categories.categories:
             self.client.torrent_categories.create_category(name=settings.qb_category)
+        self._migrate_legacy_category()
+
+    def _migrate_legacy_category(self) -> None:
+        """项目改名 mikanarr→mikannet:把旧分类下的所有种子重新归到新分类,再删空的旧分类。
+        tracker 只按当前 category 列任务,不迁的话已下载的种子会全部"消失"。幂等:旧分类
+        不存在即跳过;整块 try 兜底,迁移失败不拖垮启动。"""
+        legacy = _LEGACY_QB_CATEGORY
+        if legacy == settings.qb_category:
+            return
+        try:
+            if legacy not in self.client.torrent_categories.categories:
+                return
+            old = self.client.torrents.info(category=legacy)
+            if old:
+                self.client.torrents.set_category(
+                    category=settings.qb_category, torrent_hashes=[t.hash for t in old])
+                log.info("qB 分类迁移:%d 个种子 %s → %s",
+                         len(old), legacy, settings.qb_category)
+            self.client.torrent_categories.remove_categories(categories=legacy)
+        except Exception as e:  # noqa: BLE001
+            log.warning("qB 旧分类迁移失败(跳过): %s", e)
 
     def add_torrent(self, torrent_bytes: bytes, save_path: str) -> str:
         """添加种子,返回 info_hash。已存在同 hash 时按幂等处理。

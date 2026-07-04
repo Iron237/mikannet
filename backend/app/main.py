@@ -1,4 +1,4 @@
-"""Mikanarr 入口。开发:uvicorn app.main:app --reload"""
+"""Mikannet 入口。开发:uvicorn app.main:app --reload"""
 import asyncio
 import logging
 from contextlib import asynccontextmanager
@@ -46,7 +46,7 @@ async def lifespan(_app: FastAPI):
     scheduler.stop()
 
 
-app = FastAPI(title="Mikanarr", version=VERSION, lifespan=lifespan)
+app = FastAPI(title="Mikannet", version=VERSION, lifespan=lifespan)
 
 
 @app.middleware("http")

@@ -2,7 +2,7 @@
 """打代码包 + 生成 manifest.json(CI release 流水线用)。
 
 产物(写到 --out 目录):
-- mikanarr-<version>-code.tar.gz : backend/app + frontend/dist,保持镜像内布局
+- mikannet-<version>-code.tar.gz : backend/app + frontend/dist,保持镜像内布局
 - manifest.json                  : 自更新控制面(字段见 docs/adr/0005)
 
 changelog 经环境变量 RELEASE_CHANGELOG 传入(避免命令行注入/引号问题)。
@@ -35,7 +35,7 @@ def build_code_package(out_dir: Path, version: str) -> Path:
     if not dist.is_dir():
         raise SystemExit("缺 frontend/dist(先 npm run build)")
 
-    code_path = out_dir / f"mikanarr-{version}-code.tar.gz"
+    code_path = out_dir / f"mikannet-{version}-code.tar.gz"
 
     def _norm(ti: tarfile.TarInfo) -> tarfile.TarInfo:
         ti.uid = ti.gid = 0
@@ -57,7 +57,7 @@ def main() -> None:
     ap.add_argument("--base-rev", required=True)
     ap.add_argument("--image-ref", required=True)
     ap.add_argument("--image-digest", default="")
-    ap.add_argument("--repo", default="Iron237/mikanarr")
+    ap.add_argument("--repo", default="Iron237/mikannet")
     ap.add_argument("--tag", required=True)
     ap.add_argument("--prerelease", default="false")
     ap.add_argument("--min-version", default="0.1.0")

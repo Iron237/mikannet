@@ -1,7 +1,7 @@
 @echo off
 setlocal enableextensions
 cd /d "%~dp0"
-title Mikanarr deploy
+title Mikannet deploy
 
 REM ASCII-only on purpose (a chcp/UTF-8 .bat can fail to run on double-click).
 
@@ -26,7 +26,7 @@ if /i "%~1"=="down" (
   exit /b 0
 )
 if /i "%~1"=="logs" (
-  docker compose logs -f mikanarr
+  docker compose logs -f mikannet
   exit /b 0
 )
 
@@ -40,13 +40,13 @@ if not exist ".env" (
   exit /b 1
 )
 
-echo Building and starting Mikanarr (first build pulls base images, ~2-4 min)...
+echo Building and starting Mikannet (first build pulls base images, ~2-4 min)...
 docker compose up -d --build
 if errorlevel 1 (
   echo.
   echo [X] Build/start failed. If it timed out pulling base images
   echo     ^(auth.docker.io / registry-1.docker.io^) you cannot reach Docker Hub. Either:
-  echo       1^) EASIEST - use the full-environment package mikanarr-win-*.zip with
+  echo       1^) EASIEST - use the full-environment package mikannet-win-*.zip with
   echo          deploy-win.bat: it bundles the image, needs no build and no Docker Hub.
   echo       2^) or add registry-mirrors in Docker Desktop ^> Settings ^> Docker Engine,
   echo          then re-run this script ^(see DEPLOY.md^).
@@ -56,7 +56,7 @@ if errorlevel 1 (
   exit /b 1
 )
 echo.
-echo [OK] Mikanarr started.  WebUI:  http://localhost:8008
+echo [OK] Mikannet started.  WebUI:  http://localhost:8008
 echo      Logs:  deploy.bat logs
 echo      Stop:  deploy.bat down
 echo.

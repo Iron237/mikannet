@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 SOCK = "/var/run/docker.sock"
 HELPER_IMAGE = "docker:cli"        # 含 compose v2 插件的官方 CLI 镜像(一次性)
-HELPER_NAME = "mikanarr-updater"
+HELPER_NAME = "mikannet-updater"
 
 
 def _client(timeout: float = 300) -> httpx.Client:
@@ -48,17 +48,17 @@ def run_compose_recreate(host_compose_dir: str, project: str, image_ref: str) ->
     """启一次性 helper:`docker compose -p <project> up -d --pull always` 重建本容器。
 
     host_compose_dir 必须是**宿主**上的 compose 目录路径(daemon 视角),由 compose 注入。
-    image_ref 经 helper 的环境变量 MIKANARR_IMAGE_REF 传给 compose 做镜像替换。
+    image_ref 经 helper 的环境变量 MIKANNET_IMAGE_REF 传给 compose 做镜像替换。
     """
     if not host_compose_dir:
         raise RuntimeError("缺少 compose_host_dir(无法定位宿主 compose 目录);"
-                           "请确认 compose 注入了 MIKANARR_COMPOSE_HOST_DIR")
+                           "请确认 compose 注入了 MIKANNET_COMPOSE_HOST_DIR")
     pull_image(HELPER_IMAGE)
     body = {
         "Image": HELPER_IMAGE,
         "Cmd": ["sh", "-c", f"docker compose -p {project} up -d --pull always"],
         "WorkingDir": "/compose",
-        "Env": [f"MIKANARR_IMAGE_REF={image_ref}"],
+        "Env": [f"MIKANNET_IMAGE_REF={image_ref}"],
         "HostConfig": {
             "Binds": [f"{SOCK}:{SOCK}", f"{host_compose_dir}:/compose:ro"],
             "AutoRemove": True,        # 一次性:跑完自动删除

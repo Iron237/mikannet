@@ -3,7 +3,7 @@ import httpx
 
 from app.config import settings
 
-UA = {"User-Agent": "Mozilla/5.0 (compatible; Mikanarr/0.1)"}
+UA = {"User-Agent": "Mozilla/5.0 (compatible; Mikannet/0.1)"}
 
 
 def make_client(service: str, **kwargs) -> httpx.Client:

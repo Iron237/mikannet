@@ -88,7 +88,7 @@ onUnmounted(() => clearInterval(timer))
       </button>
     </div>
     <div v-if="logsDir && !logsDir.reveal_url" class="muted logdir-hint">
-      「打开 log 目录」需配置:设置 → 播放 填「data 目录路径」并安装协议处理器(mikanarr://)后可一键打开。
+      「打开 log 目录」需配置:设置 → 播放 填「data 目录路径」并安装协议处理器(mikannet://)后可一键打开。
     </div>
   </div>
 </template>

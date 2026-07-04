@@ -1,12 +1,12 @@
 # 本地/在 NAS 上直接跑的覆盖:把 CIFS 网络卷换成「本地目录绑定挂载」。
-# 适用:把 Mikanarr 部署在 NAS 自身的 Docker 上(文件就在本机),或 Linux 本地磁盘。
+# 适用:把 Mikannet 部署在 NAS 自身的 Docker 上(文件就在本机),或 Linux 本地磁盘。
 #
 # 用法:
 #   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 #   或:./deploy.sh local
 #
 # 在 .env 里设以下为该机器上的真实目录(绝对路径):
-#   LOCAL_DOWNLOADS_PATH   = mikanarr 下载根(必填)
+#   LOCAL_DOWNLOADS_PATH   = mikannet 下载根(必填)
 #   LOCAL_NAS_IMPORT_PATH  = 旧番剧导入源(可选;不用就指到一个空目录)
 #   LOCAL_BD_OWNED_PATH    = 已购原盘目录(可选;不用就指到一个空目录)
 volumes:

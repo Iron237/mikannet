@@ -12,6 +12,23 @@ class Base(DeclarativeBase):
     pass
 
 
+def _migrate_legacy_db() -> None:
+    """项目改名 mikanarr→mikannet:把旧库文件名(含 -wal/-shm 边车)自动迁到新名,
+    老部署无缝续用同一份数据。幂等:新库已存在或旧库不存在时跳过。须在建 engine 前跑。"""
+    new = settings.db_path                       # …/mikannet.db
+    legacy = new.with_name("mikanarr.db")
+    if new.exists() or not legacy.exists():
+        return
+    for suffix in ("", "-wal", "-shm"):
+        src = legacy.with_name(legacy.name + suffix)
+        if src.exists():
+            src.rename(new.with_name(new.name + suffix))
+    import logging
+    logging.getLogger(__name__).info("数据库改名迁移:%s → %s", legacy.name, new.name)
+
+
+_migrate_legacy_db()
+
 engine = create_engine(
     f"sqlite:///{settings.db_path}",
     connect_args={"check_same_thread": False, "timeout": 30},
@@ -21,7 +38,7 @@ engine = create_engine(
 @event.listens_for(engine, "connect")
 def _set_sqlite_pragma(dbapi_connection, _record) -> None:
     cur = dbapi_connection.cursor()
-    # 不用 WAL:生产是 Windows Docker 的绑定挂载(./data/mikanarr→/config),WAL 的 -wal/-shm
+    # 不用 WAL:生产是 Windows Docker 的绑定挂载(./data/mikannet→/config),WAL 的 -wal/-shm
     # 依赖 mmap 共享内存,gRPC-FUSE/virtiofs 上不可靠 → 小事务留在 -wal 里,容器重启后丢失
     # (表现:改完 kind/设置等"成功"但重启回滚)。DELETE 回滚日志无需共享内存,绑定挂载上持久可靠。
     cur.execute("PRAGMA journal_mode=DELETE")

@@ -31,15 +31,15 @@ def _bdrip(db):
 
 
 def test_release_out_open_url_no_extras(db, monkeypatch):
-    """发行输出(去特典分支):有「打开目录」URL(mikanarr://reveal),不含任何特典编目字段。"""
+    """发行输出(去特典分支):有「打开目录」URL(mikannet://reveal),不含任何特典编目字段。"""
     from app.api import bd as bd_api
     from app.config import settings
-    monkeypatch.setattr(settings, "media_host_root", "Z:\\番剧\\mikanarr")
+    monkeypatch.setattr(settings, "media_host_root", "Z:\\番剧\\mikannet")
     monkeypatch.setattr(settings, "launch_token", "tok")
     _, r = _bdrip(db)
     out = bd_api.bd_release_out(r)
     assert out["source_kind"] == "bdrip" and out["has_discs"] is False
-    assert out["open_url"] and "reveal" in out["open_url"]   # mikanarr://reveal?path=...
+    assert out["open_url"] and "reveal" in out["open_url"]   # mikannet://reveal?path=...
     for gone in ("extra_count", "image_books", "audio_albums", "videos",
                  "image_count", "video_count"):
         assert gone not in out
@@ -50,7 +50,7 @@ def test_handler_js_ascii_and_reveal_opens_dir(monkeypatch):
     且 reveal 对目录直接打开(不用 /select,后者对特殊字符路径会退回资源管理器主页)。"""
     from app.config import settings
     from app.services import launch
-    monkeypatch.setattr(settings, "media_host_root", "Z:\\番剧\\mikanarr")
+    monkeypatch.setattr(settings, "media_host_root", "Z:\\番剧\\mikannet")
     monkeypatch.setattr(settings, "launch_token", "tok")
     js = launch._handler_js()
     js.encode("ascii")                      # 非 ASCII 会在此抛 UnicodeEncodeError

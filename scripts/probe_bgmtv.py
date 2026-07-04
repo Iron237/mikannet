@@ -1,4 +1,4 @@
-"""探针:验证 bgm.tv v0 API 能拿到 Mikanarr 需要的元数据字段。
+"""探针:验证 bgm.tv v0 API 能拿到 Mikannet 需要的元数据字段。
 
 验证点:年代/放送日期、制作公司(infobox 动画制作)、中文译名、简介、封面、连载状态。
 用法: python probe_bgmtv.py [subject_id] [--proxy http://127.0.0.1:10808]
@@ -11,7 +11,7 @@ from pathlib import Path
 import httpx
 
 FIXTURES = Path(__file__).resolve().parent.parent / "backend" / "tests" / "fixtures"
-UA = {"User-Agent": "mikanarr/0.1 (probe; https://github.com/local/mikanarr)"}
+UA = {"User-Agent": "mikannet/0.1 (probe; https://github.com/local/mikannet)"}
 
 
 def main() -> int:

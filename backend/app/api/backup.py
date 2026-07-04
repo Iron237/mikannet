@@ -22,7 +22,7 @@ def export_data(include_settings: bool = False, db: Session = Depends(get_db)):
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
     return Response(
         content=body, media_type="application/json",
-        headers={"Content-Disposition": f'attachment; filename="mikanarr-backup-{stamp}.json"'})
+        headers={"Content-Disposition": f'attachment; filename="mikannet-backup-{stamp}.json"'})
 
 
 @router.post("/import")

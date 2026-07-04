@@ -84,7 +84,7 @@ onUnmounted(() => { clearTimeout(pollTimer); clearTimeout(scanTimer) })
       </div>
       <p class="muted" style="font-size: 12.5px; margin-bottom: 12px;">
         扫描目录里的视频文件,按作品自动分组并匹配 bgm.tv 番剧(中文/日文名都能搜到);
-        确认后**移动**到 Mikanarr 管理目录(NAS)、提取文件信息并同步封面/元数据到番剧库。
+        确认后**移动**到 Mikannet 管理目录(NAS)、提取文件信息并同步封面/元数据到番剧库。
         来源两种:<b>本机磁盘</b>(.env <code>LOCAL_IMPORT_PATH</code> → <code>/import</code>)、
         <b>NAS</b>(.env <code>NAS_IMPORT_PATH</code> → <code>/import-nas</code>)。
         可直接粘贴 Windows 路径(<code>G:\Anime\X</code>)或 NAS 路径(<code>\\192.168.2.4\…\X</code>),

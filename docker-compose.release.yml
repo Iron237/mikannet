@@ -1,26 +1,26 @@
-# 预构建镜像启动(不本地构建、不拉 Docker Hub)。配合发行包的 mikanarr-image.tar.gz:
-#   docker load -i mikanarr-image.tar.gz && docker compose -f docker-compose.release.yml up -d
+# 预构建镜像启动(不本地构建、不拉 Docker Hub)。配合发行包的 mikannet-image.tar.gz:
+#   docker load -i mikannet-image.tar.gz && docker compose -f docker-compose.release.yml up -d
 #
 # NAS 不再写在这里:首次打开 WebUI 会进「配置向导」,在网页里填 NAS 地址/账号/密码,
 # App 在容器内自挂载到 /downloads(需 cap_add: SYS_ADMIN + 宿主内核 cifs 模块)。
 # /downloads 默认绑定到随包的 ./downloads(本地模式直接用;SMB 模式由 App 挂载覆盖)。
 services:
-  mikanarr:
-    image: mikanarr:latest
-    container_name: mikanarr
+  mikannet:
+    image: mikannet:latest
+    container_name: mikannet
     cap_add:
       - SYS_ADMIN          # 容器内挂载 SMB(首次向导配的 NAS)所需
     ports:
       - "8008:8008"
     environment:
       # 以下仅为首启默认值,全部可在 WebUI 向导/设置页改(改后存 DB,优先于此处)
-      MIKANARR_DOWNLOADER: ${DOWNLOADER:-qb}
-      MIKANARR_QB_HOST: ${QB_HOST:-host.docker.internal}
-      MIKANARR_QB_PORT: "${QB_PORT:-8080}"
-      MIKANARR_DOWNLOAD_ROOT: ${DOWNLOAD_ROOT:-/downloads}
-      MIKANARR_PROXY_URL: ${PROXY_URL:-}
+      MIKANNET_DOWNLOADER: ${DOWNLOADER:-qb}
+      MIKANNET_QB_HOST: ${QB_HOST:-host.docker.internal}
+      MIKANNET_QB_PORT: "${QB_PORT:-8080}"
+      MIKANNET_DOWNLOAD_ROOT: ${DOWNLOAD_ROOT:-/downloads}
+      MIKANNET_PROXY_URL: ${PROXY_URL:-}
     volumes:
-      - ./data/mikanarr:/config
+      - ./data/mikannet:/config
       # 本地模式直接用此目录;SMB 模式 App 会把 NAS 挂到 /downloads(覆盖此绑定)
       - ${LOCAL_DOWNLOADS_PATH:-./downloads}:/downloads
     restart: unless-stopped

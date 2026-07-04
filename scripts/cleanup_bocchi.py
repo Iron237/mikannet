@@ -1,14 +1,14 @@
 """清理误提交的单集任务,只留 LoliHouse 合集;并用修复后的解析器重写合集行。
 
-直接操作生产 DB(data/mikanarr)+ 经 API 删任务(标记手动删除防复活)。
+直接操作生产 DB(data/mikannet)+ 经 API 删任务(标记手动删除防复活)。
 """
 import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-os.environ["MIKANARR_DATA_DIR"] = str(ROOT / "data" / "mikanarr")
-os.environ["MIKANARR_DOWNLOAD_ROOT_LOCAL"] = "/downloads"
+os.environ["MIKANNET_DATA_DIR"] = str(ROOT / "data" / "mikannet")
+os.environ["MIKANNET_DOWNLOAD_ROOT_LOCAL"] = "/downloads"
 sys.path.insert(0, str(ROOT / "backend"))
 
 import httpx

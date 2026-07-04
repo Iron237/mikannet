@@ -46,8 +46,8 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ghcr.io/iron237/mikanarr:${{ steps.ver.outputs.version }}
-            ghcr.io/iron237/mikanarr:latest
+            ghcr.io/iron237/mikannet:${{ steps.ver.outputs.version }}
+            ghcr.io/iron237/mikannet:latest
           build-args: |
             VERSION=${{ steps.ver.outputs.version }}
             BASE_REV=${{ steps.baserev.outputs.base_rev }}
@@ -71,7 +71,7 @@ jobs:
           python scripts/make_release_assets.py \
             --version "${{ steps.ver.outputs.version }}" \
             --base-rev "${{ steps.baserev.outputs.base_rev }}" \
-            --image-ref "ghcr.io/iron237/mikanarr:${{ steps.ver.outputs.version }}" \
+            --image-ref "ghcr.io/iron237/mikannet:${{ steps.ver.outputs.version }}" \
             --image-digest "${{ steps.build.outputs.digest }}" \
             --repo "${{ github.repository }}" \
             --tag "${{ github.event.release.tag_name }}" \
@@ -84,14 +84,14 @@ jobs:
         run: |
           gh release upload "${{ github.event.release.tag_name }}" \
             dist/release/manifest.json \
-            "dist/release/mikanarr-${{ steps.ver.outputs.version }}-code.tar.gz" \
+            "dist/release/mikannet-${{ steps.ver.outputs.version }}-code.tar.gz" \
             --clobber
 
       - name: 设置 GHCR 包为 public(便于匿名 pull;失败不阻断)
         continue-on-error: true
         run: |
-          gh api -X PATCH "user/packages/container/mikanarr/visibility" \
+          gh api -X PATCH "user/packages/container/mikannet/visibility" \
             -f visibility=public || \
-          echo "若失败,请在 GitHub Packages 页面手动把 mikanarr 设为 public"
+          echo "若失败,请在 GitHub Packages 页面手动把 mikannet 设为 public"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

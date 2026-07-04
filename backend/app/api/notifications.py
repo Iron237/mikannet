@@ -63,7 +63,7 @@ def test_push(channel: str, db: Session = Depends(get_db)):
         raise HTTPException(404, "通道未配置,先保存")
     try:
         create(channel, c.credentials or {}, c.use_proxy).send(Notification(
-            event="on_new", title="Mikanarr 测试推送",
+            event="on_new", title="Mikannet 测试推送",
             message="如果你看到这条消息,说明通道配置成功 🎉"))
         return {"ok": True}
     except Exception as e:  # noqa: BLE001

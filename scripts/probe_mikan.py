@@ -20,7 +20,7 @@ from bs4 import BeautifulSoup
 
 BASE = "https://mikanani.me"
 FIXTURES = Path(__file__).resolve().parent.parent / "backend" / "tests" / "fixtures"
-UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Mikanarr-probe"}
+UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Mikannet-probe"}
 
 
 def save_fixture(name: str, content: str) -> None:

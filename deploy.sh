@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Mikanarr 一键部署(Linux / macOS)
+# Mikannet 一键部署(Linux / macOS)
 #
 #   ./deploy.sh          连接远程 NAS(CIFS 网络卷,与 Windows 同一套)
 #   ./deploy.sh local    在本机/NAS 上直接跑(本地目录绑定挂载,见 docker-compose.local.yml)
@@ -18,7 +18,7 @@ FILES="-f docker-compose.yml"
 
 case "${1:-up}" in
   down) $DC $FILES down; exit 0 ;;
-  logs) $DC $FILES logs -f mikanarr; exit 0 ;;
+  logs) $DC $FILES logs -f mikannet; exit 0 ;;
 esac
 
 if [ ! -f .env ]; then
@@ -27,7 +27,7 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
-echo "▶ 构建并启动 Mikanarr ..."
+echo "▶ 构建并启动 Mikannet ..."
 if ! $DC $FILES up -d --build; then
   echo
   echo "✗ 构建/启动失败。"

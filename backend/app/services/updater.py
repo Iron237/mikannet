@@ -118,7 +118,7 @@ def _check_internal(include_prerelease: bool | None = None):
     same_base = manifest.get("base_rev") and manifest["base_rev"] == BASE_REV
     too_old = manifest.get("min_version") and ver_key(VERSION) < ver_key(manifest["min_version"])
     result["type"] = "code" if (same_base and not too_old) else "full"
-    code_asset = _find_asset(best, f"mikanarr-{latest}-code.tar.gz")
+    code_asset = _find_asset(best, f"mikannet-{latest}-code.tar.gz")
     result["size"] = int(code_asset.get("size", 0)) if code_asset else 0
     return result, manifest, best
 

@@ -14,7 +14,7 @@ Responsibilities (docs/adr/0005, slice 3):
    the next iteration picks up the possibly-repointed ``current``.
 
 Standard library only: this must keep working even if the volume code is broken. It runs
-from the image-baked location (/opt/mikanarr/wrapper.py), never from the volume.
+from the image-baked location (/opt/mikannet/wrapper.py), never from the volume.
 """
 from __future__ import annotations
 
@@ -30,17 +30,18 @@ import urllib.request
 from pathlib import Path
 
 # --- paths / knobs (env-overridable for tests) -----------------------------------------
-BAKED = Path(os.environ.get("MIKANARR_BAKED_DIR", "/opt/mikanarr"))      # image baseline
-CODE = Path(os.environ.get("MIKANARR_CODE_DIR", "/code"))               # writable volume
+BAKED = Path(os.environ.get("MIKANNET_BAKED_DIR", "/opt/mikannet"))      # image baseline
+CODE = Path(os.environ.get("MIKANNET_CODE_DIR", "/code"))               # writable volume
 RELEASES = CODE / "releases"
 CURRENT = CODE / "current"
 PENDING = CODE / "pending.json"
-BAKED_VERSION = os.environ.get("MIKANARR_VERSION") or "0.1.0"   # 与 app/_version._DEFAULT_VERSION 对齐
-PORT = int(os.environ.get("MIKANARR_PORT", "8008"))
+BAKED_VERSION = (os.environ.get("MIKANNET_VERSION") or os.environ.get("MIKANARR_VERSION")
+                 or "0.1.0")   # 改名兼容:新名优先旧名兜底;默认与 app/_version._DEFAULT_VERSION 对齐
+PORT = int(os.environ.get("MIKANNET_PORT", "8008"))
 HEALTH_URL = f"http://127.0.0.1:{PORT}/api/system/healthz"
-HEALTH_TIMEOUT = int(os.environ.get("MIKANARR_HEALTH_TIMEOUT", "120"))   # s to first 200
+HEALTH_TIMEOUT = int(os.environ.get("MIKANNET_HEALTH_TIMEOUT", "120"))   # s to first 200
 HEALTH_INTERVAL = 2
-ROLLBACK_K = int(os.environ.get("MIKANARR_ROLLBACK_K", "3"))             # crash-loop limit
+ROLLBACK_K = int(os.environ.get("MIKANNET_ROLLBACK_K", "3"))             # crash-loop limit
 
 _state = {"proc": None, "stopping": False}
 
@@ -126,7 +127,7 @@ def point_current(version: str) -> None:
 def ensure_seeded() -> None:
     RELEASES.mkdir(parents=True, exist_ok=True)
     # dev-only:同版本号重建镜像后强制刷新卷代码(生产/发布包不设此变量,走严格版本判断)
-    if os.environ.get("MIKANARR_DEV_RESEED"):
+    if os.environ.get("MIKANNET_DEV_RESEED"):
         log("DEV_RESEED: force reseed baked baseline + repoint current")
         seed_baseline(force=True)
         point_current(BAKED_VERSION)
@@ -170,8 +171,9 @@ def start_app(rel: Path) -> subprocess.Popen:
     # 关键:让 app 报告的版本 = current 实际指向的版本,而非镜像烤死的 env。
     # 纯代码更新只换卷代码不换镜像,若沿用镜像 env 版本号,/version 会一直报旧值,
     # 导致「检查更新」永远判定有新版 + 前端「等待新版本起来」永久卡住。base_rev 纯代码
-    # 更新不变,仍由镜像 env 提供(故不在此覆盖 MIKANARR_BASE_REV)。
-    env["MIKANARR_VERSION"] = rel.name
+    # 更新不变,仍由镜像 env 提供(故不在此覆盖 MIKANNET_BASE_REV)。
+    env["MIKANNET_VERSION"] = rel.name
+    env["MIKANARR_VERSION"] = rel.name   # 改名兼容:回滚到改名前的旧代码时它仍读旧名
     cmd = [sys.executable, "-m", "uvicorn", "app.main:app",
            "--host", "0.0.0.0", "--port", str(PORT)]
     log(f"starting app from {rel} (v={rel.name})")

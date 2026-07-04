@@ -16,15 +16,15 @@ const tasksStore = useTasksStore()
 const updateAvailable = ref(false)
 async function dailyUpdateCheck() {
   try {
-    const last = Number(localStorage.getItem('mikanarr_upd_check') || 0)
+    const last = Number(localStorage.getItem('mikannet_upd_check') || 0)
     if (Date.now() - last < 24 * 3600 * 1000) {
-      updateAvailable.value = localStorage.getItem('mikanarr_upd_avail') === '1'
+      updateAvailable.value = localStorage.getItem('mikannet_upd_avail') === '1'
       return
     }
     const r = await api.get('/api/system/update/check')
     updateAvailable.value = !!r.type && r.type !== 'none'
-    localStorage.setItem('mikanarr_upd_check', String(Date.now()))
-    localStorage.setItem('mikanarr_upd_avail', updateAvailable.value ? '1' : '0')
+    localStorage.setItem('mikannet_upd_check', String(Date.now()))
+    localStorage.setItem('mikannet_upd_avail', updateAvailable.value ? '1' : '0')
   } catch { /* GitHub 不可达 → 忽略,下次再试 */ }
 }
 
@@ -41,12 +41,12 @@ onMounted(() => {
     <!-- 手机顶栏:汉堡按钮唤出左侧抽屉(桌面端隐藏)-->
     <header class="topbar">
       <button class="hamburger" aria-label="菜单" @click="drawerOpen = true"><Icon name="menu" :size="22" /></button>
-      <span class="topbar-logo">🍊 Mikanarr</span>
+      <span class="topbar-logo">🍊 Mikannet</span>
     </header>
     <div class="drawer-backdrop" :class="{ show: drawerOpen }" @click="drawerOpen = false" />
 
     <aside class="sidebar" :class="{ open: drawerOpen }">
-      <div class="logo">🍊 Mikanarr</div>
+      <div class="logo">🍊 Mikannet</div>
       <nav>
         <RouterLink to="/" class="nav-item"><Icon name="library" :size="17" /> 番剧库</RouterLink>
         <RouterLink to="/search" class="nav-item"><Icon name="search" :size="17" /> 搜索</RouterLink>

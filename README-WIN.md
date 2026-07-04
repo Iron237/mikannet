@@ -1,6 +1,6 @@
-# Mikanarr — Windows 完整环境包(免构建)
+# Mikannet — Windows 完整环境包(免构建)
 
-这个包**已内置构建好的 Docker 镜像**(`mikanarr-image.tar.gz`),部署时**不需要联网构建、也不从 Docker Hub 拉镜像**——专为国内拉不动 `python/node` 基础镜像的情况准备。
+这个包**已内置构建好的 Docker 镜像**(`mikannet-image.tar.gz`),部署时**不需要联网构建、也不从 Docker Hub 拉镜像**——专为国内拉不动 `python/node` 基础镜像的情况准备。
 
 > 架构:linux/amd64(Windows Docker Desktop = WSL2,适用)。ARM 机器请用源码包自行构建。
 
@@ -9,7 +9,7 @@
 1. 安装并启动 **Docker Desktop**。
 2. 解压本包,**双击 `deploy-win.bat`**。首次会 `docker load` 载入镜像(约 1GB,稍慢)后自动启动。
 3. 浏览器打开 **http://localhost:8008** → 自动进入**首次配置向导**:
-   - **存储**:选「NAS / SMB」填共享地址(如 `//192.168.1.100/anime/mikanarr`)+ 账号/密码 →「测试连接」通过即挂载;或选「本地 / Docker 路径」用容器内 `/downloads`。
+   - **存储**:选「NAS / SMB」填共享地址(如 `//192.168.1.100/anime/mikannet`)+ 账号/密码 →「测试连接」通过即挂载;或选「本地 / Docker 路径」用容器内 `/downloads`。
    - **下载器**:qBittorrent 地址/端口/账号密码 + 写盘根(可「测试连接」)。
    - **代理**:国内填 `http://host.docker.internal:10808`,不用可留空。
    - **元数据**(可跳过):TMDB key、蜜柑 cookie。
@@ -30,5 +30,5 @@
 ## 排障
 
 - **NAS 挂载失败 / 容器起不来**:多为 `.env` 的 NAS 凭据或共享路径不对。`deploy-win.bat logs` 看错误。
-- **`mikanarr-image.tar.gz` 载入失败**:确认它与 `deploy-win.bat` 在同一目录;或手动 `docker load -i mikanarr-image.tar.gz`。
+- **`mikannet-image.tar.gz` 载入失败**:确认它与 `deploy-win.bat` 在同一目录;或手动 `docker load -i mikannet-image.tar.gz`。
 - 其它见 `DEPLOY.md`。

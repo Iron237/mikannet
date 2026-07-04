@@ -1,6 +1,6 @@
 <script setup>
 // BD 发行展示(去特典分支):特典不在网页展示——正片走剧集网格,特典留在发行目录里经
-//  「打开目录」(mikanarr://reveal)用资源管理器 / 本机应用浏览。自购原盘可逐碟 PowerDVD 蓝光播放。
+//  「打开目录」(mikannet://reveal)用资源管理器 / 本机应用浏览。自购原盘可逐碟 PowerDVD 蓝光播放。
 import { reactive } from 'vue'
 import Icon from './Icon.vue'
 import { api, fmtSize } from '../api'

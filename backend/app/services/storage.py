@@ -108,7 +108,7 @@ def test(mode: str, host_path: str, username: str, password: str, vers: str) -> 
         p = str(settings.download_root_local)
         try:
             os.makedirs(p, exist_ok=True)
-            t = os.path.join(p, ".mikanarr_wtest")
+            t = os.path.join(p, ".mikannet_wtest")
             with open(t, "w"):
                 pass
             os.remove(t)
@@ -127,7 +127,7 @@ def test(mode: str, host_path: str, username: str, password: str, vers: str) -> 
         sample = sorted(os.listdir(tmp))[:8]
         writable, werr = True, None
         try:
-            t = os.path.join(tmp, ".mikanarr_wtest")
+            t = os.path.join(tmp, ".mikannet_wtest")
             with open(t, "w"):
                 pass
             os.remove(t)

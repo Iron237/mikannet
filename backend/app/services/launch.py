@@ -1,7 +1,7 @@
-"""原生启动:容器相对路径 → 宿主机真实路径 → mikanarr:// 协议 URL,并生成协议处理器安装包。
+"""原生启动:容器相对路径 → 宿主机真实路径 → mikannet:// 协议 URL,并生成协议处理器安装包。
 
 后端跑在 Linux 容器、UI 是浏览器,都无法直接拉起本机 explorer / 默认播放器 / PowerDVD。
-方案:Windows 上注册自定义协议 mikanarr://,UI 点链接 → 浏览器唤起协议 → 本机 JScript 处理器
+方案:Windows 上注册自定义协议 mikannet://,UI 点链接 → 浏览器唤起协议 → 本机 JScript 处理器
 (经 wscript 无窗口运行,无控制台闪)按动作启动程序。处理器只放行「白名单根目录下 + 令牌匹配」
 的请求,挡掉其他网页滥用。安装包用 certutil 解码、reg 注册,全程不依赖 PowerShell。
 """
@@ -80,10 +80,10 @@ def data_host_path(rel: str = "") -> str | None:
 
 
 def launch_url(action: str, host_path: str | None) -> str | None:
-    """构造 mikanarr://<action>?path=&token= 协议 URL;host_path 为空(未配置根)→ None。"""
+    """构造 mikannet://<action>?path=&token= 协议 URL;host_path 为空(未配置根)→ None。"""
     if not host_path:
         return None
-    return (f"mikanarr://{action}?path={quote(host_path, safe='')}"
+    return (f"mikannet://{action}?path={quote(host_path, safe='')}"
             f"&token={quote(get_token(), safe='')}")
 
 
@@ -110,7 +110,7 @@ def _handler_js() -> str:
 var ROOTS = __ROOTS__;
 var POWERDVD = __POWERDVD__;
 var uri = WScript.Arguments.length ? WScript.Arguments(0) : "";
-var m = /^mikanarr:\/\/([a-zA-Z]+)\/?\?(.+)$/.exec(uri);
+var m = /^mikannet:\/\/([a-zA-Z]+)\/?\?(.+)$/.exec(uri);
 if (!m) { WScript.Quit(1); }
 var action = m[1].toLowerCase();
 var parts = m[2].split("&"), path = "", token = "";
@@ -176,13 +176,13 @@ def _policy_lines(origin: str | None) -> tuple[str, str]:
     """据来源地址生成「免询问」浏览器策略(Chrome+Edge,HKCU,免管理员)+ 收尾提示。
 
     现代 Chrome/Edge 的外部协议对话框已无「始终允许」勾选框 → 每次唤起都弹窗。
-    AutoLaunchProtocolsFromOrigins 把 mikanarr 协议 + 本服务器地址列入免询问名单,根治弹窗。
+    AutoLaunchProtocolsFromOrigins 把 mikannet 协议 + 本服务器地址列入免询问名单,根治弹窗。
     origin 缺失/不合法 → 不写策略(仅注册协议),退回旧提示。"""
     import json
     if not origin or not _ORIGIN_RE.match(origin):
-        return "", ('echo If the browser asks to open Mikanarr, allow it.\r\n')
+        return "", ('echo If the browser asks to open Mikannet, allow it.\r\n')
     # JSON 列表策略:reg /d 内嵌引号用 \" 转义(reg.exe 的 argv 解析按字面引号还原)
-    js = json.dumps([{"protocol": "mikanarr", "allowed_origins": [origin]}],
+    js = json.dumps([{"protocol": "mikannet", "allowed_origins": [origin]}],
                     separators=(",", ":")).replace('"', '\\"')
     lines = (
         'reg add "HKCU\\Software\\Policies\\Google\\Chrome" /v AutoLaunchProtocolsFromOrigins '
@@ -195,8 +195,8 @@ def _policy_lines(origin: str | None) -> tuple[str, str]:
 
 
 def installer_bat(origin: str | None = None) -> str:
-    """生成自安装 .bat:写入 JScript 处理器(%LOCALAPPDATA%\\mikanarr\\handler.js)+ 注册
-    mikanarr:// → wscript(无窗口闪)+(给定 origin 时)写浏览器免询问策略,根治每次播放弹窗。
+    """生成自安装 .bat:写入 JScript 处理器(%LOCALAPPDATA%\\mikannet\\handler.js)+ 注册
+    mikannet:// → wscript(无窗口闪)+(给定 origin 时)写浏览器免询问策略,根治每次播放弹窗。
     全程不用 PowerShell:certutil 解 base64,reg 写注册表。"""
     b64 = base64.b64encode(_handler_js().encode("ascii")).decode("ascii")   # 纯 ASCII
     cmd = 'wscript.exe \\"%DIR%\\handler.js\\" \\"%%1\\"'
@@ -204,20 +204,20 @@ def installer_bat(origin: str | None = None) -> str:
     return (
         "@echo off\r\n"
         "setlocal\r\n"
-        'set "DIR=%LOCALAPPDATA%\\mikanarr"\r\n'
+        'set "DIR=%LOCALAPPDATA%\\mikannet"\r\n'
         'if not exist "%DIR%" mkdir "%DIR%"\r\n'
         f'set "B64={b64}"\r\n'
         '> "%DIR%\\handler.b64" echo %B64%\r\n'
         'certutil -decode -f "%DIR%\\handler.b64" "%DIR%\\handler.js" >nul\r\n'
         'del "%DIR%\\handler.b64" >nul 2>&1\r\n'
-        'reg add "HKCU\\Software\\Classes\\mikanarr" /ve /t REG_SZ '
-        '/d "URL:Mikanarr Protocol" /f >nul\r\n'
-        'reg add "HKCU\\Software\\Classes\\mikanarr" /v "URL Protocol" /t REG_SZ /d "" /f >nul\r\n'
-        'reg add "HKCU\\Software\\Classes\\mikanarr\\shell\\open\\command" /ve /t REG_SZ '
+        'reg add "HKCU\\Software\\Classes\\mikannet" /ve /t REG_SZ '
+        '/d "URL:Mikannet Protocol" /f >nul\r\n'
+        'reg add "HKCU\\Software\\Classes\\mikannet" /v "URL Protocol" /t REG_SZ /d "" /f >nul\r\n'
+        'reg add "HKCU\\Software\\Classes\\mikannet\\shell\\open\\command" /ve /t REG_SZ '
         f'/d "{cmd}" /f >nul\r\n'
         + policy +
         "echo.\r\n"
-        "echo Mikanarr protocol handler installed (JScript via wscript - no console flash):\r\n"
+        "echo Mikannet protocol handler installed (JScript via wscript - no console flash):\r\n"
         "echo   %DIR%\\handler.js\r\n"
         + note +
         "echo.\r\n"

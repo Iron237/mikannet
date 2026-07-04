@@ -1,4 +1,4 @@
-# 🍊 Mikanarr
+# 🍊 Mikannet
 
 番剧订阅下载管理系统:[蜜柑计划](https://mikanani.me) 订阅 → 自动获取种子 → qBittorrent 下载到 NAS → WebUI 管理 + 手机推送。
 
@@ -45,13 +45,13 @@ docker compose up -d --build
 - **纯代码**(依赖未变,`base_rev` 相同):下载代码包 → 校验 sha256 → 落可写代码卷 → 原子重指 `current` → 重启;失败由 PID-1 wrapper 自动回滚。
 - **完整(换镜像)**(`base_rev` 不同):经 docker socket 启一次性 helper 跑 `docker compose up -d` 换 GHCR 镜像重建容器。
 
-发布流水线 `.github/workflows/release.yml` 在每次 release published 时构建并推送 `ghcr.io/iron237/mikanarr:<version>`,并上传 `manifest.json` + 代码包作为 release 资产。
+发布流水线 `.github/workflows/release.yml` 在每次 release published 时构建并推送 `ghcr.io/iron237/mikannet:<version>`,并上传 `manifest.json` + 代码包作为 release 资产。
 
 **运维须知 / 信任权衡**:
 
 - **GHCR 包须为 public**:匿名 `docker pull` 与完整更新依赖镜像公开;CI 会尝试自动设为 public,失败则在 GitHub → Packages 手动设置。
 - **完整更新需挂 `docker.sock`**:`/var/run/docker.sock` 挂进 app = **宿主 root 等价权限**(与既有 `SYS_ADMIN` 同级)。只用纯代码更新可不挂 socket(完整更新降级为手动 `docker compose pull && up -d`)。
-- **回滚**:纯代码失败自动回滚;完整失败为手动——把 `.env` 的 `MIKANARR_IMAGE_REF` 改回上一个可用 tag 后 `docker compose up -d`(步骤见 ADR-0005)。
+- **回滚**:纯代码失败自动回滚;完整失败为手动——把 `.env` 的 `MIKANNET_IMAGE_REF` 改回上一个可用 tag 后 `docker compose up -d`(步骤见 ADR-0005)。
 
 ## 架构速览
 

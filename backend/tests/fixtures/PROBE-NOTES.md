@@ -26,7 +26,7 @@
 - 登录成功=204+QBT_SID cookie,失败=401(qbittorrent-api 已封装)。
 - 验证通过:分类创建(可带 save_path)、按 torrent 文件字节添加(qB 容器无代理,**.torrent 必须由 app 经代理取回字节再投递**,
   不能让 qB 自己拉 URL)、中文 save_path、progress/dlspeed/size/eta/state 字段、暂停/恢复/删除(含删文件)、全局限速。
-- 开发实例:容器 `mikanarr-qb-probe`,http://localhost:18080,admin / mikanarr-dev,
+- 开发实例:容器 `mikannet-qb-probe`,http://localhost:18080,admin / mikannet-dev,
   挂载 `G:\Works\Bots\RSS video\.probe-qb\{config,downloads}`。
 
 ## 标题解析(anitopy 2.1.1,语料 n=358)

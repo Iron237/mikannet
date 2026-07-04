@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from app.models import (Bangumi, BdExtra, BdRelease, Episode, NotificationConfig,
                         Subscription, Torrent, TorrentEpisode, VideoFile)
 
-FORMAT = "mikanarr-backup"
+FORMAT = "mikannet-backup"
 VERSION = 2
 
 # 外键安全的插入顺序(父先于子);清空用逆序
@@ -101,7 +101,7 @@ def import_all(db: Session, data: dict) -> dict:
     设置不在此处理:settings_service.update 会另开会话写库,与本会话未提交的写事务会在
     SQLite(单写者)上互锁死;故设置由调用方在 commit 之后用 apply_settings 应用。"""
     if not isinstance(data, dict) or data.get("format") != FORMAT:
-        raise ValueError("不是有效的 Mikanarr 备份文件(format 不匹配)")
+        raise ValueError("不是有效的 Mikannet 备份文件(format 不匹配)")
     tables = data.get("tables") or {}
 
     # 1) DATA:外键逆序清空 → 顺序插回(保留主键)

@@ -1,4 +1,4 @@
-# Mikanarr — 番剧订阅下载管理系统
+# Mikannet — 番剧订阅下载管理系统
 
 通过蜜柑计划(Mikan)订阅番剧、自动获取种子交给 qBittorrent 下载到 NAS,并在 WebUI 中管理订阅、控制下载、展示本地番剧库的系统。
 

@@ -1,4 +1,4 @@
-"""探针:验证 qBittorrent Web API 满足 Mikanarr 全部需求。
+"""探针:验证 qBittorrent Web API 满足 Mikannet 全部需求。
 
 验证点:登录、版本、分类创建、按 URL 添加种子(指定 category+savepath)、
 列出/过滤 category 任务、实时进度字段、暂停/恢复、删除(含删文件)、全局限速。
@@ -25,7 +25,7 @@ def main() -> int:
     qb.auth_log_in()
     print(f"[1] 登录 OK — qB {qb.app.version} / API {qb.app.web_api_version}")
 
-    cat = "mikanarr-probe"
+    cat = "mikannet-probe"
     existing = qb.torrent_categories.categories
     if cat not in existing:
         qb.torrent_categories.create_category(name=cat, save_path="/downloads/probe")

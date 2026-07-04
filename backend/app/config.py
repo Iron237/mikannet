@@ -11,7 +11,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent  # backend/
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=BASE_DIR / ".env", env_prefix="MIKANARR_",
+    model_config = SettingsConfigDict(env_file=BASE_DIR / ".env", env_prefix="MIKANNET_",
                                       env_file_encoding="utf-8")
 
     # 数据目录(SQLite、图片缓存、日志)
@@ -19,11 +19,11 @@ class Settings(BaseSettings):
     # 自更新:可写代码卷根(wrapper 从 <code>/current 跑应用;updater 往这里落新版本)
     code_dir: Path = Path("/code")
     # 自更新发布源仓库(GitHub Releases API,公开免认证)
-    update_repo: str = "Iron237/mikanarr"
+    update_repo: str = "Iron237/mikannet"
     # 通道:包含预发布(当前仅发 pre-release → 默认开;切正式稳定后改默认)
     update_channel_prerelease: bool = True
     # 完整更新(换镜像):经 docker socket + 一次性 helper 跑 `docker compose up -d` 重建本容器
-    compose_project: str = "mikanarr"        # compose 项目名(helper -p 用)
+    compose_project: str = "mikannet"        # compose 项目名(helper -p 用)
     compose_host_dir: str = ""               # 宿主上 compose 目录(helper 绑定挂载源;compose 注入 ${PWD})
 
     # 外部网络:本机所有外部服务必须走代理(见 PROBE-NOTES)
@@ -47,8 +47,8 @@ class Settings(BaseSettings):
     qb_host: str = "localhost"
     qb_port: int = 18080
     qb_username: str = "admin"
-    qb_password: str = "mikanarr-dev"
-    qb_category: str = "mikanarr"
+    qb_password: str = "mikannet-dev"
+    qb_category: str = "mikannet"
 
     # BitComet(容器化 WebUI;本地服务不走代理)
     bitcomet_host: str = "bitcomet"
@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     # 本地导入源:主机路径前缀 → 容器挂载点(把用户粘贴的 Win/NAS 路径翻译成容器内可见路径)
     import_win_host: str = ""     # = LOCAL_IMPORT_PATH(Windows 磁盘源,挂到 /import)
     import_nas_host: str = ""     # = NAS_IMPORT_PATH(NAS 源 UNC,挂到 /import-nas)
-    # mikanarr 下载目录的 NAS 路径(= NAS_SMB_PATH);若它在 import_nas_host 之下,
+    # mikannet 下载目录的 NAS 路径(= NAS_SMB_PATH);若它在 import_nas_host 之下,
     # NAS→NAS 导入可经 /import-nas 同挂载做服务器端 rename(零网络传输)
     nas_smb_path: str = ""
 
@@ -104,11 +104,11 @@ class Settings(BaseSettings):
     # 已购原盘目录(BD 收藏:MAKEMKV 原盘等;独立 CIFS 挂载到容器内 /bd-owned,缺失则跳过)
     bd_owned_mount: str = "/bd-owned"
 
-    # 原生启动(自定义协议头 mikanarr://;详见 docs/系统运行与判别逻辑.md)
+    # 原生启动(自定义协议头 mikannet://;详见 docs/系统运行与判别逻辑.md)
     # 容器只存相对 download_root 的路径,这里配「你电脑上看到的根」用于映射成宿主机真实路径
-    media_host_root: str = ""        # 番剧库根(如 Z:\番剧\mikanarr)
+    media_host_root: str = ""        # 番剧库根(如 Z:\番剧\mikannet)
     bd_owned_host_root: str = ""     # 已购原盘根(如 Z:\BD\已购BD翻录)
-    data_host_root: str = ""         # data 目录根(如 C:\mikanarr\data\mikanarr);用于「打开 log 目录」
+    data_host_root: str = ""         # data 目录根(如 C:\mikannet\data\mikannet);用于「打开 log 目录」
     powerdvd_path: str = ""          # PowerDVD.exe 路径(留空 → 处理器自动探常见安装位)
     launch_token: str = ""           # 协议头防滥用令牌(首次需要时自动生成并存 DB)
 
@@ -133,7 +133,7 @@ class Settings(BaseSettings):
 
     @property
     def db_path(self) -> Path:
-        return self.data_dir / "mikanarr.db"
+        return self.data_dir / "mikannet.db"
 
     def proxy_for(self, service: str) -> str | None:
         return self.proxy_url if service in self.proxy_services and self.proxy_url else None

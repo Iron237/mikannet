@@ -42,8 +42,8 @@ async function onConfigFile(e) {
   let data
   try { data = JSON.parse(await file.text()) }
   catch { importMsg.value = '文件解析失败(不是有效 JSON 备份)'; return }
-  if (!data || data.format !== 'mikanarr-backup') {
-    importMsg.value = '不是 Mikanarr 备份文件(format 不匹配)'; return
+  if (!data || data.format !== 'mikannet-backup') {
+    importMsg.value = '不是 Mikannet 备份文件(format 不匹配)'; return
   }
   const hasSettings = !!data.settings || !!(data.tables && data.tables.notification_config)
   const extra = hasSettings ? ',并还原设置 / 通知(API key / cookie / 偏好,不含本机存储与下载器连接)' : ''
@@ -137,7 +137,7 @@ async function finish() {
   <div class="setup-wrap">
     <div class="setup-card card">
       <div class="head">
-        <div class="brand">🍊 Mikanarr · 首次配置</div>
+        <div class="brand">🍊 Mikannet · 首次配置</div>
         <button class="btn import-btn" :disabled="importing || busy" @click="pickConfigFile"
           title="从备份 JSON 还原番剧库与设置(本机存储 / 下载器仍需在向导里配)">
           <Icon name="download" :size="13" /> {{ importing ? '导入中…' : '导入配置' }}
@@ -160,7 +160,7 @@ async function finish() {
           <label :class="{ on: st.mode === 'local' }"><input type="radio" value="local" v-model="st.mode" /> 本地目录</label>
         </div>
         <template v-if="st.mode === 'smb'">
-          <label class="fld"><span>共享地址</span><input class="input" v-model="st.smb_host_path" placeholder="//192.168.1.100/anime/mikanarr" /></label>
+          <label class="fld"><span>共享地址</span><input class="input" v-model="st.smb_host_path" placeholder="//192.168.1.100/anime/mikannet" /></label>
           <div class="grid2">
             <label class="fld"><span>用户名</span><input class="input" v-model="st.smb_username" placeholder="NAS 账号" /></label>
             <label class="fld"><span>密码</span><input class="input" type="password" v-model="st.smb_password" placeholder="NAS 密码" /></label>
@@ -217,7 +217,7 @@ async function finish() {
         <h3>原生播放(可跳过)</h3>
         <p class="muted">想用本机默认播放器播放、在资源管理器打开、PowerDVD 放蓝光?填这台电脑看 NAS 的<strong>文件夹路径</strong>,
           再下载协议处理器在本机双击装一次。不需要可跳过,以后在设置页随时配。</p>
-        <label class="fld"><span>番剧库文件夹路径(如 Z:\番剧\mikanarr)</span><input class="input" v-model="cfg.media_host_root" placeholder="Z:\番剧\mikanarr" /></label>
+        <label class="fld"><span>番剧库文件夹路径(如 Z:\番剧\mikannet)</span><input class="input" v-model="cfg.media_host_root" placeholder="Z:\番剧\mikannet" /></label>
         <label class="fld"><span>已购原盘文件夹路径(可选,如 Z:\BD\已购BD翻录)</span><input class="input" v-model="cfg.bd_owned_host_root" placeholder="可留空" /></label>
         <div class="row" style="gap:10px;">
           <button class="btn" :disabled="busy || !cfg.media_host_root" @click="downloadHandler">保存并下载协议处理器(.bat)</button>
@@ -228,7 +228,7 @@ async function finish() {
       <!-- 5 完成 -->
       <div v-else class="body">
         <h3>完成 🎉</h3>
-        <p class="muted">配置已保存。点「进入 Mikanarr」开始用——搜索番剧、建订阅、导入历史数据(设置页「数据备份/迁移」)。</p>
+        <p class="muted">配置已保存。点「进入 Mikannet」开始用——搜索番剧、建订阅、导入历史数据(设置页「数据备份/迁移」)。</p>
       </div>
 
       <p v-if="msg" class="err" style="font-size:12.5px;">{{ msg }}</p>
@@ -240,7 +240,7 @@ async function finish() {
           {{ busy ? '处理中…' : '下一步' }}
         </button>
         <button class="btn primary" v-else :disabled="busy" @click="finish">
-          {{ busy ? '进入中…' : '进入 Mikanarr' }}
+          {{ busy ? '进入中…' : '进入 Mikannet' }}
         </button>
       </div>
     </div>

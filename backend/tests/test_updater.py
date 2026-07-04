@@ -14,7 +14,7 @@ def _releases():
         {"tag_name": "v0.1.1", "prerelease": True, "draft": False, "body": "new",
          "assets": [
              {"name": "manifest.json", "browser_download_url": "http://x/manifest.json"},
-             {"name": "mikanarr-0.1.1-code.tar.gz", "size": 123456,
+             {"name": "mikannet-0.1.1-code.tar.gz", "size": 123456,
               "browser_download_url": "http://x/code.tgz"},
          ]},
     ]
@@ -28,7 +28,7 @@ def _patch(monkeypatch, base_rev_remote, current_base="baseAAA", current_ver="0.
     def fake_manifest(release):
         if release["tag_name"] == "v0.1.1":
             return {"version": "0.1.1", "base_rev": base_rev_remote,
-                    "image_ref": "ghcr.io/iron237/mikanarr:0.1.1",
+                    "image_ref": "ghcr.io/iron237/mikannet:0.1.1",
                     "code_package_url": "http://x/code.tgz", "code_sha256": "deadbeef",
                     "min_version": "0.1.0", "prerelease": True, "changelog": "new"}
         return {"version": "0.1.0", "base_rev": current_base, "changelog": "base"}
@@ -71,7 +71,7 @@ def test_check_full_when_too_old(monkeypatch):
     def manifest_minver(release):
         if release["tag_name"] == "v0.1.1":
             return {"version": "0.1.1", "base_rev": "baseAAA", "min_version": "0.1.0",
-                    "image_ref": "ghcr.io/iron237/mikanarr:0.1.1", "prerelease": True}
+                    "image_ref": "ghcr.io/iron237/mikannet:0.1.1", "prerelease": True}
         return {"version": "0.1.0", "base_rev": "baseAAA"}
     monkeypatch.setattr(updater, "_fetch_manifest", manifest_minver)
     r = updater.check(include_prerelease=True)

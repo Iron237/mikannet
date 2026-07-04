@@ -1,7 +1,7 @@
 """BD 发行管理(ADR-0004):收藏总览 / 购买状态 / 绑番剧 / 扫描 / 打开目录。
 
 去特典分支:特典不在网页展示。正片(纯集号)替换 web 正片走剧集网格;特典(带描述标签的
-视频 / 音频 / 图集)留在发行目录里,经「打开目录」(mikanarr://reveal)用资源管理器 / 本机应用浏览。
+视频 / 音频 / 图集)留在发行目录里,经「打开目录」(mikannet://reveal)用资源管理器 / 本机应用浏览。
 自购原盘(raw_disc)仍可逐碟 PowerDVD 蓝光播放。
 """
 from fastapi import APIRouter, Depends, HTTPException
@@ -43,7 +43,7 @@ def _owned_discs(r: BdRelease) -> list[dict]:
 
 
 def _open_url(r: BdRelease) -> str | None:
-    """该发行目录的「打开目录」URL(mikanarr://reveal):在资源管理器里定位发行 / 原盘文件夹,
+    """该发行目录的「打开目录」URL(mikannet://reveal):在资源管理器里定位发行 / 原盘文件夹,
     特典就在其中,用本机应用浏览。未配置宿主机根 → None(前端按钮置灰提示)。"""
     from app.services import launch
     if r.source_kind == "raw_disc" and (r.root_path or "").startswith("@owned/"):
