@@ -3,11 +3,20 @@
 路径约定(ADR 部署形态):所有持久化路径用容器内挂载点表达;
 开发期直接跑 uvicorn 时通过 .env 覆盖为本机路径。
 """
+import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent  # backend/
+
+# 改名过渡兼容(mikanarr→mikannet):纯代码自更新会把读 MIKANNET_ 前缀的新代码,落到
+# 改名前的旧容器/compose 里 —— 那里的环境变量还是 MIKANARR_ 前缀。若读不到,data_dir /
+# download_root / proxy / qb 会全部退回默认值(表现:番剧库空、连不上 qB、库文件落到错误路径)。
+# 这里在建 Settings 前,把旧前缀 env 镜像到新前缀(仅当新名未显式设置时,故干净部署无副作用)。
+for _k, _v in list(os.environ.items()):
+    if _k.startswith("MIKANARR_"):
+        os.environ.setdefault("MIKANNET_" + _k[len("MIKANARR_"):], _v)
 
 
 class Settings(BaseSettings):
