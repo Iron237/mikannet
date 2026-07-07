@@ -99,12 +99,15 @@ def _migrate_columns() -> None:
                     ("anidb_synced_at", "DATETIME"),
                     ("kind", "VARCHAR(8) DEFAULT 'TV'"),   # SQLAlchemy 存 Enum 名:TV/MOVIE/OVA
                     ("auto_best", "BOOLEAN DEFAULT 0"),
+                    ("auto_scan_at", "DATETIME"),          # 上次智能扫描时间
+                    ("auto_scan_result", "JSON"),          # 上次扫描摘要(状态卡)
                     ("bd_owned", "BOOLEAN DEFAULT 0")],
         "torrent": [("stalled_since", "DATETIME"),
                     ("last_progress", "FLOAT DEFAULT 0"),
                     ("progress_at", "DATETIME"),
                     ("is_preview", "BOOLEAN DEFAULT 0")],
-        "episode": [("anidb_eid", "INTEGER")],
+        "episode": [("anidb_eid", "INTEGER"),
+                    ("bgmtv_ep_id", "INTEGER")],   # bgm.tv 章节 id(收视进度回写)
         "video_file": [("subgroup", "VARCHAR(128)"),
                        ("source", "VARCHAR(32)"),
                        ("color_depth", "VARCHAR(8)"),

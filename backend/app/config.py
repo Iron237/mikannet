@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     # helper 重建才会带同一组 -f;留空 = compose 默认发现(仅 docker-compose.yml)
     compose_files: str = ""
 
+    # bgm.tv 收藏联动(个人令牌:next.bgm.tv/demo/access-token 生成)
+    bgmtv_access_token: str = ""
+    # 下载入库后自动回写 bgm.tv 收视进度(条目标在看 + 单集标看过)
+    bgmtv_sync_progress: bool = False
+
     # 外部网络:本机所有外部服务必须走代理(见 PROBE-NOTES)
     proxy_url: str = "http://127.0.0.1:10808"
     # 走代理的服务名单;qB 等本地服务永远直连

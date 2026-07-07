@@ -68,6 +68,8 @@ class Bangumi(Base):
     kind: Mapped[Kind] = mapped_column(Enum(Kind), default=Kind.TV)   # 作品形态:tv/movie/ova
     # 智能下载:开启后定期扫所有字幕组,按偏好(BD>Web/分辨率/简中)补全缺集+升级现有源
     auto_best: Mapped[bool] = mapped_column(Boolean, default=False)
+    auto_scan_at: Mapped[datetime | None] = mapped_column(DateTime)   # 上次智能扫描时间
+    auto_scan_result: Mapped[dict | None] = mapped_column(JSON)       # 上次扫描摘要(详情页状态卡)
     # 有原盘/已购 BD → 完全排除出自动下载(auto-best + RSS 轮询都跳过)。见 ADR-0004
     bd_owned: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -140,6 +142,7 @@ class Episode(Base):
     number: Mapped[float | None] = mapped_column(Float)   # 支持 12.5;None=未解析出
     type: Mapped[EpisodeType] = mapped_column(Enum(EpisodeType), default=EpisodeType.REGULAR)
     anidb_eid: Mapped[int | None] = mapped_column(Integer)   # AniDB episode id(同步后回填,ADR-0003)
+    bgmtv_ep_id: Mapped[int | None] = mapped_column(Integer)  # bgm.tv 章节 id(收视进度回写)
     title: Mapped[str | None] = mapped_column(String(255))
     air_date: Mapped[str | None] = mapped_column(String(32))
 

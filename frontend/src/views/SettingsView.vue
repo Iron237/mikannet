@@ -41,7 +41,7 @@ const LABELS = {
   powerdvd_path: 'PowerDVD.exe 路径(留空 → 自动探测常见安装位)',
 }
 const GROUP_ORDER = ['常规', '智能下载', '下载器', '代理', '搜索源', '整理', '播放',
-  '坏种清理', 'AniDB', 'LLM']
+  '坏种清理', 'bgm.tv 联动', 'AniDB', 'LLM']
 
 const channelMeta = {
   telegram: { name: 'Telegram Bot', fields: [['bot_token', 'Bot Token'], ['chat_id', 'Chat ID']] },

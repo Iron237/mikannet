@@ -43,7 +43,8 @@ async function refreshAir() {
   try {
     const r = await api.post('/api/bangumi/calendar/refresh')
     refreshMsg.value = r.changed.length
-      ? `已检查 ${r.checked} 部,日期变动:` + r.changed.map(c => `${c.title} ${c.old}→${c.new}`).join(';')
+      ? `已检查 ${r.checked} 部,日期变动:` + r.changed.map(c =>
+          `${c.title}${c.number != null ? ` 第${c.number}话` : ''} ${c.old}→${c.new}`).join(';')
       : `已检查 ${r.checked} 部,放送日期无变动` + (r.failed ? `(${r.failed} 部获取失败)` : '')
     await load()
   } catch (e) { refreshMsg.value = e.message }
@@ -82,16 +83,21 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisible))
             <div class="cal-info">
               <div class="cal-title">{{ b.title }}</div>
               <div class="muted cal-eps">
-                <template v-if="airLabel(b)">
-                  <!-- 官方未开播(先行放送期/待播):显示开播日期 -->
-                  <span class="upcoming">{{ airLabel(b) }}</span>
-                </template>
-                <template v-else-if="b.eps_aired != null">
-                  <!-- 集数按 bangumi 编号显示(续作从上季续数:第2期更新到第13话而非第1话) -->
-                  <span :title="`本周更新到第 ${(b.ep_start || 1) + b.eps_aired - 1} 话`">
-                    第 {{ (b.ep_start || 1) + b.eps_aired - 1 }} 话</span>
+                <!-- 前瞻视角:放送表展示「本周将更新什么」,而不是已经有什么 -->
+                <template v-if="b.upcoming && !b.upcoming.over">
+                  <span class="upcoming" :title="`${b.upcoming.date} 更新`">
+                    {{ b.upcoming.premiere ? '开播·' : '' }}第 {{ b.upcoming.number }} 话</span>
                   · 已下载 {{ b.eps_downloaded }}
-                  <span v-if="b.eps_aired > b.eps_downloaded" class="new-ep" title="有未下载的新集">● 新集</span>
+                  <span v-if="b.eps_aired != null && b.eps_aired > b.eps_downloaded"
+                        class="new-ep" title="有已发布未下载的集">● 新集</span>
+                </template>
+                <template v-else-if="b.upcoming && b.upcoming.over">
+                  <span title="按周更推算本季集数已播完,等待完结确认">本季已播完</span>
+                  · 已下载 {{ b.eps_downloaded }}{{ b.eps_total ? '/' + b.eps_total : '' }}
+                </template>
+                <template v-else-if="airLabel(b)">
+                  <!-- 官方未开播且本周不首播:显示开播日期 -->
+                  <span class="upcoming">{{ airLabel(b) }}</span>
                 </template>
                 <template v-else>
                   已下载 {{ b.eps_downloaded }}{{ b.eps_total ? '/' + b.eps_total : '' }} 集

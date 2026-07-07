@@ -53,6 +53,13 @@ const epStatus = {
 
 const realSubs = computed(() => (b.value?.subscriptions || []))
 
+// 关联条目(bgm.tv,懒加载,失败静默)
+const related = ref([])
+async function loadRelated() {
+  try { related.value = await api.get(`/api/bangumi/${route.params.id}/related`) }
+  catch { related.value = [] }
+}
+
 function epTitle(ep) {
   if (ep.type === 'regular') return `第 ${ep.number ?? '?'} 话`
   const label = EP_TYPE[ep.type] || ep.type
@@ -118,13 +125,34 @@ async function pollAuto() {
   if (!mounted) return            // 卸载后别再起定时器/写已销毁组件
   autoScan.value = s
   if (autoScan.value.running) { autoTimer = setTimeout(pollAuto, 1500) }
-  else { await load() }
+  else { await load(); loadAutoStatus() }   // 扫描结束刷新状态卡(上次结果/种子分布)
 }
 async function toggleAutoBest() {
   await api.patch(`/api/bangumi/${b.value.id}`, { auto_best: autoBest.value })
+  loadAutoStatus()
 }
 const autoMine = computed(() =>
   (autoScan.value?.result || []).find(r => r.bangumi === b.value?.id))
+
+// 智能下载当前状态卡(开关/上次扫描/种子分布/缺集)
+const autoStatus = ref(null)
+async function loadAutoStatus() {
+  try { autoStatus.value = await api.get(`/api/bangumi/${route.params.id}/auto-status`) }
+  catch { autoStatus.value = null }
+}
+function fmtEps(nums) {
+  if (!nums?.length) return ''
+  const parts = []
+  let s = nums[0], p = nums[0]
+  for (const n of nums.slice(1).concat([NaN])) {
+    if (n === p + 1) { p = n; continue }
+    parts.push(s === p ? `${s}` : `${s}-${p}`)
+    s = p = n
+  }
+  return parts.join(', ')
+}
+const AUTO_ST = { pending: '待提交', downloading: '下载中', submit_failed: '提交失败',
+                  download_error: '出错', completed: '待整理', archived: '已入库', skipped: '已跳过' }
 
 // ---- 文件管理 ----
 function startFileEdit(f, ep) {
@@ -255,6 +283,8 @@ async function syncAnidb() {
 
 onMounted(async () => {
   await load()
+  loadRelated()      // 关联条目:不阻塞主内容
+  loadAutoStatus()   // 智能下载状态卡
   const a = await api.get('/api/bangumi/auto-scan/status')
   if (a.running) { autoScan.value = a; pollAuto() }
 })
@@ -336,11 +366,48 @@ onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
               {{ autoMine.submitted ? `提交 ${autoMine.submitted} 个种子(集 ${(autoMine.needed||[]).join(', ')})` : (autoMine.note || '无需下载') }}
             </span>
           </div>
+          <!-- 智能下载当前状态卡:开关/上次扫描摘要/种子分布/缺集与在途 -->
+          <div v-if="autoStatus && (autoStatus.enabled || autoStatus.last_scan_at
+                     || Object.keys(autoStatus.torrents || {}).length)"
+               class="auto-status" style="margin-top: 8px; flex-wrap: wrap; row-gap: 4px;">
+            <Icon name="zap" :size="13" :style="{ color: autoStatus.enabled ? 'var(--accent)' : 'var(--muted, #888)' }" />
+            <span>智能下载{{ autoStatus.enabled ? '常驻开启' : '未常驻' }}</span>
+            <span v-if="autoStatus.last_scan_at" class="muted">
+              · 上次扫描 {{ fmtTime(autoStatus.last_scan_at) }}:{{
+                autoStatus.last_result?.error ? `失败(${autoStatus.last_result.error})`
+                : autoStatus.last_result?.submitted ? `提交 ${autoStatus.last_result.submitted} 个种子`
+                : (autoStatus.last_result?.note || '无需下载') }}
+              <template v-if="autoStatus.last_result?.gaps?.length">
+                ,留待 {{ fmtEps(autoStatus.last_result.gaps) }}(避免重复大合集)
+              </template>
+            </span>
+            <span v-if="Object.keys(autoStatus.torrents || {}).length" class="muted">
+              · 种子:{{ Object.entries(autoStatus.torrents)
+                  .map(([k, v]) => `${AUTO_ST[k] || k} ${v}`).join(' / ') }}
+            </span>
+            <span v-if="autoStatus.missing?.length" class="muted">
+              · 缺 {{ fmtEps(autoStatus.missing) }} 集<template v-if="autoStatus.in_flight?.length">(其中
+                {{ fmtEps(autoStatus.in_flight) }} 在途)</template>
+            </span>
+            <span v-else-if="autoStatus.enabled && b.eps_total" class="muted" style="color: var(--green, #46a758);">
+              · 正片已齐</span>
+          </div>
         </div>
       </div>
     </div>
 
     <div class="page">
+      <!-- 关联条目(bgm.tv):前作/续作/剧场版,已入库直接跳,未入库跳搜索订阅 -->
+      <div v-if="related.length" class="row" style="flex-wrap: wrap; gap: 6px; margin-bottom: 16px; align-items: center;">
+        <span class="muted" style="font-size: 12.5px;">关联:</span>
+        <RouterLink v-for="r in related" :key="r.subject_id"
+                    :to="r.local_id ? `/bangumi/${r.local_id}` : `/search?searchstr=${encodeURIComponent(r.title)}`"
+                    class="tag" :class="{ green: r.local_id }"
+                    :title="r.local_id ? '已入库,点击进入' : '点击去搜索订阅'">
+          {{ r.relation }}·{{ r.title }}<template v-if="r.local_id"> ✓</template>
+        </RouterLink>
+      </div>
+
       <!-- 订阅源详情 -->
       <div class="page-title">订阅源 <span class="muted" style="font-size: 13px; font-weight: 400;">{{ realSubs.length }} 个</span></div>
       <div v-if="!realSubs.length" class="muted" style="margin-bottom: 18px;">还没有订阅源 — 点「添加订阅」选字幕组</div>
@@ -415,6 +482,8 @@ onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
           <span v-if="ep.type !== 'regular'" class="tag accent" style="flex-shrink:0;">{{ EP_TYPE[ep.type] || ep.type }}</span>
           <strong class="ep-num">{{ epTitle(ep) }}</strong>
           <span v-if="ep.title" class="muted ep-title">{{ ep.title }}</span>
+          <span v-if="ep.air_date" class="muted" style="font-size: 11.5px; flex-shrink: 0;"
+                :title="'放送日 ' + ep.air_date">{{ ep.air_date.slice(5) }}</span>
           <span class="tag" :class="epStatus[ep.status]?.[1]">{{ epStatus[ep.status]?.[0] ?? ep.status }}</span>
           <span v-if="ep.version > 1" class="tag accent">v{{ ep.version }}</span>
           <div class="spacer" />

@@ -31,45 +31,41 @@ refresh_state: dict = {"running": False, "done": 0, "total": 0, "current": "",
 
 
 def backfill_ep_start_once() -> None:
-    """一次性回填存量番剧的首话编号(ep_start 功能上线前建的番剧没有时机拉取)。
+    """一次性回填存量番剧的 bgm.tv 章节数据(ep_start 功能上线前建的番剧没有时机拉取)。
 
-    元数据同步只在建番剧/重绑时跑 → 老的连续编号续作(第2期章节 13-25)会一直停在
-    ep_start=1,详情页铺出永远等不来的 1-12。启动后台线程逐条拉 bgm.tv 章节 API
-    (仅 TV + 已绑 subject + 仍是默认 1 的),完成后写 Setting 标记不再重复;
-    全部失败(如断网)不写标记,下次启动重试。"""
+    每部走完整章节同步(sync_bgmtv_episodes):首话编号 + 旧 1-based 行整体平移
+    + 每集精确放送日/中文标题/章节 id。v2:v1 只写 ep_start 不平移既有剧集行,
+    造成详情页两套编号并存 → 换标记键重跑一遍(平移幂等,已对齐的空操作)。
+    完成写 Setting 标记不再重复;全部失败(如断网)不写标记,下次启动重试。"""
     from time import sleep
 
     from app.models import Setting
-    KEY = "ep_start_backfilled"
+    KEY = "ep_start_backfilled_v3"   # v3:平移撞号改为合并(历史混编两套编号并行合一)
     with db_session() as db:
         if db.get(Setting, KEY):
             return
-        targets = [(b.id, b.bgmtv_subject_id, b.title) for b in db.execute(
+        targets = [(b.id, b.title) for b in db.execute(
             select(Bangumi).where(Bangumi.bgmtv_subject_id.is_not(None),
-                                  Bangumi.kind == Kind.TV)).scalars()
-                   if (b.ep_start or 1) == 1]
+                                  Bangumi.kind == Kind.TV)).scalars()]
     fails = 0
-    for bid, sid, title in targets:
+    for bid, title in targets:
         try:
-            start = bgmtv_client.first_ep_sort(sid)
-        except Exception as e:  # noqa: BLE001
-            fails += 1
-            log.warning("首话编号回填失败 %s(subject %s): %s", title, sid, e)
-            continue
-        if start and start > 1:
+            from app.services.bgm_sync import sync_bgmtv_episodes
             with db_session() as db:
                 b = db.get(Bangumi, bid)
-                if b is not None and (b.ep_start or 1) == 1:   # 没被手改过才写
-                    b.ep_start = start
-            log.info("首话编号回填:%s → %s", title, start)
+                if b is not None:
+                    sync_bgmtv_episodes(db, b)
+        except Exception as e:  # noqa: BLE001
+            fails += 1
+            log.warning("章节数据回填失败 %s: %s", title, e)
         sleep(0.5)   # 对 bgm.tv 客气点
     if targets and fails == len(targets):
-        log.warning("首话编号回填全部失败(网络?),不写标记,下次启动重试")
+        log.warning("章节数据回填全部失败(网络?),不写标记,下次启动重试")
         return
     with db_session() as db:
         if db.get(Setting, KEY) is None:
             db.add(Setting(key=KEY, value={"v": True}))
-    log.info("首话编号回填完成:检查 %s 部,失败 %s", len(targets), fails)
+    log.info("章节数据回填完成:检查 %s 部,失败 %s", len(targets), fails)
 
 
 def start_ep_start_backfill() -> None:
@@ -109,7 +105,7 @@ def refresh_air_dates(notify_changes: bool = False) -> dict:
             new_date = s.date or None
             if new_date and new_date != b.air_date:
                 if b.air_date:   # 旧值非空才算「变动」(延期/提档)
-                    changed.append({"id": bid, "title": b.title,
+                    changed.append({"id": bid, "title": b.title, "number": None,
                                     "old": b.air_date, "new": new_date,
                                     "poster_path": b.poster_path})
                     log.info("放送日期变动:%s %s → %s", b.title, b.air_date, new_date)
@@ -127,6 +123,17 @@ def refresh_air_dates(notify_changes: bool = False) -> dict:
                 b.eps_total = s.eps
             if s.score:
                 b.score = s.score
+            try:
+                # 每集精确放送日同步:未来集的日期变动 = 按集延期/提档(比整部首播日精确)
+                from app.services.bgm_sync import sync_bgmtv_episodes
+                for ch in sync_bgmtv_episodes(db, b):
+                    changed.append({"id": bid, "title": b.title, "number": ch["number"],
+                                    "old": ch["old"], "new": ch["new"],
+                                    "poster_path": b.poster_path})
+                    log.info("单集放送日变动:%s 第 %s 话 %s → %s",
+                             b.title, ch["number"], ch["old"], ch["new"])
+            except Exception as e:  # noqa: BLE001
+                log.warning("章节同步失败 %s: %s", title, e)
         sleep(0.4)   # 对 bgm.tv 客气点
     if notify_changes and changed:
         from app.services.events import notify
@@ -134,15 +141,18 @@ def refresh_air_dates(notify_changes: bool = False) -> dict:
             poster = None
             if ch["poster_path"] and (settings.data_dir / ch["poster_path"]).exists():
                 poster = str(settings.data_dir / ch["poster_path"])
+            what = (f"第 {ch['number']:g} 话放送日" if ch.get("number") is not None
+                    else "放送开始")
             try:
                 notify("on_new", f"{ch['title']} · 放送日期变动",
-                       f"放送开始:{ch['old']} → {ch['new']}(bgm.tv 数据变更,可能延期/提档)",
+                       f"{what}:{ch['old']} → {ch['new']}(bgm.tv 数据变更,可能延期/提档)",
                        poster)
             except Exception:  # noqa: BLE001 — 推送失败不影响刷新
                 log.debug("放送变动推送失败", exc_info=True)
     log.info("放送信息刷新完成:%s 部,失败 %s,日期变动 %s", checked, failed, len(changed))
     return {"checked": checked, "failed": failed,
-            "changed": [{k: c[k] for k in ("id", "title", "old", "new")} for c in changed]}
+            "changed": [{k: c.get(k) for k in ("id", "title", "number", "old", "new")}
+                        for c in changed]}
 
 
 def _kind_from_platform(platform: str | None) -> Kind:
@@ -233,12 +243,12 @@ def enrich_bangumi(db: Session, bangumi: Bangumi,
             bangumi.score = s.score
             bangumi.eps_total = s.eps
             try:
-                # 首话编号:续作从上季续数(第2期章节 13-25 → ep_start=13),字幕组随此编号。
-                # 失败不覆盖(保留默认 1 或已有手改值)。
-                if start := bgmtv_client.first_ep_sort(subject_id):
-                    bangumi.ep_start = start
+                # 每集精确数据(放送日/中文标题/章节 id)+ 顺带回填 ep_start
+                # (续作从上季续数,第2期章节 13-25 → ep_start=13,字幕组随此编号)
+                from app.services.bgm_sync import sync_bgmtv_episodes
+                sync_bgmtv_episodes(db, bangumi)
             except Exception as e:  # noqa: BLE001
-                log.warning("bgm.tv 首话编号获取失败 subject=%s: %s", subject_id, e)
+                log.warning("bgm.tv 章节同步失败 subject=%s: %s", subject_id, e)
             bangumi.airing_status = _infer_airing_status(s.date, s.eps)
             # 形态:AniDB 已绑时由 AniDB 同步主导(更可靠),否则用 bgm.tv platform 推
             if not bangumi.anidb_aid:

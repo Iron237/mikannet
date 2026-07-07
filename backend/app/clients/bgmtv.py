@@ -61,7 +61,38 @@ class BgmtvSearchResult:
     name_cn: str | None       # 中文译名
 
 
+@dataclass
+class BgmtvEpisode:
+    """bgm.tv 章节(/v0/episodes):每集精确放送日 + 中文标题的数据源。"""
+    ep_id: int                # bgm.tv 章节 id(收视进度回写用)
+    type: int                 # 0 本篇 / 1 SP / 2 OP / 3 ED
+    sort: float               # 章节话数(bangumi 编号,续作从上季续数)
+    name: str
+    name_cn: str | None
+    airdate: str | None       # "2026-07-09";未定/未知为 None
+
+
+@dataclass
+class RelatedSubject:
+    """关联条目(/v0/subjects/{id}/subjects):前作/续作/剧场版/OVA 等。"""
+    subject_id: int
+    type: int                 # 2=动画
+    relation: str             # 续集/前传/剧场版/番外篇…
+    name: str
+    name_cn: str | None
+    image: str | None
+
+
 class BgmtvClient:
+    def _headers(self, auth: bool = False) -> dict:
+        """带 UA;auth=True 且配置了个人令牌时附 Bearer(收藏读写用)。"""
+        if auth:
+            from app.config import settings
+            tok = (settings.bgmtv_access_token or "").strip()
+            if tok:
+                return {**UA, "Authorization": f"Bearer {tok}"}
+        return dict(UA)
+
     def get_subject(self, subject_id: int) -> BgmtvSubject:
         with make_client("bgmtv", headers=UA) as c:
             r = c.get(f"{API}/v0/subjects/{subject_id}")
@@ -99,6 +130,101 @@ class BgmtvClient:
             return n if n >= 1 else None
         except (TypeError, ValueError):
             return None
+
+    def episodes(self, subject_id: int, ep_type: int = 0) -> list[BgmtvEpisode]:
+        """全量拉章节(分页,type=0 本篇)。每集含精确 airdate + 中文标题。"""
+        out: list[BgmtvEpisode] = []
+        offset = 0
+        with make_client("bgmtv", headers=UA) as c:
+            while True:
+                r = c.get(f"{API}/v0/episodes",
+                          params={"subject_id": subject_id, "type": ep_type,
+                                  "limit": 100, "offset": offset})
+                r.raise_for_status()
+                j = r.json() or {}
+                data = j.get("data") or []
+                for x in data:
+                    try:
+                        sort = float(x.get("sort") if x.get("sort") is not None else x.get("ep") or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    ad = (x.get("airdate") or "").strip()
+                    out.append(BgmtvEpisode(
+                        ep_id=int(x["id"]), type=int(x.get("type") or 0), sort=sort,
+                        name=x.get("name") or "", name_cn=x.get("name_cn") or None,
+                        airdate=ad if len(ad) >= 8 else None))
+                offset += len(data)
+                if len(data) < 100 or offset >= int(j.get("total") or 0):
+                    break
+        return out
+
+    def related_subjects(self, subject_id: int) -> list[RelatedSubject]:
+        """关联条目:前作/续作/剧场版/OVA 等(全类型返回,调用方自行过滤)。"""
+        with make_client("bgmtv", headers=UA) as c:
+            r = c.get(f"{API}/v0/subjects/{subject_id}/subjects")
+            r.raise_for_status()
+            data = r.json() or []
+        return [RelatedSubject(
+            subject_id=int(x["id"]), type=int(x.get("type") or 0),
+            relation=x.get("relation") or "", name=x.get("name") or "",
+            name_cn=x.get("name_cn") or None,
+            image=(x.get("images") or {}).get("common") or (x.get("images") or {}).get("large"))
+            for x in data if x.get("id")]
+
+    def weekly_calendar(self) -> list[dict]:
+        """每日放送(legacy /calendar,无鉴权):当季全站番剧按星期分组,发现页数据源。
+
+        返回原始结构:[{weekday:{id 1-7,cn,...}, items:[{id,name,name_cn,air_date,
+        rating:{score},images:{large},eps/eps_count,...}]}]。
+        """
+        with make_client("bgmtv", headers=UA) as c:
+            r = c.get(f"{API}/calendar")
+            r.raise_for_status()
+            return r.json() or []
+
+    # ---- 收藏联动(需个人令牌 next.bgm.tv/demo/access-token)------------------
+
+    def me(self) -> dict | None:
+        """当前令牌对应的用户;未配置/无效令牌 → None。"""
+        with make_client("bgmtv", headers=self._headers(auth=True)) as c:
+            r = c.get(f"{API}/v0/me")
+            if r.status_code in (401, 403):
+                return None
+            r.raise_for_status()
+            return r.json()
+
+    def watching(self, username: str) -> list[dict]:
+        """用户「在看」的动画收藏(分页拉全)。"""
+        out: list[dict] = []
+        offset = 0
+        with make_client("bgmtv", headers=self._headers(auth=True)) as c:
+            while True:
+                r = c.get(f"{API}/v0/users/{username}/collections",
+                          params={"subject_type": 2, "type": 3,   # 2=动画 3=在看
+                                  "limit": 50, "offset": offset})
+                r.raise_for_status()
+                j = r.json() or {}
+                data = j.get("data") or []
+                out.extend(data)
+                offset += len(data)
+                if len(data) < 50 or offset >= int(j.get("total") or 0):
+                    break
+        return out
+
+    def mark_subject_watching(self, subject_id: int) -> None:
+        """把条目标为「在看」(幂等:已有收藏则改状态)。"""
+        with make_client("bgmtv", headers=self._headers(auth=True)) as c:
+            r = c.post(f"{API}/v0/users/-/collections/{subject_id}", json={"type": 3})
+            if r.status_code not in (200, 201, 202, 204):
+                r.raise_for_status()
+
+    def mark_episode_watched(self, episode_id: int) -> None:
+        """把单集标为「看过」(收视进度回写)。"""
+        with make_client("bgmtv", headers=self._headers(auth=True)) as c:
+            r = c.put(f"{API}/v0/users/-/collections/-/episodes/{episode_id}",
+                      json={"type": 2})   # 2=看过
+            if r.status_code not in (200, 201, 202, 204):
+                r.raise_for_status()
 
     def search(self, keyword: str, limit: int = 6) -> list[BgmtvSearchResult]:
         """搜动画条目。v0 模糊搜索优先(中日文命中好),空则退 legacy(对罗马音/别名更宽)。"""

@@ -11,8 +11,8 @@ from fastapi.staticfiles import StaticFiles
 
 from app import scheduler
 from app._version import VERSION
-from app.api import (backup, bangumi, bd, config, files, import_mikan, launch, logs,
-                     notifications, search, setup, subscriptions, system, tasks, ws)
+from app.api import (backup, bangumi, bd, config, discover, files, import_mikan, launch,
+                     logs, notifications, search, setup, subscriptions, system, tasks, ws)
 from app.clients.downloader import downloader
 from app.config import settings
 from app.database import init_db
@@ -76,6 +76,7 @@ app.include_router(launch.router)
 app.include_router(backup.router)
 app.include_router(setup.router)
 app.include_router(logs.router)
+app.include_router(discover.router)
 
 (settings.data_dir / "images").mkdir(parents=True, exist_ok=True)
 app.mount("/data", StaticFiles(directory=settings.data_dir), name="data")

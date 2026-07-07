@@ -161,6 +161,50 @@ def _has_active_file_source(db: Session, bangumi_id: int, source: str) -> bool:
                VideoFile.source == source).limit(1)).first())
 
 
+def _upcoming_this_week(db: Session, b: Bangumi) -> dict | None:
+    """下一个将更新的话:放送表是前瞻视角,展示「将要更新什么」。
+
+    优先每集精确放送日(bgm.tv 章节 airdate,休播/延期天然准确);
+    没有每集数据时退回「首播日 + 周更」外推。显示用 bangumi 编号。
+    未开播 → None(前端显示「N月N日开播」);全部播完 → over=True。
+    """
+    from datetime import date, timedelta
+    today = date.today()
+    # 1) 每集精确放送日
+    rows = db.execute(select(Episode.number, Episode.air_date).where(
+        Episode.bangumi_id == b.id, Episode.type == EpisodeType.REGULAR,
+        Episode.number.is_not(None), Episode.air_date.is_not(None))).all()
+    dated = []
+    for num, ad in rows:
+        try:
+            dated.append((date.fromisoformat(ad[:10].replace("/", "-")), num))
+        except ValueError:
+            continue
+    if dated:
+        future = sorted((d, n) for d, n in dated if d >= today)
+        if not future:
+            return {"over": True}
+        d, n = future[0]
+        first_num = min(n2 for _, n2 in dated)
+        return {"over": False, "number": int(n) if float(n).is_integer() else n,
+                "date": d.isoformat(), "premiere": n == first_num}
+    # 2) 周更外推兜底
+    if not b.air_date or b.air_weekday is None:
+        return None
+    try:
+        start = date.fromisoformat(b.air_date[:10].replace("/", "-"))
+    except ValueError:
+        return None
+    target = today + timedelta(days=(b.air_weekday - today.weekday()) % 7)
+    if target < start:
+        return None
+    cnt = (target - start).days // 7 + 1
+    if b.eps_total and cnt > b.eps_total:
+        return {"over": True}
+    return {"over": False, "number": (b.ep_start or 1) + cnt - 1,
+            "date": target.isoformat(), "premiere": cnt == 1}
+
+
 @router.get("/calendar/week")
 def calendar(db: Session = Depends(get_db)):
     """放送日历:连载中番剧按星期分组(0=周一 … 6=周日)。"""
@@ -175,11 +219,18 @@ def calendar(db: Session = Depends(get_db)):
             "score": b.score, "eps_total": b.eps_total,
             "ep_start": b.ep_start or 1,   # 放送表按 bangumi 编号显示「第 N 话」
             "air_date": b.air_date,        # 未开播的显示「N月N日开播」
+            "upcoming": _upcoming_this_week(db, b),   # 前瞻:下一话何时更新
             "eps_downloaded": _eps_done(db, b),
             "eps_aired": _eps_aired(db, b),
         }
-        if b.air_weekday is not None:
-            days[b.air_weekday].append(entry)
+        up = entry["upcoming"]
+        wd = b.air_weekday
+        if up and not up.get("over") and up.get("date"):
+            from datetime import date as _date
+            # 按下一话的真实日期归列:延期/特别编排的集落到实际播出的星期
+            wd = _date.fromisoformat(up["date"]).weekday()
+        if wd is not None:
+            days[wd].append(entry)
         else:
             unknown.append(entry)
     return {"days": days, "unknown": unknown}
@@ -240,6 +291,7 @@ def detail(bangumi_id: int, phase: str | None = None, db: Session = Depends(get_
             continue   # 这一集在当前阶段无任何内容 → 不列(正式阶段下面按总集数补缺占位)
         eps_out.append({
             "id": ep.id, "number": ep.number, "type": ep.type.value, "title": ep.title,
+            "air_date": ep.air_date,   # 每集精确放送日(bgm.tv 章节同步)
             "status": current.status.value if current else "missing",
             "version": current.version if current else None,
             "torrent_id": current.id if current else None,
@@ -422,6 +474,87 @@ def batch_delete(payload: dict, db: Session = Depends(get_db)):
         done.append(bid)
     db.commit()
     return {"done": done, "failed": failed}
+
+
+@router.get("/{bangumi_id}/auto-status")
+def auto_status(bangumi_id: int, db: Session = Depends(get_db)):
+    """智能下载当前状态(详情页状态卡):开关/上次扫描摘要/auto 种子分布/缺集与在途。"""
+    from app.services import auto_best
+    b = db.get(Bangumi, bangumi_id)
+    if not b:
+        raise HTTPException(404)
+    # auto 容器订阅的种子按状态分布
+    counts: dict[str, int] = {}
+    auto_sub_id = db.execute(select(Subscription.id).where(
+        Subscription.bangumi_id == b.id,
+        Subscription.mikan_subgroup_id == auto_best.AUTO_SUBGROUP_ID)).scalar_one_or_none()
+    in_flight_eps: set[float] = set()
+    if auto_sub_id:
+        for t in db.execute(select(Torrent).where(
+                Torrent.subscription_id == auto_sub_id)).scalars():
+            counts[t.status.value] = counts.get(t.status.value, 0) + 1
+            if t.status in (TorrentStatus.PENDING, TorrentStatus.DOWNLOADING,
+                            TorrentStatus.COMPLETED):
+                for te in db.execute(select(Episode.number).join(
+                        TorrentEpisode, TorrentEpisode.episode_id == Episode.id)
+                        .where(TorrentEpisode.torrent_id == t.id,
+                               Episode.number.is_not(None))).scalars():
+                    in_flight_eps.add(te)
+    # 缺集(bangumi 编号):区间内没有 active 正片文件的集
+    missing: list = []
+    if b.eps_total and b.kind == Kind.TV:
+        have = {n for n in db.execute(
+            select(Episode.number).join(VideoFile, VideoFile.episode_id == Episode.id)
+            .where(Episode.bangumi_id == b.id, Episode.type == EpisodeType.REGULAR,
+                   VideoFile.is_active.is_(True), Episode.number.is_not(None))
+            .distinct()).scalars()}
+        start = b.ep_start or 1
+        missing = [n for n in range(start, start + b.eps_total) if float(n) not in have]
+    scanning = bool(auto_best.state.get("running")) and (
+        auto_best.state.get("current") == b.title or auto_best.state.get("total", 0) > 1)
+    return {
+        "enabled": bool(b.auto_best),
+        "scanning": scanning,
+        "last_scan_at": b.auto_scan_at.isoformat() + "Z" if b.auto_scan_at else None,
+        "last_result": b.auto_scan_result,
+        "torrents": counts,
+        "missing": missing,
+        "in_flight": sorted(int(n) if float(n).is_integer() else n
+                            for n in in_flight_eps if float(n) in {float(m) for m in missing}),
+    }
+
+
+_related_cache: dict[int, tuple[float, list]] = {}   # subject_id → (ts, data),6h TTL
+
+
+@router.get("/{bangumi_id}/related")
+def related(bangumi_id: int, db: Session = Depends(get_db)):
+    """关联条目(前作/续作/剧场版/OVA,bgm.tv):已入库的带 local_id 直接跳转。"""
+    import time as _time
+    b = db.get(Bangumi, bangumi_id)
+    if not b:
+        raise HTTPException(404)
+    if not b.bgmtv_subject_id:
+        return []
+    cached = _related_cache.get(b.bgmtv_subject_id)
+    if cached and _time.time() - cached[0] < 6 * 3600:
+        rels = cached[1]
+    else:
+        from app.clients.bgmtv import bgmtv_client
+        try:
+            rels = [r for r in bgmtv_client.related_subjects(b.bgmtv_subject_id)
+                    if r.type == 2]   # 只留动画(书籍/音乐等不展示)
+        except Exception as e:  # noqa: BLE001
+            log.warning("关联条目获取失败 %s: %s", b.title, e)
+            return []
+        _related_cache[b.bgmtv_subject_id] = (_time.time(), rels)
+    ids = [r.subject_id for r in rels]
+    local = {row[1]: row[0] for row in db.execute(
+        select(Bangumi.id, Bangumi.bgmtv_subject_id)
+        .where(Bangumi.bgmtv_subject_id.in_(ids))).all()} if ids else {}
+    return [{"subject_id": r.subject_id, "relation": r.relation,
+             "title": r.name_cn or r.name, "image": r.image,
+             "local_id": local.get(r.subject_id)} for r in rels]
 
 
 @router.post("/{bangumi_id}/mark-phase")

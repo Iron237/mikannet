@@ -51,6 +51,7 @@ onMounted(() => {
         <RouterLink to="/" class="nav-item"><Icon name="library" :size="17" /> 番剧库</RouterLink>
         <RouterLink to="/search" class="nav-item"><Icon name="search" :size="17" /> 搜索</RouterLink>
         <RouterLink to="/calendar" class="nav-item"><Icon name="calendar" :size="17" /> 放送表</RouterLink>
+        <RouterLink to="/discover" class="nav-item"><Icon name="zap" :size="17" /> 发现</RouterLink>
         <RouterLink to="/bd" class="nav-item"><Icon name="disc" :size="17" /> BD 收藏</RouterLink>
         <RouterLink to="/subscriptions" class="nav-item"><Icon name="rss" :size="17" /> 订阅管理</RouterLink>
         <RouterLink to="/downloads" class="nav-item">

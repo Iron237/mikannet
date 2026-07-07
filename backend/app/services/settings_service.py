@@ -54,6 +54,9 @@ EDITABLE: dict[str, tuple[str, type, bool]] = {
     "bd_owned_host_root": ("播放", str, False),
     "data_host_root": ("播放", str, False),
     "powerdvd_path": ("播放", str, False),
+    # bgm.tv 联动
+    "bgmtv_access_token": ("bgm.tv 联动", str, True),
+    "bgmtv_sync_progress": ("bgm.tv 联动", bool, False),
     # AniDB(剧集级元数据)
     "anidb_enabled": ("AniDB", bool, False),
     "anidb_client_name": ("AniDB", str, False),

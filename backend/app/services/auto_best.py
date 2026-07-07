@@ -312,6 +312,10 @@ def run_scan(bangumi_ids: list[int], do_fill: bool = True, do_upgrade: bool = Tr
                 except Exception as e:  # noqa: BLE001 — 单部失败不拖垮整批
                     log.exception("智能扫描 #%s 失败", bid)
                     r = {"bangumi": bid, "error": str(e)}
+                # 摘要落库:详情页「智能下载状态」卡展示上次扫描时间与结果
+                from datetime import datetime, timezone
+                b.auto_scan_at = datetime.now(timezone.utc)
+                b.auto_scan_result = {k: v for k, v in r.items() if k != "picked"}
             state["result"].append(r)
             state["done"] += 1
     except Exception as e:  # noqa: BLE001

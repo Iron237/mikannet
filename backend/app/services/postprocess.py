@@ -166,6 +166,14 @@ def process_torrent(db: Session, torrent_id: int) -> None:
 
     for ep_id in touched_eps:
         _apply_version_switch(db, ep_id)
+    if touched_eps:
+        try:
+            # bgm.tv 收视进度回写(可选,后台线程):追番下载入库 → 标「在看」+集「看过」。
+            # 只挂 RSS/智能下载的后处理;本地导入旧库不回写(下载≠看过)。
+            from app.services.bgm_sync import report_progress
+            report_progress(t.subscription.bangumi_id, list(touched_eps))
+        except Exception:  # noqa: BLE001
+            pass
 
     if failures:
         t.error_message = f"{failures} 个文件探测失败,可重试"
