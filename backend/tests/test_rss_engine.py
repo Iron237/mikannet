@@ -121,6 +121,27 @@ def test_episode_offset_autodetect(db, sub):
     assert t2.episodes[0].number == 2.0
 
 
+def test_ep_start_continuous_numbering(db, sub):
+    """bangumi 连续编号续作(第2期章节 13-25,ep_start=13):
+    字幕组随 bangumi 编号 13 → 原样落第 13 话(不误偏移);
+    另一订阅按季内 01 计数 → 负偏移抬到 13,与前者同集去重。"""
+    b = sub.bangumi
+    b.eps_total = 13
+    b.ep_start = 13
+    db.flush()
+    t = rss_engine.process_item(db, sub, item("g1", "[字幕组] 测试番剧 - 13 [1080p]"))
+    assert t.status == TorrentStatus.DOWNLOADING
+    assert sub.episode_offset == 0
+    assert t.episodes[0].number == 13.0
+
+    s2 = Subscription(bangumi_id=b.id, mikan_subgroup_id="2", save_path="/downloads/测试番剧",
+                      include_keywords=[], exclude_keywords=[], exclude_batch=True)
+    db.add(s2); db.flush()
+    t2 = rss_engine.process_item(db, s2, item("g2", "[季内组] 测试番剧 - 01 [1080p]"))
+    assert s2.episode_offset == -12
+    assert t2.episodes[0].number == 13.0   # 映射到同一话(bangumi 编号)
+
+
 def test_preview_and_official_separate_streams(db, sub):
     """先行 ep8 与正式 ep8 是两条独立流:互不去重,各自入库;同阶段内仍去重。"""
     prev = rss_engine.process_item(db, sub, item("p1", "[字幕组] 测试番剧 - 08 [先行版][1080p]"))

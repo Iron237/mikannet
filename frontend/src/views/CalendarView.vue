@@ -39,7 +39,9 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisible))
               <div class="cal-title">{{ b.title }}</div>
               <div class="muted cal-eps">
                 <template v-if="b.eps_aired != null">
-                  <span :title="`本周更新到第 ${b.eps_aired} 集`">第 {{ b.eps_aired }} 集</span>
+                  <!-- 集数按 bangumi 编号显示(续作从上季续数:第2期更新到第13话而非第1话) -->
+                  <span :title="`本周更新到第 ${(b.ep_start || 1) + b.eps_aired - 1} 话`">
+                    第 {{ (b.ep_start || 1) + b.eps_aired - 1 }} 话</span>
                   · 已下载 {{ b.eps_downloaded }}
                   <span v-if="b.eps_aired > b.eps_downloaded" class="new-ep" title="有未下载的新集">● 新集</span>
                 </template>

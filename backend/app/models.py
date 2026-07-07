@@ -80,6 +80,10 @@ class Bangumi(Base):
     summary: Mapped[str | None] = mapped_column(Text)
     score: Mapped[float | None] = mapped_column(Float)
     eps_total: Mapped[int | None] = mapped_column(Integer)
+    # bangumi(bgm.tv)首话编号:续作常从上季续数(第2期章节 13-25 → ep_start=13)。
+    # 字幕组发布随 bgm.tv 编号 → Episode.number 一律存 bangumi 编号(13-25),
+    # 展示直接用;Jellyfin SxxExx 整理时再换算回季内序(number-ep_start+1)。可手改。
+    ep_start: Mapped[int] = mapped_column(Integer, default=1)
     airing_status: Mapped[AiringStatus] = mapped_column(Enum(AiringStatus),
                                                         default=AiringStatus.AIRING)
     poster_path: Mapped[str | None] = mapped_column(String(512))    # 本地缓存相对路径

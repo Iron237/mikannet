@@ -107,18 +107,30 @@ def _effective_episodes(sub: Subscription, numbers: list[float]) -> list[float]:
 
 
 def _auto_detect_offset(db: Session, sub: Subscription, parsed: ParsedTitle) -> None:
-    """集数 > 总集数时自动推断偏移(如二季 25-48 / 全 24 集 → 偏移 24)。可手动改写。"""
+    """集号落在 bangumi 编号区间 [ep_start, ep_start+总集数-1] 之外时自动推断偏移。可手动改写。
+
+    Episode.number 一律存 bangumi 编号(bgm.tv 章节话数,续作常从上季续数,如第2期 13-25):
+    - 字幕组随 bangumi 连续编号(13-25)→ 落在区间内,无偏移(最常见)
+    - 字幕组仍连续但 bangumi 从 1 数(区间 1-24 来了 25)→ 正偏移拉回区间
+    - 字幕组按季内 01-13 计数而 bangumi 从 13 数 → 负偏移抬到区间(canonical = n + ep_start - 1)
+    """
     if sub.episode_offset or not parsed.episodes:
         return
-    total = sub.bangumi.eps_total
+    b = sub.bangumi
+    total = b.eps_total
     if not total or total <= 0:
         return
+    start = b.ep_start or 1
     n = min(parsed.episodes)
-    if n > total:
-        sub.episode_offset = int((n - 1) // total) * total
-        db.flush()
-        log.info("订阅 %s 自动检测集数偏移 = %s(集号 %s > 总集数 %s)",
-                 sub.id, sub.episode_offset, n, total)
+    if n > start + total - 1:
+        sub.episode_offset = int((n - start) // total) * total
+    elif start > 1 and max(parsed.episodes) < start:
+        sub.episode_offset = -(start - 1)
+    else:
+        return
+    db.flush()
+    log.info("订阅 %s 自动检测集数偏移 = %s(集号 %s,bangumi 编号区间 %s-%s)",
+             sub.id, sub.episode_offset, n, start, start + total - 1)
 
 
 def _ensure_episodes(db: Session, bangumi_id: int, numbers: list[float]) -> list[Episode]:

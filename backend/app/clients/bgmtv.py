@@ -81,6 +81,25 @@ class BgmtvClient:
             summary=d.get("summary") or None,
             cover_url=(d.get("images") or {}).get("large"))
 
+    def first_ep_sort(self, subject_id: int) -> int | None:
+        """本篇(type=0)首话的 sort(bgm.tv 章节列表显示的话数)。
+
+        续作条目常从上季续数(第2期章节列表 13-25 → 返回 13);从 1 数则返回 1。
+        取不到(无章节/异常结构)→ None,调用方按 1 处理。"""
+        with make_client("bgmtv", headers=UA) as c:
+            r = c.get(f"{API}/v0/episodes",
+                      params={"subject_id": subject_id, "type": 0, "limit": 1, "offset": 0})
+            r.raise_for_status()
+            data = (r.json() or {}).get("data") or []
+        if not data:
+            return None
+        sort = data[0].get("sort") or data[0].get("ep")
+        try:
+            n = int(float(sort))
+            return n if n >= 1 else None
+        except (TypeError, ValueError):
+            return None
+
     def search(self, keyword: str, limit: int = 6) -> list[BgmtvSearchResult]:
         """搜动画条目。v0 模糊搜索优先(中日文命中好),空则退 legacy(对罗马音/别名更宽)。"""
         out = self._search_v0(keyword, limit)

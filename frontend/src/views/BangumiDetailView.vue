@@ -192,6 +192,15 @@ async function saveSeason() {
   finally { savingSeason.value = false }
 }
 
+const savingEpStart = ref(false)
+async function saveEpStart() {
+  savingEpStart.value = true
+  try {
+    await api.patch(`/api/bangumi/${b.value.id}`, { ep_start: b.value.ep_start })
+    await load()   // 剧集占位区间随 ep_start 变化,重载
+  } finally { savingEpStart.value = false }
+}
+
 // 形态手动覆盖(始终优先):元数据把电影/OVA 误判成 TV 时,一键改正,详情页布局随之切换
 async function saveKind() {
   await api.patch(`/api/bangumi/${b.value.id}`, { kind: b.value.kind })
@@ -281,6 +290,12 @@ onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
             <span class="muted" style="font-size: 12px;">
               {{ savingSeason ? '保存中…' : '整理重命名用(SxxExx)' }}
             </span>
+            <span class="muted" style="font-size: 12.5px; margin-left: 6px;"
+                  title="bangumi 章节首话编号:续作常从上季续数(第2期 13-25 → 填13),字幕组发布随此编号">
+              首话编号</span>
+            <input type="number" min="1" class="input" style="width: 64px;"
+                   v-model.number="b.ep_start" @change="saveEpStart" />
+            <span v-if="savingEpStart" class="muted" style="font-size: 12px;">保存中…</span>
           </div>
           <div class="row" style="margin-top: 14px; flex-wrap: wrap;">
             <button class="btn primary" @click="showWizard = true"><Icon name="plus" /> 添加订阅</button>

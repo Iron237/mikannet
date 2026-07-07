@@ -41,15 +41,20 @@ def match_aid(db: Session, b: Bangumi, auto_bind: bool = True) -> int | None:
 
 def _upsert_episode(db: Session, b: Bangumi, ae: anidb.AnidbEpisode) -> None:
     et = EpisodeType(ae.type) if ae.type in EpisodeType._value2member_map_ else EpisodeType.REGULAR
+    # AniDB 正片按季内 1..N 计数;本地 Episode.number 存 bangumi 编号(续作从上季续数)
+    # → 正片集号平移 ep_start-1(第2期 AniDB ep1 → 本地 第13话),否则同一集分裂成两行
+    number = ae.number
+    if et == EpisodeType.REGULAR and number is not None and (b.ep_start or 1) > 1:
+        number = number + (b.ep_start - 1)
     # 先按 anidb_eid;再按 (type, number) 回填既有(下载已建但没绑 AniDB 的)
     ep = db.execute(select(Episode).where(Episode.anidb_eid == ae.eid)).scalar_one_or_none()
     if ep is None:
         q = select(Episode).where(Episode.bangumi_id == b.id, Episode.type == et)
-        q = q.where(Episode.number == ae.number) if ae.number is not None \
+        q = q.where(Episode.number == number) if number is not None \
             else q.where(Episode.number.is_(None))
         ep = db.execute(q).scalars().first()
     if ep is None:
-        ep = Episode(bangumi_id=b.id, type=et, number=ae.number)
+        ep = Episode(bangumi_id=b.id, type=et, number=number)
         db.add(ep)
     ep.anidb_eid = ae.eid
     if ae.title and not ep.title:     # 不覆盖已有(可能是用户/其他源填的)

@@ -138,6 +138,24 @@ def test_active_occupant_not_evicted(db, tmp_path):
     assert (tmp_path / rel2).exists()
 
 
+def test_ep_start_renames_to_seasonal_number(db, tmp_path):
+    """bangumi 连续编号(第2期 ep_start=13):第 13 话整理成季内序 S02E01(Jellyfin 口径)。"""
+    t, vf, rel = _scaffold(db, orig="[组] Test - 13 [1080p].mkv")
+    b = t.subscription.bangumi
+    b.season_number = 2
+    b.ep_start = 13
+    ep = db.get(Episode, vf.episode_id)
+    ep.number = 13.0
+    db.flush()
+    (tmp_path / "测试番").mkdir(parents=True)
+    (tmp_path / rel).write_bytes(b"data")
+
+    organize.organize_torrent(db, t)
+
+    assert vf.relative_path == "测试番/Season 02/测试番 S02E01.mkv"
+    assert (tmp_path / vf.relative_path).exists()
+
+
 def test_idempotent_already_organized(db, tmp_path):
     """已在 Season 里的文件再整理一次 → 不动(幂等)。"""
     t, vf, _ = _scaffold(db, orig="测试番 S01E05.mkv")

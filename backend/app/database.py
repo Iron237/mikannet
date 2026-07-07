@@ -94,6 +94,7 @@ def _migrate_columns() -> None:
         "bangumi": [("air_weekday", "INTEGER"),
                     ("air_date", "VARCHAR(32)"),
                     ("season_number", "INTEGER DEFAULT 1"),
+                    ("ep_start", "INTEGER DEFAULT 1"),   # bangumi 首话编号(续作连续计数)
                     ("anidb_aid", "INTEGER"),
                     ("anidb_synced_at", "DATETIME"),
                     ("kind", "VARCHAR(8) DEFAULT 'TV'"),   # SQLAlchemy 存 Enum 名:TV/MOVIE/OVA

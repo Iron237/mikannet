@@ -140,7 +140,12 @@ def organize_torrent(db: Session, t: Torrent) -> None:
             continue
         season_n = (b.season_number or 1) if ep.type == EpisodeType.REGULAR else 0
         ext = Path(vf.relative_path).suffix
-        new_name = f"{show} S{season_n:02d}E{_epfmt(ep.number)}{ext}"
+        # Episode.number 存 bangumi 编号(续作从上季续数,如 13-25);Jellyfin 的 SxxExx
+        # 按季内序 → 正片换算回 number - (ep_start-1)(第13话/ep_start=13 → S02E01)
+        ep_n = ep.number
+        if ep.type == EpisodeType.REGULAR and (b.ep_start or 1) > 1 and ep_n is not None:
+            ep_n = ep_n - (b.ep_start - 1)
+        new_name = f"{show} S{season_n:02d}E{_epfmt(ep_n)}{ext}"
         # 先行(抢先版)单独归到「先行版」子目录(不进 Season,Jellyfin 不当正片集扫描);
         # 正式版照常落 Season SS。同集先行/正式各留一份,互不覆盖。
         new_rel_sp = (f"先行版/{new_name}" if t.is_preview

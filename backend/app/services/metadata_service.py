@@ -117,6 +117,13 @@ def enrich_bangumi(db: Session, bangumi: Bangumi,
             bangumi.summary = s.summary
             bangumi.score = s.score
             bangumi.eps_total = s.eps
+            try:
+                # 首话编号:续作从上季续数(第2期章节 13-25 → ep_start=13),字幕组随此编号。
+                # 失败不覆盖(保留默认 1 或已有手改值)。
+                if start := bgmtv_client.first_ep_sort(subject_id):
+                    bangumi.ep_start = start
+            except Exception as e:  # noqa: BLE001
+                log.warning("bgm.tv 首话编号获取失败 subject=%s: %s", subject_id, e)
             bangumi.airing_status = _infer_airing_status(s.date, s.eps)
             # 形态:AniDB 已绑时由 AniDB 同步主导(更可靠),否则用 bgm.tv platform 推
             if not bangumi.anidb_aid:

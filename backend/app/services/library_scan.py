@@ -136,14 +136,17 @@ def _map_episode(db, b: Bangumi, t: Torrent, p) -> int | None:
         if len(p.episodes) != 1 or p.episodes[0] <= 0:
             return None       # 解析不出单集 → 留作「其他文件」
         number = p.episodes[0]
-        # 跨季连续编号兜底(与 postprocess._match_episode 对齐):库里留的原始发布名
-        # (如「- 25」)超过总集数、且该番剧订阅带集数偏移 → 换算回季内集号,
-        # 否则与 RSS 路径登记的同一集会分裂成两个 Episode(25 与 1)。
-        # 已整理名(S01E05)集号 ≤ 总集数,不受影响。
-        if b.eps_total and number > b.eps_total:
+        # 集号统一到 bangumi 编号区间 [ep_start, ep_start+总集数-1]:
+        # - 原始发布名(如「- 25」)超区间上限且订阅带正偏移 → 减偏移换算
+        # - 已整理名(SxxExx 是季内序)/字幕组季内计数,低于 ep_start → 平移抬进区间
+        # 否则与 RSS 路径登记的同一集会分裂成两个 Episode。
+        start = b.ep_start or 1
+        if b.eps_total and number > start + b.eps_total - 1:
             off = max((s.episode_offset or 0) for s in b.subscriptions) if b.subscriptions else 0
-            if off and number - off >= 1:
+            if off > 0 and number - off >= start:
                 number -= off
+        elif start > 1 and number < start:
+            number += start - 1
     else:
         number = p.episodes[0] if len(p.episodes) == 1 else None
     q = select(Episode).where(Episode.bangumi_id == b.id, Episode.type == ep_type)

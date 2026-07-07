@@ -36,11 +36,13 @@ def _active_bd_regular_eps(db: Session, bangumi_id: int) -> set[int]:
 
 
 def bd_complete(db: Session, b: Bangumi) -> bool:
-    """全 BD 完成判据:eps_total 已知 且 正片 1..N 每一集都有 is_active 的 BD 文件。"""
+    """全 BD 完成判据:eps_total 已知 且 正片每一集(bangumi 编号 ep_start..ep_start+N-1)
+    都有 is_active 的 BD 文件。"""
     if not b.eps_total:
         return False
     have = _active_bd_regular_eps(db, b.id)
-    return all(n in have for n in range(1, b.eps_total + 1))
+    start = b.ep_start or 1
+    return all(n in have for n in range(start, start + b.eps_total))
 
 
 def _real_subs(db: Session, bangumi_id: int) -> list[Subscription]:

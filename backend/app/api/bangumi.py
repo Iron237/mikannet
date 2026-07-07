@@ -120,14 +120,17 @@ def _eps_aired(db: Session, b: Bangumi) -> int | None:
     """
     if not b.eps_total or b.kind != Kind.TV:
         return None
-    seen = 0
+    start = b.ep_start or 1
+    seen = 0   # 已播「第几集」(数量口径,1..eps_total)
     rows = db.execute(
-        select(Torrent.parsed_json).join(Subscription, Torrent.subscription_id == Subscription.id)
-        .where(Subscription.bangumi_id == b.id)).scalars().all()
-    for pj in rows:
+        select(Torrent.parsed_json, Subscription.episode_offset)
+        .join(Subscription, Torrent.subscription_id == Subscription.id)
+        .where(Subscription.bangumi_id == b.id)).all()
+    for pj, offset in rows:
         for e in (pj or {}).get("episodes") or []:
             try:
-                seen = max(seen, int(float(e)))
+                # 原始集号 → bangumi 编号(减订阅偏移)→ 数量口径(减 ep_start-1)
+                seen = max(seen, int(float(e)) - (offset or 0) - (start - 1))
             except (TypeError, ValueError):
                 continue
     if seen == 0:
@@ -164,6 +167,7 @@ def calendar(db: Session = Depends(get_db)):
         entry = {
             "id": b.id, "title": b.title, "poster": _poster_url(b),
             "score": b.score, "eps_total": b.eps_total,
+            "ep_start": b.ep_start or 1,   # 放送表按 bangumi 编号显示「第 N 话」
             "eps_downloaded": _eps_done(db, b),
             "eps_aired": _eps_aired(db, b),
         }
@@ -230,7 +234,9 @@ def detail(bangumi_id: int, phase: str | None = None, db: Session = Depends(get_
     if not want_preview and b.eps_total and b.kind == Kind.TV:
         regular = [e for e in eps_out if e["type"] == "regular"]
         others = [e for e in eps_out if e["type"] != "regular"]
-        for n in range(1, b.eps_total + 1):
+        # 占位区间用 bangumi 编号(续作 ep_start=13 → 铺 13-25,而非永远等不来的 1-12)
+        _start = b.ep_start or 1
+        for n in range(_start, _start + b.eps_total):
             if float(n) not in known_numbers:
                 regular.append({"id": None, "number": float(n), "type": "regular", "title": None,
                                 "status": "missing", "version": None,
@@ -263,6 +269,7 @@ def detail(bangumi_id: int, phase: str | None = None, db: Session = Depends(get_
         "anidb_aid": b.anidb_aid,
         "anidb_synced_at": b.anidb_synced_at.isoformat() if b.anidb_synced_at else None,
         "season_number": b.season_number or 1,
+        "ep_start": b.ep_start or 1,
         "auto_best": b.auto_best, "bd_owned": b.bd_owned,
         "air_date": b.air_date,
         "phase": phase, "has_preview": has_preview, "has_official": has_official,
@@ -411,6 +418,11 @@ def update_bangumi(bangumi_id: int, payload: dict, db: Session = Depends(get_db)
             b.season_number = max(0, int(payload["season_number"]))
         except (TypeError, ValueError):
             raise HTTPException(400, "season_number 非法") from None
+    if "ep_start" in payload:
+        try:
+            b.ep_start = max(1, int(payload["ep_start"]))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "ep_start 非法") from None
     if "kind" in payload:
         try:
             b.kind = Kind(str(payload["kind"]).lower())
