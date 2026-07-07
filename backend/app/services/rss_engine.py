@@ -60,15 +60,23 @@ def _dedup_verdict(db: Session, sub: Subscription, parsed: ParsedTitle,
             Torrent.is_preview.is_(is_preview),
             Torrent.status.notin_([TorrentStatus.SKIPPED, TorrentStatus.SUBMIT_FAILED]))
     ).scalars().all()
-    covering = [t for t in rows
-                if (existing := set((t.parsed_json or {}).get("episodes") or []))
-                and ep_set <= existing]
-    if not covering:
-        return True, ""
-    best = max(covering, key=lambda t: t.version)
-    if parsed.version > best.version:
-        return True, ""                # v2 路径:严格高于已有最高版本才接受
-    return False, f"重复(已有 #{best.id} v{best.version} 覆盖集 {sorted(ep_set)})"
+    # 按集取并集:每集记录已有的最高版本。曾要求「单个既有种子」覆盖全部集号,
+    # 逐集追完的番来一个 [01-12] 合集时没有任何单种子能覆盖 → 合集被判「新」整季重下
+    # (完结时 lifecycle 自动放开 exclude_batch,该路径系统自己就会走到)。
+    best_ver: dict = {}       # 集号 → 已有最高版本
+    best_row: dict = {}       # 集号 → 该版本对应种子(报因用)
+    for t in rows:
+        for e in (t.parsed_json or {}).get("episodes") or []:
+            if e in ep_set and t.version > best_ver.get(e, 0):
+                best_ver[e] = t.version
+                best_row[e] = t
+    fresh = [e for e in ep_set
+             if best_ver.get(e, 0) == 0 or parsed.version > best_ver[e]]
+    if fresh:
+        return True, ""       # 有未覆盖的集,或本条对某集是更高版本(v2)
+    owners = {best_row[e].id for e in ep_set}
+    return False, (f"重复(已有 #{'/#'.join(str(i) for i in sorted(owners))} "
+                   f"合计覆盖集 {sorted(ep_set)},版本不低于本条 v{parsed.version})")
 
 
 # ---- 剧集行 -------------------------------------------------------------------

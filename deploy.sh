@@ -14,7 +14,13 @@ elif command -v docker-compose >/dev/null 2>&1; then DC="docker-compose"
 else echo "✗ 未找到 docker compose 插件"; exit 1; fi
 
 FILES="-f docker-compose.yml"
-[ "${1:-}" = "local" ] && FILES="$FILES -f docker-compose.local.yml"
+# COMPOSE_FILES_LIST:把本次的 -f 文件表透传给容器(MIKANNET_COMPOSE_FILES),
+# 完整自更新的 helper 重建时带同一组 -f,避免 override(local 卷定义)被丢
+export COMPOSE_FILES_LIST="docker-compose.yml"
+if [ "${1:-}" = "local" ]; then
+  FILES="$FILES -f docker-compose.local.yml"
+  export COMPOSE_FILES_LIST="docker-compose.yml,docker-compose.local.yml"
+fi
 
 case "${1:-up}" in
   down) $DC $FILES down; exit 0 ;;

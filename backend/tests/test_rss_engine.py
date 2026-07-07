@@ -87,6 +87,19 @@ def test_batch_excluded_then_allowed(db, sub):
     assert len(t.episodes) == 12   # 合集展开 01-12
 
 
+def test_batch_deduped_by_union_of_singles(db, sub):
+    """逐集下完后来合集:多个单集的并集已覆盖 → 跳过(曾因只查单种子覆盖被判「新」整季重下)。"""
+    for i in (1, 2, 3):
+        t = rss_engine.process_item(db, sub, item(f"s{i}", f"[字幕组] 测试番剧 - 0{i} [1080p]"))
+        assert t.status == TorrentStatus.DOWNLOADING
+    sub.exclude_batch = False   # 完结后 lifecycle 自动放开合集
+    batch = rss_engine.process_item(db, sub, item("b1", "[字幕组] 测试番剧 [01-03 合集][1080p]"))
+    assert batch.status == TorrentStatus.SKIPPED
+    # 合集含未覆盖的集(04)→ 仍接受
+    batch2 = rss_engine.process_item(db, sub, item("b2", "[字幕组] 测试番剧 [01-04 合集][1080p]"))
+    assert batch2.status == TorrentStatus.DOWNLOADING
+
+
 def test_filter_keywords(db, sub):
     sub.include_keywords = ["1080"]
     sub.exclude_keywords = ["720"]

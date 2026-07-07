@@ -75,8 +75,11 @@ class RssItem:
 
 
 class MikanClient:
-    def __init__(self) -> None:
-        self.base = settings.mikan_base_url.rstrip("/")
+    @property
+    def base(self) -> str:
+        # 实时读设置:单例在 load_overrides() 之前就构造,且设置页可随时改域名(镜像切换)。
+        # 构造期缓存会导致改域名永不生效(请求打旧域名)。
+        return settings.mikan_base_url.rstrip("/")
 
     def search(self, keyword: str):
         from app.parsers.mikan_html import parse_search

@@ -84,6 +84,60 @@ def test_managed_torrent_uses_downloader(db, monkeypatch):
     assert vf.original_name == "[组] Test - 05 [1080p].mkv"
 
 
+def test_evicts_inactive_old_version_on_collision(db, tmp_path):
+    """Web→BD 升级:旧 Web 文件(已失活)占着 Season 目标 → 挪去 旧版本/ 让位,BD 进 Season。
+    曾因撞名被吞成 warning,BD 永远进不了 Season,Jellyfin 一直播旧版。"""
+    t_old, vf_old, rel_old = _scaffold(db, orig="[Web组] Test - 05 [1080p].mkv")
+    (tmp_path / "测试番").mkdir(parents=True)
+    (tmp_path / rel_old).write_bytes(b"web")
+    organize.organize_torrent(db, t_old)                    # 旧 Web 先整理占位
+    assert vf_old.relative_path == "测试番/Season 01/测试番 S01E05.mkv"
+
+    # BD 到来:同集另一种子;版本切换把旧 Web 置 0
+    ep_id = vf_old.episode_id
+    sub_id = t_old.subscription_id
+    t_bd = Torrent(subscription_id=sub_id, guid="g2", title_raw="bd", torrent_url="",
+                   status=TorrentStatus.ARCHIVED, parsed_json={})
+    db.add(t_bd); db.flush()
+    rel_bd = "测试番/[BD组] Test - 05 [BDRip].mkv"
+    vf_bd = VideoFile(torrent_id=t_bd.id, episode_id=ep_id, relative_path=rel_bd,
+                      is_active=True, source="BD")
+    db.add(vf_bd)
+    vf_old.is_active = False
+    db.flush()
+    (tmp_path / rel_bd).write_bytes(b"bd")
+
+    organize.organize_torrent(db, t_bd)
+
+    assert vf_bd.relative_path == "测试番/Season 01/测试番 S01E05.mkv"
+    assert (tmp_path / vf_bd.relative_path).read_bytes() == b"bd"
+    assert vf_old.relative_path == "测试番/旧版本/[Web组] Test - 05 [1080p].mkv"
+    assert (tmp_path / vf_old.relative_path).read_bytes() == b"web"
+
+
+def test_active_occupant_not_evicted(db, tmp_path):
+    """目标被「活跃」文件占用(防御分支)→ 不动旧文件,新文件跳过整理。"""
+    t_old, vf_old, rel_old = _scaffold(db, orig="[A组] Test - 05.mkv")
+    (tmp_path / "测试番").mkdir(parents=True)
+    (tmp_path / rel_old).write_bytes(b"a")
+    organize.organize_torrent(db, t_old)
+
+    t2 = Torrent(subscription_id=t_old.subscription_id, guid="g3", title_raw="y",
+                 torrent_url="", status=TorrentStatus.ARCHIVED, parsed_json={})
+    db.add(t2); db.flush()
+    rel2 = "测试番/[B组] Test - 05.mkv"
+    vf2 = VideoFile(torrent_id=t2.id, episode_id=vf_old.episode_id,
+                    relative_path=rel2, is_active=True)
+    db.add(vf2); db.flush()          # 两个都 active(异常态)
+    (tmp_path / rel2).write_bytes(b"b")
+
+    organize.organize_torrent(db, t2)
+
+    assert vf_old.relative_path == "测试番/Season 01/测试番 S01E05.mkv"   # 原地不动
+    assert vf2.relative_path == rel2                                      # 跳过未整理
+    assert (tmp_path / rel2).exists()
+
+
 def test_idempotent_already_organized(db, tmp_path):
     """已在 Season 里的文件再整理一次 → 不动(幂等)。"""
     t, vf, _ = _scaffold(db, orig="测试番 S01E05.mkv")

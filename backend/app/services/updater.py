@@ -160,15 +160,20 @@ def _write_pending(prev: str | None, new: str) -> None:
 
 
 def _safe_extract(data: bytes, dest: Path) -> None:
-    """解压 tar.gz 到 dest(防路径穿越)。"""
+    """解压 tar.gz 到 dest(防路径穿越)。
+
+    除前缀校验外一律拒绝链接成员:先放「指向卷外的符号链接」再放「穿过它的普通文件」
+    可绕过提取前的一次性校验(经典 tar 逃逸)。代码包由 CI 生成,本就不含链接。"""
     dest.mkdir(parents=True, exist_ok=True)
     dest_resolved = dest.resolve()
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
         for m in tar.getmembers():
+            if m.issym() or m.islnk():
+                raise RuntimeError(f"代码包含链接成员(不允许): {m.name}")
             target = (dest / m.name).resolve()
             if not str(target).startswith(str(dest_resolved)):
                 raise RuntimeError(f"代码包含非法路径: {m.name}")
-        tar.extractall(dest)   # noqa: S202 — 已逐成员校验路径
+        tar.extractall(dest)   # noqa: S202 — 已逐成员校验路径且无链接成员
 
 
 def _download(url: str) -> bytes:
@@ -239,6 +244,12 @@ def apply_code(manifest: dict) -> None:
         tmp.rename(rel)
 
         prev = _current_version_name()
+        # 二次核验:下载/解压耗时里可能有新开始的移文件操作(入口只查过一次)。
+        # 切换后就要自杀重启,硬中断移文件会留半套文件;此刻中止零副作用
+        # (解压好的 release 目录留着,下次重试直接覆盖)。
+        reason = update_gate.busy_reason()
+        if reason:
+            raise RuntimeError(f"{reason}(更新已在切换前中止,未产生影响,稍后重试即可)")
         _write_pending(prev, version)
         _point_current(version)            # 原子切换
 
@@ -252,6 +263,32 @@ def apply_code(manifest: dict) -> None:
 
 
 # --- 应用:完整(换镜像)----------------------------------------------------------------
+_FULL_UPDATE_TIMEOUT = 600.0   # helper 拉镜像+重建的宽限(秒);超时本进程还活着 = helper 失败
+
+
+def _arm_full_update_watchdog(timeout: float = _FULL_UPDATE_TIMEOUT) -> None:
+    """helper 成功会重建本容器(本进程消失);超时还活着说明 helper 静默失败
+    (镜像拉取失败 / GHCR 权限 / compose 目录不对等,helper 是脱管异步执行,
+    run_compose_recreate 只保证「请求已发出」)。若不自愈,updating 标记会让
+    全站写请求永久 503 且无任何提示。"""
+    def _watch():
+        time.sleep(timeout)
+        if not update_gate.is_updating():
+            return                       # 已被其他路径复位
+        update_gate.set_updating(False)
+        try:
+            from app import scheduler
+            scheduler.resume_after_failed_update()
+        except Exception as e:  # noqa: BLE001
+            log.warning("恢复调度失败: %s", e)
+        _set_status(phase="error", error=(
+            f"完整更新未生效:helper 在 {int(timeout)} 秒内没有重建容器"
+            "(常见原因:镜像拉取失败 / GHCR 包不可见 / compose 目录配置不对)。"
+            "已解除更新锁,应用恢复可用,可查看 Docker 日志后重试。"))
+        log.error("完整更新 watchdog:helper 未在 %ss 内重建容器,已解除 updating 锁", timeout)
+    threading.Thread(target=_watch, daemon=True).start()
+
+
 def apply_full(manifest: dict) -> None:
     """经 docker socket 启 helper 跑 `compose up -d` 换镜像重建本容器。"""
     from app.services import docker_api
@@ -279,9 +316,12 @@ def apply_full(manifest: dict) -> None:
             host_compose_dir=settings.compose_host_dir,
             project=settings.compose_project,
             image_ref=image_ref,
+            compose_files=settings.compose_files,
         )
         _set_status(phase="restarting", message="helper 正在重建容器…", progress=100)
-        # helper 会重建本容器(杀死自己),无需自行退出
+        # helper 会重建本容器(杀死自己),无需自行退出;
+        # 但 helper 是脱管异步的 —— 静默失败时靠 watchdog 解锁自愈(否则写请求永久 503)
+        _arm_full_update_watchdog()
     except Exception as e:  # noqa: BLE001
         update_gate.set_updating(False)
         _set_status(phase="error", error=str(e))

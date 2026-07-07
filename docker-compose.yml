@@ -43,6 +43,9 @@ services:
       # 完整更新(换镜像):helper 需要 compose 项目名 + 宿主上的 compose 目录(daemon 视角)
       MIKANNET_COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME:-rssvideo}
       MIKANNET_COMPOSE_HOST_DIR: ${PWD}
+      # 部署带 override 时(deploy.sh local)在此透传同一组 -f 文件(逗号分隔),
+      # 否则 helper 重建只按默认发现基础文件 → 卷定义与原部署漂移
+      MIKANNET_COMPOSE_FILES: ${COMPOSE_FILES_LIST:-}
       # 本地导入源的主机路径前缀(用于把粘贴的 Win/NAS 路径翻译成容器内 /import、/import-nas)
       MIKANNET_IMPORT_WIN_HOST: ${LOCAL_IMPORT_PATH:-./import}
       MIKANNET_IMPORT_NAS_HOST: ${NAS_IMPORT_PATH:-//192.168.2.4/Minecraft 独行侠/番剧}

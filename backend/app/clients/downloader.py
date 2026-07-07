@@ -25,6 +25,9 @@ class DlTask:
     peers: int = 0       # 已连接下载者数
     done: bool = False   # 已完成(可进入后处理)
     error: bool = False  # 出错
+    # 状态语义由各后端归一化(原始 state 串两后端拼写完全不同,调用方勿直接比对):
+    paused: bool = False     # 用户/下载器主动暂停 → 不参与坏种/无进度判定(防误删丢数据)
+    dl_active: bool = False  # 确认处于下载中类状态 → 才做坏种/无进度判定;也是错误任务自愈依据
 
 
 class Downloader:

@@ -21,12 +21,9 @@ log = logging.getLogger(__name__)
 
 ACTIVE_INTERVAL = 2
 IDLE_INTERVAL = 10
-# 下载器侧「活跃下载」状态:错误任务若在 qB 恢复成这些状态 → 自愈回 DOWNLOADING
-# (pausedDL/stoppedDL 不在内 → 无进度暂停的任务保持暂停,不被自愈打回)
-_RECOVER_DL_STATES = {"downloading", "stalledDL", "metaDL", "forcedDL", "forcedMetaDL",
-                      "queuedDL", "checkingDL", "allocating"}
-# 用户/qB 主动暂停的状态:不能按「坏种/无进度」处理(否则人工暂停的种子会被自动删除丢数据)
-_PAUSED_STATES = {"pausedDL", "stoppedDL", "pausedUP", "stoppedUP"}
+# 暂停/下载中的判定用 DlTask 的归一化布尔(lt.paused / lt.dl_active),由各后端自己算:
+# 曾在此用 qB 专有状态串集合比对,BitComet 后端的状态串永远匹配不上 → 手动暂停的任务
+# 被当「坏种」超时后连文件一起删(数据丢失)。见 clients/qbittorrent.py、bitcomet.py。
 
 
 class WsManager:
@@ -163,8 +160,10 @@ def _sync_once() -> tuple[list[dict], bool]:
                     log.info("下载完成 #%s %s", t.id, t.title_raw[:50])
                     _emit("on_complete", t)
                     to_enqueue.append(t.id)
-                elif lt.state in _PAUSED_STATES:
-                    # 人工/qB 暂停:既非坏种也非无进度,清计时(防恢复后被立即误删),本轮不算活动
+                elif lt.paused or not lt.dl_active:
+                    # 人工暂停,或后端状态识别不出(非确认下载中):既非坏种也非无进度,
+                    # 清计时(防恢复后被立即误删),本轮不算活动。保守原则:只对「确认
+                    # 下载中」的任务做坏种/无进度判定,绝不误删。
                     t.stalled_since = None
                     t.progress_at = None
                 elif _check_stall(db, t, lt):
@@ -182,7 +181,7 @@ def _sync_once() -> tuple[list[dict], bool]:
                     log.info("错误任务在下载器已完成,恢复入库 #%s %s", t.id, t.title_raw[:40])
                     _emit("on_complete", t)
                     to_enqueue.append(t.id)
-                elif lt.state in _RECOVER_DL_STATES:
+                elif lt.dl_active:
                     t.status = TorrentStatus.DOWNLOADING
                     t.error_message = None
                     t.progress_at = None

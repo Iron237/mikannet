@@ -135,13 +135,21 @@ class BitCometClient:
                 continue
             status = str(t.get("status", "")).lower()
             permil = int(t.get("permillage", 0) or 0)
+            done = permil >= 1000 or "seed" in status or "finish" in status
+            error = "error" in status or bool(t.get("error_code"))
             out.append(DlTask(
                 hash=guid[3:], name=t.get("task_name", ""),
                 progress=permil / 1000.0, dlspeed=int(t.get("download_rate", 0) or 0),
                 size=int(t.get("total_size", 0) or 0), state=t.get("status", ""),
                 upspeed=int(t.get("upload_rate", 0) or 0),
-                done=permil >= 1000 or "seed" in status or "finish" in status,
-                error="error" in status or bool(t.get("error_code"))))
+                done=done, error=error,
+                # BitComet 状态串与 qB 完全不同拼写,按关键词归一化(action 是 stop/start,
+                # 停止态含 stop/pause)。识别不出的状态两者皆 False → tracker 保守跳过
+                # 坏种/无进度判定(宁可不自动清理,绝不误删手动暂停的任务)。
+                paused="stop" in status or "pause" in status,
+                dl_active=(not done and not error
+                           and ("download" in status or "running" in status
+                                or "queue" in status or "connect" in status))))
         return out
 
     def _task_id_for(self, info_hash: str) -> str | None:

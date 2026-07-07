@@ -62,6 +62,9 @@ def save_storage(payload: dict):
     result = storage.apply()
     if mode == "smb" and not result.get("mounted"):
         raise HTTPException(400, result.get("error") or "挂载失败")
+    if mode == "smb":
+        from app.scheduler import ensure_storage_watchdog
+        ensure_storage_watchdog()   # 启动时非 smb → 看门狗未注册,这里补上(幂等)
     return {"ok": True, **storage.status()}
 
 

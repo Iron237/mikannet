@@ -123,12 +123,13 @@ def parse_bangumi(html: str, mikan_bangumi_id: int) -> BangumiDetail:
                     continue
                 dl = tr.select_one('a[href$=".torrent"]')
                 tds = tr.select("td")
+                # 列序(对照 fixture):td[0]选择框 td[1]标题 td[2]大小 td[3]更新时间
                 group.torrents.append(SubgroupTorrent(
                     title=link.get_text(strip=True),
                     episode_url=link["href"],
                     torrent_url=dl["href"] if dl else None,
-                    size=tds[1].get_text(strip=True) if len(tds) > 1 else None,
-                    published=tds[2].get_text(strip=True) if len(tds) > 2 else None))
+                    size=tds[2].get_text(strip=True) if len(tds) > 2 else None,
+                    published=tds[3].get_text(strip=True) if len(tds) > 3 else None))
         subgroups.append(group)
 
     return BangumiDetail(mikan_bangumi_id=mikan_bangumi_id, title=title, cover_url=poster,

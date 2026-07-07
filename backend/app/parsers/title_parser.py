@@ -63,9 +63,9 @@ def _preprocess(title: str) -> str:
 _BATCH_KEYWORDS = re.compile(r"整理搬运|合集|全集|Batch|BOX(?:\d|\b)|Fin\b", re.I)
 # 集数范围:[01-12]、[25-48END]、[13-18TV]、【01-24】→ 合集
 _RANGE = re.compile(r"[\[\s](\d{1,4})\s*-\s*(\d{1,4})(?:\s*(?:END|Fin|完|TV|v\d))?[\]\s]", re.I)
-# 版本:08v2 / [12 v2] / [V2] / S01v2
+# 版本:08v2 / [12 v2] / [V2] / S01v2 / [V2修复版](后跟中文)/ [MP4]V2(前是 ]、串尾)
 _EP_VERSION = re.compile(r"(?<=\d)v(\d)\b", re.I)
-_TAG_VERSION = re.compile(r"[\[\s(]v(\d)[\])\s]", re.I)
+_TAG_VERSION = re.compile(r"[\[\]\s(]v(\d)(?=[\])\s]|[^\x00-\x7f]|$)", re.I)
 # 哆啦A梦式 PART/子集:[164PART1]、[879-2]、[490B]、[467-B] → 主集数(子集粒度不建模)
 _PART = re.compile(r"\[(\d{1,4})PART\d\]", re.I)
 _SUB_EP = re.compile(r"\[(\d{2,4})\s*(?:-\s*[1-5]|-?[AB])\]")

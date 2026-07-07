@@ -33,3 +33,7 @@ def test_parse_bangumi():
     t = g.torrents[0]
     assert t.episode_url.startswith("/Home/Episode/")
     assert t.torrent_url and t.torrent_url.endswith(".torrent")
+    # 列错位回归:size 必须是体积串、published 必须含年份(曾把标题当 size、体积当时间)
+    import re
+    assert t.size and re.search(r"\d+(\.\d+)?\s*[GMK]B", t.size), f"size 列错位: {t.size!r}"
+    assert t.published and re.search(r"20\d\d", t.published), f"published 列错位: {t.published!r}"

@@ -85,6 +85,10 @@ if _DIST.exists():
 
     @app.get("/{path:path}", include_in_schema=False)
     def spa(path: str):
+        # API 路径保留 404 语义:否则接口改名/拼错会被吞成 200 + index.html,
+        # 前端 try/catch 感知不到错误(排查极隐蔽)
+        if path.startswith("api/"):
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
         # dist 根目录的真实静态文件(favicon.svg 等)直接返回;其余非 API 路径回退 index.html
         if path:
             candidate = (_DIST / path).resolve()

@@ -79,6 +79,19 @@ def start() -> None:
     scheduler.start()
 
 
+def ensure_storage_watchdog() -> None:
+    """按需注册 SMB 看门狗(首次向导把存储切到 smb 时调用)。
+
+    start() 只在启动瞬间按当时的 storage_mode 决定是否注册——全新部署先启动后配 SMB,
+    看门狗会一直缺席到下次重启,断线无法自愈。幂等:已注册则跳过。"""
+    if not scheduler.running:
+        return
+    if settings.storage_mode == "smb" and scheduler.get_job("storage_watchdog") is None:
+        scheduler.add_job(_storage_watchdog_job, "interval", minutes=2,
+                          id="storage_watchdog", coalesce=True, max_instances=1)
+        log.info("已注册 SMB 存储看门狗(运行时启用)")
+
+
 def reschedule_auto_best(minutes: int) -> None:
     """智能扫描间隔改动后即时重排;0/负 = 移除定期任务(仅保留手动)。"""
     if not scheduler.running:
@@ -106,3 +119,16 @@ def reschedule(minutes: int) -> None:
 def stop() -> None:
     if scheduler.running:
         scheduler.shutdown(wait=False)
+
+
+def resume_after_failed_update() -> None:
+    """完整更新 helper 静默失败(容器没被重建)时恢复调度。
+
+    _quiesce 已 shutdown;APScheduler 实例 shutdown 后不可复用 → 重建全局实例再照常 start
+    (start() 会重新注册全部任务)。幂等:仍在跑则不动。"""
+    global scheduler
+    if scheduler.running:
+        return
+    scheduler = BackgroundScheduler()
+    start()
+    log.info("完整更新未生效,调度器已恢复运行")

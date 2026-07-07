@@ -24,6 +24,14 @@ def test_v2():
     assert p.version == 2
 
 
+def test_v2_tag_variants():
+    """真实语料的 V2 变体:[V2修复版](后跟中文)与 [MP4]V2(前是 ]、串尾)。"""
+    assert parse("[哆啦字幕组][哆啦A梦新番][215][1080P][MP4+MKV][V2修复版]").version == 2
+    assert parse("[梦蓝字幕组]New Doraemon 哆啦A梦新番[830][1080P][GB_JP][MP4]V2").version == 2
+    # 不误伤:v2ray 之类后跟 ASCII 字母不算版本号
+    assert parse("[组] 某番剧 - 03 [v2ray教程][1080p]").version == 1
+
+
 def test_batch_range():
     p = parse("【豌豆字幕组】[药屋少女的呢喃][25-48][合集][1080P][MP4]")
     assert p.is_batch

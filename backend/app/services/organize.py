@@ -16,11 +16,12 @@ import shutil
 from pathlib import Path, PurePosixPath
 from xml.sax.saxutils import escape
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.clients.downloader import downloader
 from app.config import settings
-from app.models import Episode, EpisodeType, Torrent
+from app.models import Episode, EpisodeType, Torrent, VideoFile
 
 log = logging.getLogger(__name__)
 
@@ -92,6 +93,29 @@ def _rename_one(t: Torrent, old_rel_sp: str, new_rel_sp: str,
         raise RuntimeError(f"下载器 {downloader.name} 托管的种子不支持整理改名")
 
 
+def _evict_old_version(db: Session, vf: VideoFile, prefix: str) -> None:
+    """把占着整理目标路径的**已失活旧版本**文件挪到「旧版本/」子目录让位(仍做种/可回溯)。
+
+    Web→BD 升级:_apply_version_switch 只翻 is_active,旧 Web 文件物理占位不动;
+    新 BD 整理到同名 `Season SS/番名 SxxExx.mkv` 必撞名 → 整理静默失败、无重试,
+    过渡期 Jellyfin 一直播旧 Web 版,与 DB is_active 脱节。让位后新文件才进得来。"""
+    old_rel_root = (vf.relative_path or "").replace("\\", "/")
+    name = PurePosixPath(vf.original_name or old_rel_root).name   # 原始名可读且基本唯一
+    candidate = f"旧版本/{name}"
+    tgt_full = f"{prefix}/{candidate}" if prefix else candidate
+    if db.execute(select(VideoFile.id).where(
+            VideoFile.relative_path == tgt_full, VideoFile.id != vf.id)).first():
+        p = PurePosixPath(name)   # 同名兜底:挂种子号保证唯一
+        candidate = f"旧版本/{p.stem} [#{vf.torrent_id}]{p.suffix}"
+        tgt_full = f"{prefix}/{candidate}" if prefix else candidate
+    old_rel_sp = (old_rel_root[len(prefix) + 1:]
+                  if prefix and old_rel_root.startswith(prefix + "/") else old_rel_root)
+    _rename_one(vf.torrent, old_rel_sp, candidate, old_rel_root, tgt_full)
+    vf.relative_path = tgt_full
+    db.flush()
+    log.info("旧版本让位:文件 #%s %s → %s", vf.id, old_rel_root, tgt_full)
+
+
 def organize_torrent(db: Session, t: Torrent) -> None:
     """对一个已完成种子:整理其(active 且已定集的)文件到 Season 结构 + 写番剧 NFO/封面。幂等。"""
     if not settings.organize_enabled:
@@ -129,6 +153,23 @@ def organize_torrent(db: Session, t: Torrent) -> None:
             continue   # 已整理
         if new_full in used:
             log.warning("整理 #%s 跳过撞名目标 %s(%s)", t.id, new_full, old_rel_sp)
+            continue
+        # 目标被**其他种子**的文件占着(典型:Web→BD 升级后旧 Web 文件还在 Season 里):
+        # 已失活的旧版本先挪去「旧版本/」让位;活跃文件占着则不动(不该发生,防御)。
+        occupants = db.execute(select(VideoFile).where(
+            VideoFile.relative_path == new_full,
+            VideoFile.torrent_id != t.id)).scalars().all()
+        if any(o.is_active for o in occupants):
+            log.warning("整理 #%s 跳过:目标 %s 被活跃文件占用", t.id, new_full)
+            continue
+        evict_failed = False
+        for o in occupants:
+            try:
+                _evict_old_version(db, o, prefix)
+            except Exception as e:  # noqa: BLE001
+                log.warning("整理 #%s:旧版本让位失败 %s: %s", t.id, new_full, e)
+                evict_failed = True
+        if evict_failed:
             continue
         try:
             _rename_one(t, old_rel_sp, new_rel_sp, old_rel_root, new_full)

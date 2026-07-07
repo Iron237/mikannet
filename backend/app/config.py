@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     # 完整更新(换镜像):经 docker socket + 一次性 helper 跑 `docker compose up -d` 重建本容器
     compose_project: str = "mikannet"        # compose 项目名(helper -p 用)
     compose_host_dir: str = ""               # 宿主上 compose 目录(helper 绑定挂载源;compose 注入 ${PWD})
+    # 部署用了 override(deploy.sh local 的 -f a.yml -f b.yml)时按序列出(逗号分隔),
+    # helper 重建才会带同一组 -f;留空 = compose 默认发现(仅 docker-compose.yml)
+    compose_files: str = ""
 
     # 外部网络:本机所有外部服务必须走代理(见 PROBE-NOTES)
     proxy_url: str = "http://127.0.0.1:10808"

@@ -44,19 +44,24 @@ def pull_image(ref: str) -> None:
                 pass
 
 
-def run_compose_recreate(host_compose_dir: str, project: str, image_ref: str) -> str:
-    """启一次性 helper:`docker compose -p <project> up -d --pull always` 重建本容器。
+def run_compose_recreate(host_compose_dir: str, project: str, image_ref: str,
+                         compose_files: str = "") -> str:
+    """启一次性 helper:`docker compose -p <project> [-f …] up -d --pull always` 重建本容器。
 
     host_compose_dir 必须是**宿主**上的 compose 目录路径(daemon 视角),由 compose 注入。
     image_ref 经 helper 的环境变量 MIKANNET_IMAGE_REF 传给 compose 做镜像替换。
+    compose_files:部署时用了 override(deploy.sh local 等)须原样透传,否则 helper 按
+    默认发现只带基础文件 reconcile → 卷定义等与原部署漂移。
     """
     if not host_compose_dir:
         raise RuntimeError("缺少 compose_host_dir(无法定位宿主 compose 目录);"
                            "请确认 compose 注入了 MIKANNET_COMPOSE_HOST_DIR")
     pull_image(HELPER_IMAGE)
+    files = [f.strip() for f in (compose_files or "").split(",") if f.strip()]
+    fargs = "".join(f" -f '{f}'" for f in files)   # 文件名可能含空格,单引号包住
     body = {
         "Image": HELPER_IMAGE,
-        "Cmd": ["sh", "-c", f"docker compose -p {project} up -d --pull always"],
+        "Cmd": ["sh", "-c", f"docker compose -p {project}{fargs} up -d --pull always"],
         "WorkingDir": "/compose",
         "Env": [f"MIKANNET_IMAGE_REF={image_ref}"],
         "HostConfig": {

@@ -51,10 +51,11 @@ function emitAll() {
 }
 
 // 完整度:勾选条目覆盖的集数集合
+// 用 episodes_full(不截断);episodes 是截断展示版(前2集+"…"),用它算合集会误报缺集
 const coverage = computed(() => {
   const eps = new Set()
   for (const it of items.value.filter(isChecked))
-    for (const e of it.episodes || [])
+    for (const e of it.episodes_full || it.episodes || [])
       if (typeof e === 'number') eps.add(e)
   const covered = [...eps].sort((a, b) => a - b)
   let missing = []

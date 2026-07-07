@@ -19,6 +19,11 @@ __all__ = ["qb_client", "info_hash_of"]
 _QB_ERROR_STATES = {"error", "missingFiles"}
 _QB_DONE_STATES = {"uploading", "stalledUP", "pausedUP", "stoppedUP", "queuedUP",
                    "forcedUP", "checkingUP"}
+# 用户/qB 主动暂停:不能按「坏种/无进度」处理(否则人工暂停的种子会被自动删除丢数据)
+_QB_PAUSED_STATES = {"pausedDL", "stoppedDL", "pausedUP", "stoppedUP"}
+# 下载中类状态:坏种/无进度判定只对这些做;也是错误任务自愈恢复的依据
+_QB_DL_ACTIVE_STATES = {"downloading", "stalledDL", "metaDL", "forcedDL", "forcedMetaDL",
+                        "queuedDL", "checkingDL", "allocating"}
 _LEGACY_QB_CATEGORY = "mikanarr"   # 改名前的分类名;首启时把旧种子迁到新分类
 
 
@@ -94,7 +99,9 @@ class QbClient:
                 seeds=int(getattr(t, "num_seeds", 0) or 0),
                 peers=int(getattr(t, "num_leechs", 0) or 0),
                 done=t.progress >= 1.0 or t.state in _QB_DONE_STATES,
-                error=t.state in _QB_ERROR_STATES))
+                error=t.state in _QB_ERROR_STATES,
+                paused=t.state in _QB_PAUSED_STATES,
+                dl_active=t.state in _QB_DL_ACTIVE_STATES))
         return out
 
     def files(self, info_hash: str) -> list[dict]:

@@ -162,10 +162,16 @@ function toggleExpand(id) {
   expanded.value = new Set(expanded.value)
 }
 
+const retrying = ref(null)   // 重试中的 torrent_id(防连点)
 async function redownload(ep) {
   if (!ep.torrent_id) return
-  await api.post(`/api/tasks/${ep.torrent_id}/resume`)
-  await load()
+  retrying.value = ep.torrent_id
+  opMsg.value = ''
+  try {
+    await api.post(`/api/tasks/${ep.torrent_id}/resume`)
+    await load()
+  } catch (e) { opMsg.value = e.message }
+  finally { retrying.value = null }
 }
 
 async function doRemove() {
@@ -374,6 +380,11 @@ onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
           <span class="tag" :class="epStatus[ep.status]?.[1]">{{ epStatus[ep.status]?.[0] ?? ep.status }}</span>
           <span v-if="ep.version > 1" class="tag accent">v{{ ep.version }}</span>
           <div class="spacer" />
+          <button v-if="['download_error', 'submit_failed'].includes(ep.status) && ep.torrent_id"
+                  class="btn xs" :disabled="retrying === ep.torrent_id"
+                  title="重新提交/恢复该集下载" @click.stop="redownload(ep)">
+            <Icon name="refresh" :size="12" /> 重试
+          </button>
           <template v-if="ep.files.length">
             <button class="btn xs" title="用默认播放器播放" @click.stop="native(ep.files[0].play_url)">
               <Icon name="play" :size="12" /> 播放

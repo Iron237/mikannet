@@ -160,6 +160,9 @@ def preview(bangumi_id: int, subgroup_id: str, include: str = "", exclude: str =
             "torrent_url": it.torrent_url,
             "published_at": it.published_at.isoformat() if it.published_at else None,
             "episodes": parsed.episodes[:2] + (["…"] if len(parsed.episodes) > 2 else []),
+            # 完整集号列表(不截断)供前端算「完整度」覆盖:曾复用上面截断版,
+            # [01-24] 合集被当只覆盖 2 集 → 误报缺 3-24
+            "episodes_full": parsed.episodes,
             "is_batch": parsed.is_batch, "version": parsed.version,
             "chips": _chips(it.title, None),    # 集号/分辨率/字幕语言/片源/合集/版本(tag 化展示)
             "pass": ok, "reason": reason,
