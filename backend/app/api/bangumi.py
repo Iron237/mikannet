@@ -524,37 +524,39 @@ def auto_status(bangumi_id: int, db: Session = Depends(get_db)):
     }
 
 
-_related_cache: dict[int, tuple[float, list]] = {}   # subject_id → (ts, data),6h TTL
+_series_cache: dict[int, tuple[float, list]] = {}   # subject_id → (ts, 系列链),6h TTL
 
 
-@router.get("/{bangumi_id}/related")
-def related(bangumi_id: int, db: Session = Depends(get_db)):
-    """关联条目(前作/续作/剧场版/OVA,bgm.tv):已入库的带 local_id 直接跳转。"""
+@router.get("/{bangumi_id}/series")
+def series(bangumi_id: int, db: Session = Depends(get_db)):
+    """系列导航条:沿 前传/续集/番外篇/主线故事/衍生 BFS 出整个系列,按放送日期排序。
+
+    只有一部(无系列)返回 []。每项带短标签(去系列公共前缀)、local_id、current。"""
     import time as _time
+    from app.services.bgm_sync import build_series, series_labels
     b = db.get(Bangumi, bangumi_id)
     if not b:
         raise HTTPException(404)
     if not b.bgmtv_subject_id:
         return []
-    cached = _related_cache.get(b.bgmtv_subject_id)
+    cached = _series_cache.get(b.bgmtv_subject_id)
     if cached and _time.time() - cached[0] < 6 * 3600:
-        rels = cached[1]
+        chain = cached[1]
     else:
-        from app.clients.bgmtv import bgmtv_client
-        try:
-            rels = [r for r in bgmtv_client.related_subjects(b.bgmtv_subject_id)
-                    if r.type == 2]   # 只留动画(书籍/音乐等不展示)
-        except Exception as e:  # noqa: BLE001
-            log.warning("关联条目获取失败 %s: %s", b.title, e)
-            return []
-        _related_cache[b.bgmtv_subject_id] = (_time.time(), rels)
-    ids = [r.subject_id for r in rels]
+        chain = build_series(b.bgmtv_subject_id)
+        _series_cache[b.bgmtv_subject_id] = (_time.time(), chain)
+        for x in chain:   # 同系列各部共享同一条链(从任意一部打开都免重建)
+            _series_cache.setdefault(x["subject_id"], (_time.time(), chain))
+    if len(chain) < 2:
+        return []
+    ids = [x["subject_id"] for x in chain]
     local = {row[1]: row[0] for row in db.execute(
         select(Bangumi.id, Bangumi.bgmtv_subject_id)
-        .where(Bangumi.bgmtv_subject_id.in_(ids))).all()} if ids else {}
-    return [{"subject_id": r.subject_id, "relation": r.relation,
-             "title": r.name_cn or r.name, "image": r.image,
-             "local_id": local.get(r.subject_id)} for r in rels]
+        .where(Bangumi.bgmtv_subject_id.in_(ids))).all()}
+    labels = series_labels([x["title"] for x in chain])
+    return [{**x, "label": labels[i], "local_id": local.get(x["subject_id"]),
+             "current": x["subject_id"] == b.bgmtv_subject_id}
+            for i, x in enumerate(chain)]
 
 
 @router.post("/{bangumi_id}/mark-phase")

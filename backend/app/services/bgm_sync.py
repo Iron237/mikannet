@@ -133,6 +133,66 @@ def sync_bgmtv_episodes(db: Session, b: Bangumi) -> list[dict]:
     return changed
 
 
+# ---- 系列链构建(详情页系列导航条)----------------------------------------------
+
+# 进系列链的关系词:主线(前传/续集)+ 番外双向(番外篇/主线故事)+ 衍生(剧场版多挂此词)。
+# 角色出演/总集篇/联动/相同世界观/不同演绎等一律不进(噪声)。
+_SERIES_RELS = {"前传", "续集", "番外篇", "主线故事", "衍生"}
+_SERIES_MAX_NODES = 12
+_SERIES_MAX_DEPTH = 3
+
+
+def build_series(subject_id: int) -> list[dict]:
+    """从一个条目出发,沿系列关系 BFS 出完整系列,按放送日期排序。
+
+    返回 [{subject_id, title, date}](含起点自身)。每部一次 related + 一次 subject
+    (拿日期/标题),首次构建数秒,调用方缓存。单部失败跳过不拖垮整条链。
+    """
+    from time import sleep
+    seen = {subject_id}
+    depth = {subject_id: 0}
+    queue = [subject_id]
+    while queue and len(seen) < _SERIES_MAX_NODES:
+        sid = queue.pop(0)
+        if depth[sid] >= _SERIES_MAX_DEPTH:
+            continue
+        try:
+            rels = bgmtv_client.related_subjects(sid)
+        except Exception as e:  # noqa: BLE001
+            log.warning("系列链拉关联失败 subject=%s: %s", sid, e)
+            continue
+        for r in rels:
+            if r.type != 2 or r.relation not in _SERIES_RELS or r.subject_id in seen:
+                continue
+            seen.add(r.subject_id)
+            depth[r.subject_id] = depth[sid] + 1
+            queue.append(r.subject_id)
+        sleep(0.2)
+    out: list[dict] = []
+    for sid in seen:
+        try:
+            s = bgmtv_client.get_subject(sid)
+            out.append({"subject_id": sid, "title": s.name_cn or s.name, "date": s.date})
+        except Exception as e:  # noqa: BLE001
+            log.warning("系列链取条目失败 subject=%s: %s", sid, e)
+        sleep(0.15)
+    out.sort(key=lambda x: (x["date"] is None, x["date"] or "", x["subject_id"]))
+    return out
+
+
+def series_labels(titles: list[str]) -> list[str]:
+    """片名短标签:去掉系列公共前缀(「相反的你和我 第二季」→「第二季」)。
+
+    前缀太短(<3 字)不去;去完为空(第一季常与前缀同名)回退全名。"""
+    import os.path
+    if len(titles) < 2:
+        return list(titles)
+    prefix = os.path.commonprefix(titles)
+    if len(prefix) < 3:
+        return list(titles)
+    return [(t[len(prefix):].strip(" ·-—:~〜") or t) for t in titles]
+
+
 # ---- 收视进度回写(fire-and-forget,失败只记日志)------------------------------
 
 _watching_marked: set[int] = set()   # 本进程内已标过「在看」的 subject(避免每集重复 POST)

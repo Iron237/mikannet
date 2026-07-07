@@ -53,11 +53,11 @@ const epStatus = {
 
 const realSubs = computed(() => (b.value?.subscriptions || []))
 
-// 关联条目(bgm.tv,懒加载,失败静默)
-const related = ref([])
-async function loadRelated() {
-  try { related.value = await api.get(`/api/bangumi/${route.params.id}/related`) }
-  catch { related.value = [] }
+// 系列导航条(bgm.tv 系列链,懒加载,失败静默;首次构建数秒,后端 6h 缓存)
+const series = ref([])
+async function loadSeries() {
+  try { series.value = await api.get(`/api/bangumi/${route.params.id}/series`) }
+  catch { series.value = [] }
 }
 
 function epTitle(ep) {
@@ -283,7 +283,7 @@ async function syncAnidb() {
 
 onMounted(async () => {
   await load()
-  loadRelated()      // 关联条目:不阻塞主内容
+  loadSeries()       // 系列导航条:不阻塞主内容
   loadAutoStatus()   // 智能下载状态卡
   const a = await api.get('/api/bangumi/auto-scan/status')
   if (a.running) { autoScan.value = a; pollAuto() }
@@ -397,15 +397,18 @@ onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
     </div>
 
     <div class="page">
-      <!-- 关联条目(bgm.tv):前作/续作/剧场版,已入库直接跳,未入库跳搜索订阅 -->
-      <div v-if="related.length" class="row" style="flex-wrap: wrap; gap: 6px; margin-bottom: 16px; align-items: center;">
-        <span class="muted" style="font-size: 12.5px;">关联:</span>
-        <RouterLink v-for="r in related" :key="r.subject_id"
-                    :to="r.local_id ? `/bangumi/${r.local_id}` : `/search?searchstr=${encodeURIComponent(r.title)}`"
-                    class="tag" :class="{ green: r.local_id }"
-                    :title="r.local_id ? '已入库,点击进入' : '点击去搜索订阅'">
-          {{ r.relation }}·{{ r.title }}<template v-if="r.local_id"> ✓</template>
-        </RouterLink>
+      <!-- 系列导航条(bgm.tv 系列链,按放送顺序):当前部高亮;已入库跳详情,未入库去订阅 -->
+      <div v-if="series.length" class="series-bar">
+        <span class="muted" style="font-size: 12.5px; flex-shrink: 0;">系列</span>
+        <template v-for="s in series" :key="s.subject_id">
+          <span v-if="s.current" class="series-item on" :title="s.title">{{ s.label }}</span>
+          <RouterLink v-else :to="s.local_id ? `/bangumi/${s.local_id}`
+                        : `/search?searchstr=${encodeURIComponent(s.title)}`"
+                      class="series-item" :class="{ ghost: !s.local_id }"
+                      :title="s.title + (s.local_id ? '(已入库)' : '(未入库,点击去订阅)')">
+            {{ s.label }}
+          </RouterLink>
+        </template>
       </div>
 
       <!-- 订阅源详情 -->
@@ -655,6 +658,15 @@ onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
 .ep-row.missing { opacity: .55; border-style: dashed; }
 .ep-num { white-space: nowrap; }
 .ep-title { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
+/* 系列导航条(bgm 式分段):当前部实心高亮,未入库虚线弱化 */
+.series-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 16px; }
+.series-item {
+  padding: 4px 12px; border-radius: 8px; font-size: 12.5px;
+  background: var(--bg-card); border: 1px solid var(--border); transition: background .15s;
+}
+.series-item:hover { background: var(--bg-hover); }
+.series-item.on { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+.series-item.ghost { opacity: .55; border-style: dashed; }
 
 @media (max-width: 768px) {
   .hero-inner { flex-direction: column; align-items: center; text-align: center;

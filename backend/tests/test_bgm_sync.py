@@ -123,6 +123,35 @@ def test_shift_merges_mixed_numbering(db, monkeypatch):
     assert f_bd.is_active is True and f_web.is_active is False   # 画质重选:BD 留,Web 置灰
 
 
+def test_build_series_whitelist_and_order(monkeypatch):
+    """系列链:沿白名单关系 BFS(角色出演/总集篇不进),按放送日期排序。"""
+    from app.clients.bgmtv import BgmtvSubject, RelatedSubject
+    REL = {
+        100: [RelatedSubject(101, 2, "续集", "S2", "系列 第二季", None),
+              RelatedSubject(300, 2, "角色出演", "客串", "客串作", None)],   # 噪声,不进
+        101: [RelatedSubject(100, 2, "前传", "S1", "系列", None),
+              RelatedSubject(102, 2, "衍生", "Movie", "系列 剧场版", None),
+              RelatedSubject(301, 2, "总集篇", "recap", "总集篇", None)],   # 噪声,不进
+        102: [RelatedSubject(101, 2, "主线故事", "S2", "系列 第二季", None)],
+    }
+    SUBJ = {100: ("系列", "2024-01-01"), 101: ("系列 第二季", "2025-01-01"),
+            102: ("系列 剧场版", "2025-07-01")}
+    monkeypatch.setattr(bgm_sync.bgmtv_client, "related_subjects", lambda sid: REL.get(sid, []))
+    monkeypatch.setattr(bgm_sync.bgmtv_client, "get_subject", lambda sid: BgmtvSubject(
+        sid, SUBJ[sid][0], SUBJ[sid][0], SUBJ[sid][1], "TV", 12, None, None, None, None))
+    monkeypatch.setattr(bgm_sync, "sleep", lambda *_: None, raising=False)
+    chain = bgm_sync.build_series(101)   # 从中间一部出发也能拉全
+    assert [x["subject_id"] for x in chain] == [100, 101, 102]   # 按日期序
+    assert all(x["subject_id"] not in (300, 301) for x in chain)
+
+
+def test_series_labels_strip_common_prefix():
+    labels = bgm_sync.series_labels(["相反的你和我", "相反的你和我 第二季"])
+    assert labels == ["相反的你和我", "第二季"]   # 去前缀;去空回退全名
+    assert bgm_sync.series_labels(["单独一部"]) == ["单独一部"]
+    assert bgm_sync.series_labels(["AB", "CD"]) == ["AB", "CD"]   # 前缀太短不去
+
+
 def test_past_episode_date_correction_not_reported(db, monkeypatch):
     """过去集的日期修正(资料订正)不算延期,不提醒。"""
     b = Bangumi(title="测试", bgmtv_subject_id=102)
