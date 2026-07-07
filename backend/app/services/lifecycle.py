@@ -101,12 +101,18 @@ def evaluate_airing(db: Session, b: Bangumi) -> bool:
     """
     if b.airing_status != AiringStatus.AIRING or not b.eps_total or not b.mikan_bangumi_id:
         return False
+    from app.services.phase import before_official_air
+    if before_official_air(b.air_date):
+        return False   # 官方还没开播(先行放送期):就算先行集齐 12 集也绝不判完结
     from app.services.metadata_service import _infer_airing_status
     by_date = _infer_airing_status(b.air_date, b.eps_total) == AiringStatus.FINISHED
+    # 只数正式流的集:先行(上季度网络先行放送)下满不代表官方播完
     done = db.execute(
         select(Episode.id).join(VideoFile, VideoFile.episode_id == Episode.id)
+        .join(Torrent, VideoFile.torrent_id == Torrent.id)
         .where(Episode.bangumi_id == b.id, Episode.type == EpisodeType.REGULAR,
-               VideoFile.is_active.is_(True)).distinct()).scalars().all()
+               VideoFile.is_active.is_(True), Torrent.is_preview.is_(False))
+        .distinct()).scalars().all()
     by_eps = len(done) >= b.eps_total
     if not (by_date or by_eps):
         return False

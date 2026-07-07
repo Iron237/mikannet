@@ -230,9 +230,13 @@ def _import_group(group: dict) -> str:
             db.flush()
 
         guid = f"local:{subject_id}:{datetime.now(timezone.utc):%Y%m%d%H%M%S}"
+        # 官方开播日之前导入的内容必然是先行(上季度网络先行放送等)→ 自动归先行流,
+        # 开播后 RSS 追的正式版与之并存(详情页两阶段切换),完结判定不受先行内容干扰
+        from app.services.phase import before_official_air
         torrent = Torrent(subscription_id=sub.id, guid=guid,
                           title_raw=f"[本地导入] {bangumi.title}({len(group['files'])} 个文件)",
                           parsed_json={}, torrent_url="", is_batch=True,
+                          is_preview=before_official_air(bangumi.air_date),
                           status=TorrentStatus.ARCHIVED,
                           completed_at=datetime.now(timezone.utc))
         db.add(torrent)

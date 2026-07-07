@@ -167,9 +167,14 @@ def _submit_candidate(db: Session, sub: Subscription, c: dict) -> bool:
         _submit(db, sub, existing)
         return True
     p = parse(c["title"])
+    # 官方开播前扫到的源必然是先行(上季度网络先行放送等)→ 归先行流,
+    # 否则「已播」被虚高、下满还会误判完结(与 RSS/本地导入路径同一判据)
+    from app.services.phase import before_official_air
+    is_prev = p.is_preview or before_official_air(sub.bangumi.air_date)
     t = Torrent(subscription_id=sub.id, guid=c["guid"], title_raw=c["title"],
                 parsed_json=p.to_dict(), torrent_url=c["torrent_url"],
-                is_batch=c["is_batch"], version=c["version"], status=TorrentStatus.PENDING)
+                is_batch=c["is_batch"], version=c["version"], is_preview=is_prev,
+                status=TorrentStatus.PENDING)
     db.add(t)
     db.flush()
     for n in c["episodes"]:

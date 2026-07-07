@@ -30,6 +30,121 @@ refresh_state: dict = {"running": False, "done": 0, "total": 0, "current": "",
                        "fixed_covers": 0, "errors": 0}
 
 
+def backfill_ep_start_once() -> None:
+    """一次性回填存量番剧的首话编号(ep_start 功能上线前建的番剧没有时机拉取)。
+
+    元数据同步只在建番剧/重绑时跑 → 老的连续编号续作(第2期章节 13-25)会一直停在
+    ep_start=1,详情页铺出永远等不来的 1-12。启动后台线程逐条拉 bgm.tv 章节 API
+    (仅 TV + 已绑 subject + 仍是默认 1 的),完成后写 Setting 标记不再重复;
+    全部失败(如断网)不写标记,下次启动重试。"""
+    from time import sleep
+
+    from app.models import Setting
+    KEY = "ep_start_backfilled"
+    with db_session() as db:
+        if db.get(Setting, KEY):
+            return
+        targets = [(b.id, b.bgmtv_subject_id, b.title) for b in db.execute(
+            select(Bangumi).where(Bangumi.bgmtv_subject_id.is_not(None),
+                                  Bangumi.kind == Kind.TV)).scalars()
+                   if (b.ep_start or 1) == 1]
+    fails = 0
+    for bid, sid, title in targets:
+        try:
+            start = bgmtv_client.first_ep_sort(sid)
+        except Exception as e:  # noqa: BLE001
+            fails += 1
+            log.warning("首话编号回填失败 %s(subject %s): %s", title, sid, e)
+            continue
+        if start and start > 1:
+            with db_session() as db:
+                b = db.get(Bangumi, bid)
+                if b is not None and (b.ep_start or 1) == 1:   # 没被手改过才写
+                    b.ep_start = start
+            log.info("首话编号回填:%s → %s", title, start)
+        sleep(0.5)   # 对 bgm.tv 客气点
+    if targets and fails == len(targets):
+        log.warning("首话编号回填全部失败(网络?),不写标记,下次启动重试")
+        return
+    with db_session() as db:
+        if db.get(Setting, KEY) is None:
+            db.add(Setting(key=KEY, value={"v": True}))
+    log.info("首话编号回填完成:检查 %s 部,失败 %s", len(targets), fails)
+
+
+def start_ep_start_backfill() -> None:
+    """启动期调用:后台线程跑一次性回填,不阻塞启动。"""
+    threading.Thread(target=backfill_ep_start_once, daemon=True,
+                     name="ep-start-backfill").start()
+
+
+def refresh_air_dates(notify_changes: bool = False) -> dict:
+    """重拉所有连载中 TV 番剧的 bgm.tv 放送信息,检测放送延期/提档。
+
+    同步 air_date + 放送星期(顺带静默刷新 eps_total/score,同一次 API 保持新鲜)。
+    「变动」= 旧日期非空且新日期不同 —— 首次填充只落库不算变动、不提醒。
+    notify_changes=True(定时任务)→ 变动推送通知;手动刷新在 UI 展示结果,不推。
+    返回 {"checked": n, "failed": n, "changed": [{id,title,old,new}]}。
+    """
+    from time import sleep
+    with db_session() as db:
+        targets = [(b.id, b.bgmtv_subject_id, b.title) for b in db.execute(
+            select(Bangumi).where(Bangumi.airing_status == AiringStatus.AIRING,
+                                  Bangumi.kind == Kind.TV,
+                                  Bangumi.bgmtv_subject_id.is_not(None))).scalars()]
+    checked, failed = 0, 0
+    changed: list[dict] = []
+    for bid, sid, title in targets:
+        try:
+            s = bgmtv_client.get_subject(sid)
+        except Exception as e:  # noqa: BLE001
+            failed += 1
+            log.warning("放送信息刷新失败 %s(subject %s): %s", title, sid, e)
+            continue
+        checked += 1
+        with db_session() as db:
+            b = db.get(Bangumi, bid)
+            if b is None:
+                continue
+            new_date = s.date or None
+            if new_date and new_date != b.air_date:
+                if b.air_date:   # 旧值非空才算「变动」(延期/提档)
+                    changed.append({"id": bid, "title": b.title,
+                                    "old": b.air_date, "new": new_date,
+                                    "poster_path": b.poster_path})
+                    log.info("放送日期变动:%s %s → %s", b.title, b.air_date, new_date)
+                b.air_date = new_date
+                try:
+                    b.air_weekday = datetime.fromisoformat(new_date).weekday()
+                except ValueError:
+                    pass
+            elif new_date and b.air_weekday is None:
+                try:   # 日期没变但星期缺失(老数据)→ 补上,放送表才排得进
+                    b.air_weekday = datetime.fromisoformat(new_date).weekday()
+                except ValueError:
+                    pass
+            if s.eps:
+                b.eps_total = s.eps
+            if s.score:
+                b.score = s.score
+        sleep(0.4)   # 对 bgm.tv 客气点
+    if notify_changes and changed:
+        from app.services.events import notify
+        for ch in changed:
+            poster = None
+            if ch["poster_path"] and (settings.data_dir / ch["poster_path"]).exists():
+                poster = str(settings.data_dir / ch["poster_path"])
+            try:
+                notify("on_new", f"{ch['title']} · 放送日期变动",
+                       f"放送开始:{ch['old']} → {ch['new']}(bgm.tv 数据变更,可能延期/提档)",
+                       poster)
+            except Exception:  # noqa: BLE001 — 推送失败不影响刷新
+                log.debug("放送变动推送失败", exc_info=True)
+    log.info("放送信息刷新完成:%s 部,失败 %s,日期变动 %s", checked, failed, len(changed))
+    return {"checked": checked, "failed": failed,
+            "changed": [{k: c[k] for k in ("id", "title", "old", "new")} for c in changed]}
+
+
 def _kind_from_platform(platform: str | None) -> Kind:
     """bgm.tv platform → 番剧形态。剧场版=电影,OVA/OAD=OVA,其余(TV/WEB/…)=TV。"""
     p = (platform or "").strip()

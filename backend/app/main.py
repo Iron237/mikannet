@@ -38,6 +38,8 @@ async def lifespan(_app: FastAPI):
     scheduler.start()
     from app.services import postprocess
     postprocess.start()
+    from app.services import metadata_service
+    metadata_service.start_ep_start_backfill()   # 存量番剧首话编号一次性回填(后台,幂等)
     stop_event = asyncio.Event()
     tracker = asyncio.create_task(tracker_loop(stop_event))
     yield

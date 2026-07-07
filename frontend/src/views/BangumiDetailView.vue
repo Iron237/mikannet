@@ -76,6 +76,20 @@ async function load() {
 // 先行 / 正式 分段切换:切阶段后重新拉取该阶段的剧集与文件
 function switchPhase(p) { if (p !== phase.value) { phase.value = p; load() } }
 
+const markingPhase = ref(false)
+async function markPhaseAll(target) {
+  markingPhase.value = true
+  opMsg.value = ''
+  try {
+    const r = await api.post(`/api/bangumi/${b.value.id}/mark-phase`, { phase: target })
+    opMsg.value = `已把 ${r.updated} 个种子标为${target === 'preview' ? '先行' : '正式'}`
+      + (r.fixed_airing ? ',并把误判的已完结纠回连载中' : '')
+    phase.value = target
+    await load()
+  } catch (e) { opMsg.value = e.message }
+  finally { markingPhase.value = false }
+}
+
 // 重新整理:把先行种子归入「先行版/」目录(后台串行,仅下载器托管的种子)
 async function reorganize() {
   reorgMsg.value = '整理中…'
@@ -379,6 +393,15 @@ onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
         </span>
         <button v-if="b.has_preview" class="btn sm" title="把先行种子归入「先行版/」目录(后台整理,仅下载器托管的种子)"
                 @click="reorganize"><Icon name="folder-in" :size="13" /> 整理先行版</button>
+        <!-- 整番归阶段兜底:自动判定失手(上季度先行放送等)时手动一键改 -->
+        <button class="btn sm" :disabled="markingPhase"
+                :title="phase === 'preview'
+                  ? '把这部番现有全部内容改标为正式(误标先行时用)'
+                  : '把这部番现有全部内容改标为先行(官方未开播、看的是先行放送时用;会顺带纠正误判的已完结)'"
+                @click="markPhaseAll(phase === 'preview' ? 'official' : 'preview')">
+          <Icon name="refresh" :size="13" />
+          {{ markingPhase ? '处理中…' : (phase === 'preview' ? '全部标为正式' : '全部标为先行') }}
+        </button>
       </div>
       <p v-if="phase === 'preview'" class="muted" style="font-size: 12px; margin: 6px 0 12px;">
         先行版(抢先/先行配信):单独归档在「先行版」目录,与正式版互不覆盖。

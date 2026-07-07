@@ -86,15 +86,19 @@ def ensure_from_mikan(payload: dict, db: Session = Depends(get_db)):
     return {"id": b.id, "title": b.title, "mikan_bangumi_id": b.mikan_bangumi_id}
 
 
-def _eps_done(db: Session, b: Bangumi) -> int:
+def _eps_done(db: Session, b: Bangumi, official_only: bool = False) -> int:
     """已入库集数:只数有 active 文件的**正片**集(不含 SP/菜单/NC/特典),并封顶到总集数。
 
     封顶规避:跨季连续编号(S2 编 13-24)/ 错误元数据 / 旧整理残留的幽灵集 等导致的「超过总集数」。
+    official_only:只数正式流(先行放送内容不算,「已播」推断用)。
     """
-    n = db.execute(
-        select(Episode.id).join(VideoFile, VideoFile.episode_id == Episode.id)
-        .where(Episode.bangumi_id == b.id, Episode.type == EpisodeType.REGULAR,
-               VideoFile.is_active.is_(True)).distinct()).scalars().all().__len__()
+    q = (select(Episode.id).join(VideoFile, VideoFile.episode_id == Episode.id)
+         .where(Episode.bangumi_id == b.id, Episode.type == EpisodeType.REGULAR,
+                VideoFile.is_active.is_(True)))
+    if official_only:
+        q = q.join(Torrent, VideoFile.torrent_id == Torrent.id).where(
+            Torrent.is_preview.is_(False))
+    n = len(db.execute(q.distinct()).scalars().all())
     return min(n, b.eps_total) if b.eps_total else n
 
 
@@ -122,10 +126,11 @@ def _eps_aired(db: Session, b: Bangumi) -> int | None:
         return None
     start = b.ep_start or 1
     seen = 0   # 已播「第几集」(数量口径,1..eps_total)
+    # 只看正式流的种子:先行放送(官方开播前的网络先行)不算「已播」
     rows = db.execute(
         select(Torrent.parsed_json, Subscription.episode_offset)
         .join(Subscription, Torrent.subscription_id == Subscription.id)
-        .where(Subscription.bangumi_id == b.id)).all()
+        .where(Subscription.bangumi_id == b.id, Torrent.is_preview.is_(False))).all()
     for pj, offset in rows:
         for e in (pj or {}).get("episodes") or []:
             try:
@@ -135,7 +140,8 @@ def _eps_aired(db: Session, b: Bangumi) -> int | None:
                 continue
     if seen == 0:
         seen = _weekly_aired(b.air_date)
-    seen = max(seen, _eps_done(db, b))   # 已下载的集必然已播 → 下限,杜绝「已播 < 已下载」
+    # 已下载的正式集必然已播 → 下限(只用正式流数,先行集齐不代表官方播过)
+    seen = max(seen, _eps_done(db, b, official_only=True))
     return min(seen, b.eps_total) if seen > 0 else None
 
 
@@ -168,6 +174,7 @@ def calendar(db: Session = Depends(get_db)):
             "id": b.id, "title": b.title, "poster": _poster_url(b),
             "score": b.score, "eps_total": b.eps_total,
             "ep_start": b.ep_start or 1,   # 放送表按 bangumi 编号显示「第 N 话」
+            "air_date": b.air_date,        # 未开播的显示「N月N日开播」
             "eps_downloaded": _eps_done(db, b),
             "eps_aired": _eps_aired(db, b),
         }
@@ -176,6 +183,16 @@ def calendar(db: Session = Depends(get_db)):
         else:
             unknown.append(entry)
     return {"days": days, "unknown": unknown}
+
+
+@router.post("/calendar/refresh")
+def calendar_refresh():
+    """手动重拉连载番剧的 bgm.tv 放送信息(右上角刷新按钮)。
+
+    变动在响应里展示(不推送;定时任务检测到的变动才推送)。同步执行,
+    连载中番剧通常十来部、每部间隔 0.4s,数秒内返回。"""
+    from app.services.metadata_service import refresh_air_dates
+    return {"ok": True, **refresh_air_dates(notify_changes=False)}
 
 
 def _has_phase(db: Session, bangumi_id: int, is_preview: bool) -> bool:
@@ -405,6 +422,37 @@ def batch_delete(payload: dict, db: Session = Depends(get_db)):
         done.append(bid)
     db.commit()
     return {"done": done, "failed": failed}
+
+
+@router.post("/{bangumi_id}/mark-phase")
+def mark_phase(bangumi_id: int, payload: dict, db: Session = Depends(get_db)):
+    """整番手动归阶段:把该番剧现有**全部**种子标为先行/正式(自动判定失手时的兜底,
+    如上季度先行放送、导入时 air_date 还没同步等)。标先行且官方未开播时,顺带把被
+    「下满集数」误判的已完结纠回连载中。"""
+    from app.models import AiringStatus
+    from app.services.phase import before_official_air
+    b = db.get(Bangumi, bangumi_id)
+    if not b:
+        raise HTTPException(404)
+    phase = payload.get("phase")
+    if phase not in ("preview", "official"):
+        raise HTTPException(400, "phase 必须是 preview 或 official")
+    is_prev = phase == "preview"
+    sub_ids = select(Subscription.id).where(Subscription.bangumi_id == b.id).scalar_subquery()
+    rows = db.execute(select(Torrent).where(
+        Torrent.subscription_id.in_(sub_ids))).scalars().all()
+    n = 0
+    for t in rows:
+        if bool(t.is_preview) != is_prev:
+            t.is_preview = is_prev
+            n += 1
+    fixed_airing = False
+    if is_prev and before_official_air(b.air_date) and b.airing_status == AiringStatus.FINISHED:
+        b.airing_status = AiringStatus.AIRING   # 先行集齐误判的完结 → 纠回
+        fixed_airing = True
+    db.commit()
+    log.info("整番归阶段:%s → %s(%s 个种子,纠正完结=%s)", b.title, phase, n, fixed_airing)
+    return {"ok": True, "updated": n, "fixed_airing": fixed_airing}
 
 
 @router.patch("/{bangumi_id}")

@@ -114,12 +114,18 @@ def _container_torrent(db, b: Bangumi) -> Torrent:
         db.add(sub)
         db.flush()
     # mikan-less 番剧(BD 自动绑定从 bgm.tv 建,无蜜柑 ID)用 b<id> 兜底,避免多部都成 "library:None" 撞唯一键
-    guid = f"library:{b.mikan_bangumi_id or ('b' + str(b.id))}"
+    key = b.mikan_bangumi_id or ("b" + str(b.id))
+    # 官方开播日之前扫到的内容必然是先行 → 独立的先行容器(is_preview),与开播后的
+    # 正式容器并存,两阶段互不置灰(_apply_version_switch 每阶段各留 active)
+    from app.services.phase import before_official_air
+    preview = before_official_air(b.air_date)
+    guid = f"library-preview:{key}" if preview else f"library:{key}"
     t = db.execute(select(Torrent).where(Torrent.guid == guid)).scalar_one_or_none()
     if t is None:
         t = Torrent(subscription_id=sub.id, guid=guid,
-                    title_raw=f"[番剧库] {b.title}", parsed_json={}, torrent_url="",
-                    is_batch=True, status=TorrentStatus.ARCHIVED,
+                    title_raw=f"[番剧库{'·先行' if preview else ''}] {b.title}",
+                    parsed_json={}, torrent_url="",
+                    is_batch=True, is_preview=preview, status=TorrentStatus.ARCHIVED,
                     completed_at=datetime.now(timezone.utc))
         db.add(t)
         db.flush()
@@ -222,7 +228,8 @@ def _reconcile_removed(db) -> int:
     from app.services.postprocess import _apply_version_switch
     root = Path(settings.download_root_local)
     rows = db.execute(select(VideoFile).join(Torrent).where(
-        or_(Torrent.guid.like("library:%"), Torrent.guid.like("local:%")))).scalars().all()
+        or_(Torrent.guid.like("library:%"), Torrent.guid.like("library-preview:%"),
+            Torrent.guid.like("local:%")))).scalars().all()
     removed = 0
     touched: set[int] = set()
     for vf in rows:
