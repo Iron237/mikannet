@@ -1,0 +1,49 @@
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+.claude/
+.codex/
+.codex_testdeps/
+.codex_pipcache/
+.codex_venv/
+.codex_release/
+*.egg-info/
+.agents/
+.vscode/
+.idea/
+frontend/dist/
+backend/data/
+backend/.env
+data/
+docs/
+.env
+.env.*
+!.env.example
+.probe-qb/
+.pytest_cache/
+downloads/
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.log
+*.log.gz
+*.pem
+*.key
+*.p12
+*.pfx
+mikannet-backup-*.json
+# 本地番剧导入源(可能是大量视频文件,不入库)
+import/
+# 试用栈(AutoBangumi 等,含其配置/下载,不纳入主仓库)
+ab-trial/
+# 临时探针/调试脚本
+_*.py
+# 蜜柑登录 cookie(敏感,绝不提交)
+mikan cookie.json
+*cookie*.json
+# 根目录里的参考截图(AutoBangumi 页面等,临时素材,不入库)
+/*.png
+# 发行构建产物(git archive 生成的 zip 等;通过 GitHub Release 分发,不入源码仓库)
+dist/

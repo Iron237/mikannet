@@ -1,0 +1,8 @@
+# 跨平台行尾:Linux 脚本/编排/Dockerfile 必须 LF(否则 shebang 带 \r 在 Linux 报 bad interpreter)
+* text=auto
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Dockerfile text eol=lf
+*.Dockerfile text eol=lf
+*.bat text eol=crlf

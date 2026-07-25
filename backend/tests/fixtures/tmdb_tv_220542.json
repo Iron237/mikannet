@@ -1,0 +1,180 @@
+{
+  "adult": false,
+  "backdrop_path": "/gffVOVZ2Y9cmVIZ26Gt9ByMGCYH.jpg",
+  "created_by": [],
+  "episode_run_time": [
+    23
+  ],
+  "first_air_date": "2023-10-22",
+  "genres": [
+    {
+      "id": 16,
+      "name": "动画"
+    },
+    {
+      "id": 18,
+      "name": "剧情"
+    },
+    {
+      "id": 9648,
+      "name": "悬疑"
+    }
+  ],
+  "homepage": "https://kusuriyanohitorigoto.jp",
+  "id": 220542,
+  "in_production": true,
+  "languages": [
+    "ja"
+  ],
+  "last_air_date": "2025-07-04",
+  "last_episode_to_air": {
+    "id": 5892134,
+    "name": "开端",
+    "overview": "在平定了子氏一族后的拂晓时分，壬氏来到了正在与被从要塞中带出来的孩子们一同睡觉的猫猫身边。两人一边担心着彼此的伤势，一边各自开始思考楼兰拼命守护的东西，以及被托付下来的事物。",
+    "vote_average": 7.929,
+    "vote_count": 7,
+    "air_date": "2025-07-04",
+    "episode_number": 48,
+    "episode_type": "finale",
+    "production_code": "",
+    "runtime": 24,
+    "season_number": 1,
+    "show_id": 220542,
+    "still_path": "/5QU9GNW9UlLGJUFWGRc1DJXa2KU.jpg"
+  },
+  "name": "药屋少女的呢喃",
+  "next_episode_to_air": null,
+  "networks": [
+    {
+      "id": 57,
+      "logo_path": "/uxaXSoT8K0S2NE5PWsBpHUl3GGU.png",
+      "name": "Nippon TV",
+      "origin_country": "JP"
+    },
+    {
+      "id": 4815,
+      "logo_path": "/igW7DjfUZ8Ew7BLzCxKHKpeFFL3.png",
+      "name": "RAB",
+      "origin_country": "JP"
+    },
+    {
+      "id": 4816,
+      "logo_path": "/9qQIAEYEw1ZyPPK3tqE18Z00AwW.png",
+      "name": "TVI",
+      "origin_country": "JP"
+    },
+    {
+      "id": 4822,
+      "logo_path": "/xX0I9Sc0AxSoKoVtwwmz0DWOWcr.png",
+      "name": "JRT",
+      "origin_country": "JP"
+    },
+    {
+      "id": 6155,
+      "logo_path": "/cvePJ33fR2SeirKZWD8rCV7rAaF.png",
+      "name": "YBC",
+      "origin_country": "JP"
+    }
+  ],
+  "number_of_episodes": 48,
+  "number_of_seasons": 1,
+  "origin_country": [
+    "JP"
+  ],
+  "original_language": "ja",
+  "original_name": "薬屋のひとりごと",
+  "overview": "「可否为我配制一帖春药？」猫猫的眼眸瞬间浮现出惊讶与好奇的色彩──位处大陆中央的某个大国，有位姑娘置身于皇帝宫阙之中。姑娘名唤猫猫，原在烟花巷担任药师，眼下则在后宫做下女。这个绝对称不上美女的姑娘很懂分寸，只是静待期满离宫。她有自信，皇帝绝对不会「宠幸」她。其间，猫猫得知皇子皆年幼早夭的事，并听闻连尚在人世的皇子皇女也身染重病，她开始调查他们的病因──广获赞誉的酣畅淋漓推理之作，众所期盼的第一集终于出版。以中世东方为舞台，「试毒」少女将一一解决宫中发生的悬疑案件！",
+  "popularity": 51.3827,
+  "poster_path": "/nUFTbH417TqmCbw2b2mPSAESoTb.jpg",
+  "production_companies": [
+    {
+      "id": 5372,
+      "logo_path": "/tPtJc2rCOTHEzJQPStT6m3dI0eK.png",
+      "name": "OLM",
+      "origin_country": "JP"
+    },
+    {
+      "id": 193504,
+      "logo_path": "/lDBGXkGe4ZqWnyMfDWHx03KcWlx.png",
+      "name": "TOHO animation STUDIO",
+      "origin_country": "JP"
+    },
+    {
+      "id": 882,
+      "logo_path": "/fRSWWjquvzcHjACbtF53utZFIll.png",
+      "name": "TOHO",
+      "origin_country": "JP"
+    },
+    {
+      "id": 6755,
+      "logo_path": "/bWiM2iY82B32NGmPCOFatgfekIR.png",
+      "name": "Nippon Television Network Corporation",
+      "origin_country": "JP"
+    },
+    {
+      "id": 211680,
+      "logo_path": "/ydN85bcGpnR2ksgqJQw91683d24.png",
+      "name": "Imagica Infos",
+      "origin_country": "JP"
+    },
+    {
+      "id": 1778,
+      "logo_path": "/b5rT6VbYza3LyfltCmz1OcqzWJM.png",
+      "name": "dentsu",
+      "origin_country": "JP"
+    },
+    {
+      "id": 9149,
+      "logo_path": "/isLUpud9N56ifftJZ4XvzwBBpoG.png",
+      "name": "Shogakukan",
+      "origin_country": "JP"
+    },
+    {
+      "id": 10038,
+      "logo_path": "/nCueXKwYIEXrZ5ofqSJBO1YcmRr.png",
+      "name": "Square Enix",
+      "origin_country": "JP"
+    }
+  ],
+  "production_countries": [
+    {
+      "iso_3166_1": "JP",
+      "name": "Japan"
+    }
+  ],
+  "seasons": [
+    {
+      "air_date": "2023-10-23",
+      "episode_count": 50,
+      "id": 363363,
+      "name": "特别篇",
+      "overview": "迷你动画「猫猫的独语」",
+      "poster_path": "/u7tfkI0eviKxUiGgyMrl4abdQEg.jpg",
+      "season_number": 0,
+      "vote_average": 0.0
+    },
+    {
+      "air_date": "2023-10-22",
+      "episode_count": 48,
+      "id": 329141,
+      "name": "第 1 季",
+      "overview": "大陆的中央有个大国，在那个国家的后宫之中有一位少女，其名为“猫猫”。她以前在花街做药师，现在在后宫做事。某天，她得知皇子们皆早夭，而现在的两个皇子都因为生病而逐渐衰弱。于是，在好奇心的驱使下，她开始调查事情的真相，就好像在说世上不可能存在诅咒。壬氏是一位外表俊美的宦官，他让猫猫当皇帝宠妃的试毒人。猫猫对人没有兴趣，却异常钟情毒和药，就是这样一位在花街长大的药师，被卷入了宫中的传闻事件。美丽的玫瑰长有刺，女人的庭院里到处都是毒，流言和阴谋更是不缺。虽然不断地被壬氏委托麻烦事，但猫猫还是照常处理。罕见的嗜毒姑娘今天也在后宫里奔走。",
+      "poster_path": "/mexFJzBEI8NqgreSUy0SEoX4PpX.jpg",
+      "season_number": 1,
+      "vote_average": 8.1
+    }
+  ],
+  "softcore": false,
+  "spoken_languages": [
+    {
+      "english_name": "Japanese",
+      "iso_639_1": "ja",
+      "name": "日本語"
+    }
+  ],
+  "status": "Returning Series",
+  "tagline": "",
+  "type": "Scripted",
+  "vote_average": 8.598,
+  "vote_count": 574
+}
