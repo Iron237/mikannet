@@ -1,0 +1,36 @@
+name: cleanup old GHCR versions
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete package versions older than v0.1.20
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          cutoff='2026-07-25T17:04:34Z'
+          endpoint='/users/${{ github.repository_owner }}/packages/container/mikannet/versions'
+
+          mapfile -t old_ids < <(
+            gh api --paginate "$endpoint?per_page=100" \
+              --jq ".[] | select(.created_at < \"$cutoff\") | .id"
+          )
+          echo "Deleting ${#old_ids[@]} old package versions"
+          for id in "${old_ids[@]}"; do
+            gh api --method DELETE "$endpoint/$id"
+          done
+
+          new_count=$(
+            gh api --paginate "$endpoint?per_page=100" \
+              --jq ".[] | select(.created_at >= \"$cutoff\") | .id" | wc -l
+          )
+          test "$new_count" -gt 0
+          echo "Retained $new_count v0.1.20 package version records"
