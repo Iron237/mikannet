@@ -28,6 +28,11 @@ EDITABLE: dict[str, tuple[str, type, bool]] = {
     "qb_port": ("下载器", int, False),
     "qb_username": ("下载器", str, False),
     "qb_password": ("下载器", str, True),
+    "bitcomet_host": ("下载器", str, False),
+    "bitcomet_port": ("下载器", int, False),
+    "bitcomet_username": ("下载器", str, False),
+    "bitcomet_password": ("下载器", str, True),
+    "bitcomet_download_root": ("下载器", str, False),
     "download_root": ("下载器", str, False),
     # 代理
     "proxy_url": ("代理", str, False),
@@ -111,6 +116,7 @@ def effective() -> dict:
 def update(changes: dict) -> dict:
     """写入更改 → 灌进 settings → 持久化 Setting → 跑 apply 钩子。返回实际生效的项。"""
     applied: dict = {}
+    previous_download_root = settings.download_root
     with db_session() as db:
         for key, raw in changes.items():
             if key not in EDITABLE:
@@ -130,11 +136,17 @@ def update(changes: dict) -> dict:
                 db.add(Setting(key=key, value={"v": val}))
             else:
                 row.value = {"v": val}
-    _apply(applied)
+        if "download_root" in applied:
+            from app.services.download_paths import rebase_subscription_paths
+            n = rebase_subscription_paths(
+                db, previous_download_root, applied["download_root"])
+            if n:
+                log.info("下载根设置变更：已同步 %s 个订阅保存路径", n)
+    _apply(applied, previous_download_root)
     return applied
 
 
-def _apply(applied: dict) -> None:
+def _apply(applied: dict, previous_download_root: str | None = None) -> None:
     """对需要动作的项执行即时生效。"""
     if "poll_interval_min" in applied:
         try:
@@ -154,6 +166,14 @@ def _apply(applied: dict) -> None:
             qb_client._client = None        # 下次用时按新配置重连
         except Exception:  # noqa: BLE001
             pass
+    if ("download_root" in applied and previous_download_root
+            and settings.downloader == "qb"):
+        try:
+            from app.clients.qbittorrent import qb_client
+            qb_client.rebase_save_paths(
+                previous_download_root, applied["download_root"])
+        except Exception as e:  # noqa: BLE001 — 路径已持久化，下载器暂离线时留日志
+            log.warning("qB 下载根同步失败：%s", e)
     if any(k.startswith("bitcomet_") or k == "downloader" for k in applied):
         try:
             from app.clients.bitcomet import bitcomet_client

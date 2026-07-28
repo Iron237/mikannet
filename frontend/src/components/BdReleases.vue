@@ -74,7 +74,8 @@ async function toggleDiscs(r) {
           <button class="btn xs" :disabled="!d.bd_url" title="用 PowerDVD 蓝光播放(带菜单)" @click="open(d.bd_url)">
             <Icon name="play" :size="12" /> PowerDVD
           </button>
-          <button class="btn xs" :disabled="!d.reveal_url" title="在资源管理器中打开" @click="open(d.reveal_url)">
+          <button class="btn xs" :disabled="!d.reveal_url" title="在资源管理器中打开"
+                  aria-label="在资源管理器中打开光盘目录" @click="open(d.reveal_url)">
             <Icon name="folder-open" :size="12" />
           </button>
         </div>

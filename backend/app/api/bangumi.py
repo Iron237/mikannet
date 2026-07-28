@@ -289,12 +289,20 @@ def detail(bangumi_id: int, phase: str | None = None, db: Session = Depends(get_
             .order_by(VideoFile.relative_path)).scalars().all()
         if current is None and not ep_files:
             continue   # 这一集在当前阶段无任何内容 → 不列(正式阶段下面按总集数补缺占位)
+        # 历史任务可能仍是 ARCHIVED,但文件记录已被删除/迁移扫描清掉。详情状态必须以实际
+        # active 文件为准,否则会显示「已入库」却没有播放/打开目录按钮。
+        archived_without_file = (
+            current is not None
+            and current.status == TorrentStatus.ARCHIVED
+            and not ep_files
+        )
         eps_out.append({
             "id": ep.id, "number": ep.number, "type": ep.type.value, "title": ep.title,
             "air_date": ep.air_date,   # 每集精确放送日(bgm.tv 章节同步)
-            "status": current.status.value if current else "missing",
-            "version": current.version if current else None,
-            "torrent_id": current.id if current else None,
+            "status": "missing" if archived_without_file
+                      else (current.status.value if current else "missing"),
+            "version": None if archived_without_file else (current.version if current else None),
+            "torrent_id": None if archived_without_file else (current.id if current else None),
             "files": [_file_out(f) for f in ep_files],
         })
     known_numbers = {e["number"] for e in eps_out if e["type"] == "regular"}

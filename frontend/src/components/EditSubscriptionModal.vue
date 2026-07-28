@@ -52,7 +52,8 @@ async function save() {
         <strong>{{ sub.bangumi_title }}</strong>
         <span class="tag accent">{{ sub.subgroup_name || sub.mikan_subgroup_id }}</span>
         <div class="spacer" />
-        <button class="btn sm" @click="emit('close')"><Icon name="close" :size="13" /></button>
+        <button class="btn sm" title="关闭编辑订阅" aria-label="关闭编辑订阅"
+                @click="emit('close')"><Icon name="close" :size="13" /></button>
       </div>
       <p v-if="error" style="color: var(--red); margin-bottom: 10px;">{{ error }}</p>
 

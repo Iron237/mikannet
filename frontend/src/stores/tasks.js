@@ -32,6 +32,7 @@ export const useTasksStore = defineStore('tasks', {
           if (t) Object.assign(t, {
             status: u.status, progress: u.progress, dlspeed: u.dlspeed,
             size: u.size, eta: u.eta, state: u.state,
+            paused: !!u.paused,
             upspeed: u.upspeed, seeds: u.seeds, peers: u.peers,
           })
           else this.load()   // 出现未知任务,全量刷新

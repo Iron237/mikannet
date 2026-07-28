@@ -123,7 +123,8 @@ onMounted(() => {
         <h3>添加订阅</h3>
         <span class="muted">— 第 {{ step }} / 3 步</span>
         <div class="spacer" />
-        <button class="btn sm" @click="emit('close')"><Icon name="close" :size="13" /></button>
+        <button class="btn sm" title="关闭添加订阅" aria-label="关闭添加订阅"
+                @click="emit('close')"><Icon name="close" :size="13" /></button>
       </div>
 
       <p v-if="error" style="color: var(--red); margin-bottom: 12px;">{{ error }}</p>
@@ -139,7 +140,7 @@ onMounted(() => {
         </div>
         <div class="search-grid">
           <div v-for="r in results" :key="r.mikan_bangumi_id" class="search-item" @click="pick(r)">
-            <img v-if="r.cover" :src="r.cover" loading="lazy" />
+            <img v-if="r.cover" :src="r.cover" :alt="r.title" loading="lazy" />
             <div v-else class="no-cover">无封面</div>
             <div class="search-title">{{ r.title }}</div>
           </div>
@@ -154,7 +155,7 @@ onMounted(() => {
           <strong>{{ picked.title }}</strong>
           <div class="spacer" />
           <button v-if="!bdStep" class="btn sm" :disabled="bdBusy" @click="enterBdFlow">
-            <Icon name="disc" :size="13" /> {{ bdBusy ? '准备中…' : '添加BD源' }}
+            <Icon name="disc" :size="13" /> {{ bdBusy ? '准备中…' : '添加 BD 源' }}
           </button>
         </div>
 

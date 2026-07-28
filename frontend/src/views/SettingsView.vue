@@ -9,13 +9,17 @@ const channels = ref([])
 const saving = ref('')
 const cfgSaved = ref('')
 const testResult = ref({})
+const loadError = ref('')
 
 const LABELS = {
   poll_interval_min: 'RSS 轮询间隔(分钟)',
   tmdb_api_key: 'TMDB API Key',
-  downloader: '下载器后端(qb / bitcomet)',
+  downloader: '下载器后端',
   qb_host: 'qB 地址', qb_port: 'qB 端口', qb_username: 'qB 用户名', qb_password: 'qB 密码',
-  download_root: '下载根目录(下载器写盘路径)',
+  bitcomet_host: 'BitComet 地址', bitcomet_port: 'BitComet 端口',
+  bitcomet_username: 'BitComet 用户名', bitcomet_password: 'BitComet 密码',
+  bitcomet_download_root: 'BitComet 保存根目录',
+  download_root: '应用下载根目录(qB 保存路径)',
   proxy_url: '代理地址',
   mikan_base_url: 'Mikan 域名', nyaa_base_url: 'nyaa 域名', dmhy_base_url: 'dmhy 域名',
   organize_enabled: '整理到 Jellyfin 结构(qB 原地重命名)',
@@ -49,6 +53,7 @@ const channelMeta = {
   pushplus: { name: 'PushPlus', fields: [['token', 'Token']] },
 }
 const eventLabels = { on_new: '检测到更新', on_start: '开始下载', on_complete: '下载完成', on_fail: '下载失败' }
+const downloaderNames = { qb: 'qBittorrent', bitcomet: 'BitComet' }
 
 const groups = computed(() => {
   const m = {}
@@ -59,9 +64,15 @@ const groups = computed(() => {
 })
 
 async function load() {
-  health.value = await api.get('/api/system/health')
-  cfg.value = await api.get('/api/config')
-  channels.value = await api.get('/api/notifications')
+  loadError.value = ''
+  try {
+    const [h, c, n] = await Promise.all([
+      api.get('/api/system/health'), api.get('/api/config'), api.get('/api/notifications'),
+    ])
+    health.value = h
+    cfg.value = c
+    channels.value = n
+  } catch (e) { loadError.value = e.message }
 }
 
 async function saveConfig() {
@@ -74,17 +85,28 @@ async function saveConfig() {
     const r = await api.put('/api/config', payload)
     cfgSaved.value = `已保存并生效(${r.applied.length} 项)`
     await load()
-  } catch (e) { cfgSaved.value = '保存失败:' + e.message }
+    return true
+  } catch (e) {
+    cfgSaved.value = '保存失败:' + e.message
+    return false
+  }
 }
 
 async function saveCh(ch) {
   saving.value = ch.channel
-  try { await api.put(`/api/notifications/${ch.channel}`, ch) } finally { saving.value = '' }
+  try {
+    await api.put(`/api/notifications/${ch.channel}`, ch)
+    testResult.value = { ...testResult.value, [ch.channel]: '已保存' }
+    return true
+  } catch (e) {
+    testResult.value = { ...testResult.value, [ch.channel]: '保存失败:' + e.message }
+    return false
+  } finally { saving.value = '' }
 }
 async function testCh(ch) {
   testResult.value = { ...testResult.value, [ch.channel]: '发送中…' }
   try {
-    await saveCh(ch)
+    if (!await saveCh(ch)) return
     await api.post(`/api/notifications/${ch.channel}/test`)
     testResult.value = { ...testResult.value, [ch.channel]: '发送成功' }
   } catch (e) { testResult.value = { ...testResult.value, [ch.channel]: '发送失败:' + e.message } }
@@ -169,7 +191,7 @@ onUnmounted(() => clearTimeout(updTimer))
 
 // 先保存配置(让 .bat 嵌入当前路径前缀 + 令牌),再下载自安装协议处理器
 async function downloadHandler() {
-  await saveConfig()
+  if (!await saveConfig()) return
   // 带当前访问地址 → 安装器写浏览器免询问策略(根治每次播放弹窗)
   window.location.href = `/api/launch/handler.bat?origin=${encodeURIComponent(window.location.origin)}`
 }
@@ -260,12 +282,16 @@ onMounted(() => { load(); loadStorage(); loadVersion() })
 <template>
   <div class="page">
     <div class="page-title">设置</div>
+    <p v-if="loadError" class="load-error">
+      配置加载失败:{{ loadError }}
+      <button class="btn sm" @click="load"><Icon name="refresh" :size="13" /> 重试</button>
+    </p>
 
     <div class="card" style="margin-bottom: 16px;">
       <div class="row health-row">
         <h3 style="margin: 0;">系统状态</h3>
         <span class="tag" :class="health?.status === 'ok' ? 'green' : 'red'" v-if="health">
-          下载器[{{ health.downloader }}] {{ health.status === 'ok' ? '已连接' : '不可达' }}
+          {{ downloaderNames[health.downloader] || health.downloader }} {{ health.status === 'ok' ? '已连接' : '不可达' }}
         </span>
         <span class="muted" v-if="health?.info"> {{ health.info.version }} </span>
         <div class="spacer" />
@@ -361,6 +387,10 @@ onMounted(() => { load(); loadStorage(); loadVersion() })
                :class="{ toggle: it.type === 'bool' }">
           <span>{{ LABELS[it.key] || it.key }}</span>
           <input v-if="it.type === 'bool'" type="checkbox" v-model="it.value" />
+          <select v-else-if="it.key === 'downloader'" class="input" v-model="it.value">
+            <option value="qb">qBittorrent</option>
+            <option value="bitcomet">BitComet</option>
+          </select>
           <input v-else-if="it.type === 'int'" type="number" class="input" v-model.number="it.value" />
           <input v-else class="input" v-model="it.value"
                  :type="it.secret ? 'password' : 'text'"
@@ -467,6 +497,10 @@ onMounted(() => { load(); loadStorage(); loadVersion() })
 .cfg-field.toggle input { accent-color: var(--accent); }
 .cred-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .cred-grid label { font-size: 12.5px; color: var(--text-dim); display: flex; flex-direction: column; gap: 5px; }
+.load-error {
+  display: flex; align-items: center; gap: 10px; color: var(--red);
+  margin: -8px 0 14px; font-size: 12.5px;
+}
 @media (max-width: 768px) {
   .cfg-grid, .cred-grid { grid-template-columns: 1fr; }
   /* 系统状态:标题独占一行,状态标签/按钮换行,不再把「系统状态」挤成竖排 */

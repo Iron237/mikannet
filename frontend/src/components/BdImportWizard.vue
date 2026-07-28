@@ -71,7 +71,8 @@ async function save() {
         <strong>导入 BD 正片</strong>
         <span v-if="data" class="muted">→ {{ data.bangumi.title }}(共 {{ data.bangumi.eps_total ?? '?' }} 集)</span>
         <div class="spacer" />
-        <button class="btn xs" @click="emit('close')"><Icon name="close" :size="14" /></button>
+        <button class="btn xs" title="关闭 BD 导入" aria-label="关闭 BD 导入"
+                @click="emit('close')"><Icon name="close" :size="14" /></button>
       </div>
 
       <div v-if="releases.length > 1" class="wiz-rel">

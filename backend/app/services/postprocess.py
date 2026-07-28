@@ -116,8 +116,32 @@ def process_torrent(db: Session, torrent_id: int) -> None:
         db.flush()
         return
 
+    root = settings.download_root_local
+    if not root.is_dir():
+        t.error_message = f"下载根目录不可访问: {root}"
+        db.flush()
+        return
+
     failures = 0
     touched_eps: set[int] = set()
+    listed_video_paths = {
+        qf["name"].replace("\\", "/").lstrip("/")
+        for qf in dl_files if media_probe.is_video(qf["name"])
+    }
+    # qB 改保存根/原地整理后，文件清单会换成新相对路径；清掉旧路径幽灵行，
+    # 否则同集质量排序可能继续选中 id 更小的旧行，把真实新文件置为 inactive。
+    stale_rows = db.execute(select(VideoFile).where(
+        VideoFile.torrent_id == t.id,
+        VideoFile.relative_path.notin_(listed_video_paths))).scalars().all()
+    for stale in stale_rows:
+        if (root / stale.relative_path).is_file():
+            continue
+        if stale.episode_id:
+            touched_eps.add(stale.episode_id)
+        db.delete(stale)
+    if stale_rows:
+        db.flush()
+
     for qf in dl_files:
         # name 已是相对 download_root 的路径(qB/BitComet 后端统一)
         rel_path = qf["name"].replace("\\", "/").lstrip("/")
@@ -132,6 +156,18 @@ def process_torrent(db: Session, torrent_id: int) -> None:
         vf = db.execute(select(VideoFile).where(
             VideoFile.torrent_id == t.id,
             VideoFile.relative_path == rel_path)).scalar_one_or_none()
+        local = root / rel_path
+        if not local.is_file():
+            # qB 未复检时可能仍报 100%/做种，但文件已删或 save_path 仍在旧下载根。
+            # 不得把 qB 内容清单当成磁盘实体；已有幽灵行也一并清掉。
+            if vf is not None:
+                if vf.episode_id:
+                    touched_eps.add(vf.episode_id)
+                db.delete(vf)
+                db.flush()
+            failures += 1
+            log.warning("后处理文件不存在 %s", local)
+            continue
         if vf is None:
             vf = VideoFile(torrent_id=t.id, relative_path=rel_path, size=qf.get("size"))
             db.add(vf)
@@ -148,7 +184,6 @@ def process_torrent(db: Session, torrent_id: int) -> None:
             vf.source = pp.source
 
         if vf.probed_at is None:
-            local = settings.download_root_local / rel_path
             try:
                 r = media_probe.probe(local)
                 vf.resolution = r.resolution

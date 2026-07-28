@@ -80,7 +80,8 @@ onUnmounted(() => { clearTimeout(pollTimer); clearTimeout(scanTimer) })
       <div class="row" style="margin-bottom: 10px;">
         <h3>导入本地番剧</h3>
         <div class="spacer" />
-        <button class="btn sm" @click="emit('close')"><Icon name="close" :size="13" /></button>
+        <button class="btn sm" title="关闭本地导入" aria-label="关闭本地导入"
+                @click="emit('close')"><Icon name="close" :size="13" /></button>
       </div>
       <p class="muted" style="font-size: 12.5px; margin-bottom: 12px;">
         扫描目录里的视频文件,按作品自动分组并匹配 bgm.tv 番剧(中文/日文名都能搜到);

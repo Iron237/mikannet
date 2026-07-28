@@ -11,6 +11,8 @@ const bare = computed(() => route.name === 'setup')   // 首次配置向导:全�
 const drawerOpen = ref(false)                          // 手机端左侧抽屉
 watch(() => route.fullPath, () => { drawerOpen.value = false })   // 切页自动收起抽屉
 const tasksStore = useTasksStore()
+const activeDownloads = computed(() =>
+  tasksStore.active.filter(t => t.status === 'downloading' && !t.paused).length)
 
 // 每日一次后台检查更新:有新版则设置项出小红点(不自动安装)
 const updateAvailable = ref(false)
@@ -50,14 +52,13 @@ onMounted(() => {
       <nav>
         <RouterLink to="/" class="nav-item"><Icon name="library" :size="17" /> 番剧库</RouterLink>
         <RouterLink to="/search" class="nav-item"><Icon name="search" :size="17" /> 搜索</RouterLink>
-        <RouterLink to="/calendar" class="nav-item"><Icon name="calendar" :size="17" /> 放送表</RouterLink>
+        <RouterLink to="/calendar" class="nav-item"><Icon name="calendar" :size="17" /> 放送日历</RouterLink>
         <RouterLink to="/discover" class="nav-item"><Icon name="zap" :size="17" /> 发现</RouterLink>
         <RouterLink to="/bd" class="nav-item"><Icon name="disc" :size="17" /> BD 收藏</RouterLink>
         <RouterLink to="/subscriptions" class="nav-item"><Icon name="rss" :size="17" /> 订阅管理</RouterLink>
         <RouterLink to="/downloads" class="nav-item">
           <Icon name="download" :size="17" /> 下载任务
-          <span v-if="tasksStore.active.filter(t => t.status === 'downloading').length"
-                class="badge">{{ tasksStore.active.filter(t => t.status === 'downloading').length }}</span>
+          <span v-if="activeDownloads" class="badge" title="正在下载">{{ activeDownloads }}</span>
         </RouterLink>
         <RouterLink to="/logs" class="nav-item"><Icon name="logs" :size="17" /> 日志</RouterLink>
         <RouterLink to="/settings" class="nav-item">

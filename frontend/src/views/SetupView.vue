@@ -15,6 +15,8 @@ const stTest = ref(null)       // { ok, error?, sample?, writable? }
 const cfg = ref({
   downloader: 'qb', qb_host: 'host.docker.internal', qb_port: 8080,
   qb_username: 'admin', qb_password: '', download_root: '/downloads',
+  bitcomet_host: 'host.docker.internal', bitcomet_port: 18888,
+  bitcomet_username: 'admin', bitcomet_password: '', bitcomet_download_root: '/Downloads',
   proxy_url: '', tmdb_api_key: '', mikan_cookie: '',
   media_host_root: '', bd_owned_host_root: '',
 })
@@ -68,7 +70,7 @@ onMounted(async () => {
     st.value.smb_host_path = s.smb_host_path || ''
     st.value.smb_username = s.smb_username || ''
     st.value.smb_vers = s.smb_vers || '3.0'
-  } catch { /* 首启可能尚无配置 */ }
+  } catch (e) { msg.value = '读取现有配置失败:' + e.message }
 })
 
 async function testStorage() {
@@ -78,6 +80,22 @@ async function testStorage() {
   finally { busy.value = false }
 }
 
+function downloaderPayload() {
+  return {
+    downloader: cfg.value.downloader,
+    download_root: cfg.value.download_root,
+    qb_host: cfg.value.qb_host,
+    qb_port: cfg.value.qb_port,
+    qb_username: cfg.value.qb_username,
+    qb_password: cfg.value.qb_password,
+    bitcomet_host: cfg.value.bitcomet_host,
+    bitcomet_port: cfg.value.bitcomet_port,
+    bitcomet_username: cfg.value.bitcomet_username,
+    bitcomet_password: cfg.value.bitcomet_password,
+    bitcomet_download_root: cfg.value.bitcomet_download_root,
+  }
+}
+
 async function next() {
   busy.value = true; msg.value = ''
   try {
@@ -85,11 +103,7 @@ async function next() {
       // 保存存储并挂载;smb 挂载失败会抛错,挡住下一步
       await api.post('/api/setup/storage', st.value)
     } else if (step.value === 1) {
-      await api.put('/api/config', {
-        downloader: cfg.value.downloader, qb_host: cfg.value.qb_host, qb_port: cfg.value.qb_port,
-        qb_username: cfg.value.qb_username, qb_password: cfg.value.qb_password,
-        download_root: cfg.value.download_root,
-      })
+      await api.put('/api/config', downloaderPayload())
     } else if (step.value === 2) {
       await api.put('/api/config', { proxy_url: cfg.value.proxy_url })
     } else if (step.value === 3) {
@@ -116,10 +130,7 @@ async function downloadHandler() {
 async function testDownloader() {
   busy.value = true; dlHealth.value = '测试中…'
   try {
-    await api.put('/api/config', {
-      downloader: cfg.value.downloader, qb_host: cfg.value.qb_host, qb_port: cfg.value.qb_port,
-      qb_username: cfg.value.qb_username, qb_password: cfg.value.qb_password,
-    })
+    await api.put('/api/config', downloaderPayload())
     const h = await api.get('/api/system/health')
     dlHealth.value = h.status === 'ok'
       ? `连接成功 · ${h.downloader} ${h.info?.version || ''}` : `不可达:${h.error || h.status}`
@@ -180,16 +191,26 @@ async function finish() {
       <!-- 1 下载器 -->
       <div v-else-if="step === 1" class="body">
         <h3>下载器</h3>
-        <p class="muted">连接 qBittorrent(桌面版推荐 <code>host.docker.internal</code> + 桌面端口)。可「测试」,也可先跳过稍后在设置页配。</p>
+        <p class="muted">连接 qBittorrent 或 BitComet。部署在宿主机时地址通常填
+          <code>host.docker.internal</code>;可先测试,也可稍后在设置页修改。</p>
         <div class="grid2">
           <label class="fld"><span>后端</span>
             <select class="input" v-model="cfg.downloader"><option value="qb">qBittorrent</option><option value="bitcomet">BitComet</option></select>
           </label>
-          <label class="fld"><span>下载保存目录(qB 写入的路径)</span><input class="input" v-model="cfg.download_root" placeholder="/downloads 或 NAS 路径" /></label>
-          <label class="fld"><span>地址</span><input class="input" v-model="cfg.qb_host" /></label>
-          <label class="fld"><span>端口</span><input class="input" type="number" v-model.number="cfg.qb_port" /></label>
-          <label class="fld"><span>用户名</span><input class="input" v-model="cfg.qb_username" /></label>
-          <label class="fld"><span>密码</span><input class="input" type="password" v-model="cfg.qb_password" /></label>
+          <label class="fld"><span>应用下载根目录(qB 保存路径)</span><input class="input" v-model="cfg.download_root" placeholder="/downloads" /></label>
+          <template v-if="cfg.downloader === 'qb'">
+            <label class="fld"><span>qB 地址</span><input class="input" v-model="cfg.qb_host" /></label>
+            <label class="fld"><span>qB 端口</span><input class="input" type="number" v-model.number="cfg.qb_port" /></label>
+            <label class="fld"><span>qB 用户名</span><input class="input" v-model="cfg.qb_username" /></label>
+            <label class="fld"><span>qB 密码</span><input class="input" type="password" v-model="cfg.qb_password" /></label>
+          </template>
+          <template v-else>
+            <label class="fld"><span>BitComet 地址</span><input class="input" v-model="cfg.bitcomet_host" /></label>
+            <label class="fld"><span>BitComet 端口</span><input class="input" type="number" v-model.number="cfg.bitcomet_port" /></label>
+            <label class="fld"><span>BitComet 用户名</span><input class="input" v-model="cfg.bitcomet_username" /></label>
+            <label class="fld"><span>BitComet 密码</span><input class="input" type="password" v-model="cfg.bitcomet_password" /></label>
+            <label class="fld"><span>BitComet 保存根目录</span><input class="input" v-model="cfg.bitcomet_download_root" placeholder="/Downloads" /></label>
+          </template>
         </div>
         <div class="row" style="gap:10px;">
           <button class="btn" :disabled="busy" @click="testDownloader">测试连接</button>

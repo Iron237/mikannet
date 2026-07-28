@@ -206,6 +206,78 @@ def test_resume_resubmits_submit_failed(db, sub):
     assert bg.tasks[0].args == (t.id,)
 
 
+def test_task_list_exposes_downloader_paused_state(db, sub, monkeypatch):
+    """暂停态来自下载器实时快照,前端才能把「暂停」按钮切成「恢复」而不是永久显示下载中。"""
+    from app.api import tasks
+    from app.clients.downloader import DlTask
+
+    t = Torrent(subscription_id=sub.id, guid="g-paused", title_raw="测试番剧 - 06",
+                torrent_url="http://x/g-paused.torrent", status=TorrentStatus.DOWNLOADING,
+                info_hash="paused-hash", parsed_json={})
+    db.add(t)
+    db.flush()
+    monkeypatch.setattr(tasks.downloader, "list_tasks", lambda: [
+        DlTask(hash="paused-hash", name=t.title_raw, progress=.5, dlspeed=0,
+               size=100, state="pausedDL", paused=True),
+    ])
+
+    row = next(x for x in tasks.list_tasks(db=db) if x.id == t.id)
+    assert row.paused is True
+    assert row.state == "pausedDL"
+
+
+def test_batch_retry_routes_completed_to_postprocess_and_skips_invalid_pause(
+        db, sub, monkeypatch):
+    """批量「恢复/重试」要重跑待入库任务;批量暂停不能误暂停已完成做种。"""
+    from fastapi import BackgroundTasks
+
+    from app.api import tasks
+    from app.services import postprocess
+
+    completed = Torrent(subscription_id=sub.id, guid="g-complete", title_raw="测试番剧 - 07",
+                        torrent_url="http://x/g-complete.torrent",
+                        status=TorrentStatus.COMPLETED, info_hash="complete-hash",
+                        parsed_json={})
+    db.add(completed)
+    db.flush()
+
+    paused_hashes = []
+    monkeypatch.setattr(tasks.downloader, "pause", paused_hashes.append)
+    bg = BackgroundTasks()
+    result = tasks.batch({"ids": [completed.id], "action": "pause"}, bg, db)
+    assert result == {"done": [], "failed": [completed.id]}
+    assert paused_hashes == []
+
+    bg = BackgroundTasks()
+    result = tasks.batch({"ids": [completed.id], "action": "retry"}, bg, db)
+    assert result == {"done": [completed.id], "failed": []}
+    assert len(bg.tasks) == 1
+    assert bg.tasks[0].func is postprocess.enqueue
+    assert bg.tasks[0].args == (completed.id,)
+
+
+def test_file_delete_keeps_record_when_disk_delete_fails(db, sub, tmp_path, monkeypatch):
+    """勾选删磁盘却因权限/占用失败时,不能仍删库记录并向前端谎报成功。"""
+    from fastapi import HTTPException
+
+    from app.api import files
+
+    t = Torrent(subscription_id=sub.id, guid="g-file", title_raw="测试文件",
+                torrent_url="", status=TorrentStatus.ARCHIVED, parsed_json={})
+    db.add(t)
+    db.flush()
+    vf = VideoFile(torrent_id=t.id, relative_path="Season 01/E01.mkv")
+    db.add(vf)
+    db.flush()
+    monkeypatch.setattr(files.settings, "download_root_local", tmp_path)
+    monkeypatch.setattr(files.os, "remove", lambda _p: (_ for _ in ()).throw(PermissionError("busy")))
+
+    with pytest.raises(HTTPException) as exc:
+        files.delete_file(vf.id, delete_disk=True, db=db)
+    assert exc.value.status_code == 409
+    assert db.get(VideoFile, vf.id) is vf
+
+
 def test_add_torrent_idempotent_on_409(monkeypatch):
     """qB 5.x 对重复 add 返回 409 Conflict → add_torrent 按幂等成功处理,不抛异常。"""
     import qbittorrentapi

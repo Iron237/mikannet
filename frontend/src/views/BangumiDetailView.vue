@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
 import { requestNative } from '../native'
@@ -13,6 +13,7 @@ import EditSubscriptionModal from '../components/EditSubscriptionModal.vue'
 const route = useRoute()
 const router = useRouter()
 const b = ref(null)
+const loadError = ref('')
 const phase = ref(null)          // 当前查看阶段:'official' | 'preview'(null=让后端选默认)
 const reorgMsg = ref('')
 const expanded = ref(new Set())
@@ -47,7 +48,7 @@ function onImported() { importReleases.value = null; load() }
 const EP_TYPE_OPTS = [['regular', '正片'], ['special', '特别篇'], ['credits', 'OP/ED'], ['trailer', 'PV/预告'], ['other', '其他']]
 const epStatus = {
   missing: ['未下载', ''], pending: ['等待中', 'blue'], downloading: ['下载中', 'accent'],
-  completed: ['已完成', 'green'], archived: ['已入库', 'green'],
+  completed: ['待入库', 'blue'], archived: ['已入库', 'green'],
   download_error: ['错误', 'red'], submit_failed: ['失败', 'red'],
 }
 
@@ -56,8 +57,13 @@ const realSubs = computed(() => (b.value?.subscriptions || []))
 // 系列导航条(bgm.tv 系列链,懒加载,失败静默;首次构建数秒,后端 6h 缓存)
 const series = ref([])
 async function loadSeries() {
-  try { series.value = await api.get(`/api/bangumi/${route.params.id}/series`) }
-  catch { series.value = [] }
+  const id = String(route.params.id)
+  try {
+    const result = await api.get(`/api/bangumi/${id}/series`)
+    if (String(route.params.id) === id) series.value = result
+  } catch {
+    if (String(route.params.id) === id) series.value = []
+  }
 }
 
 function epTitle(ep) {
@@ -73,8 +79,11 @@ function fmtTime(iso) {
 }
 
 async function load() {
+  const id = String(route.params.id)
   const q = phase.value ? `?phase=${phase.value}` : ''
-  b.value = await api.get(`/api/bangumi/${route.params.id}${q}`)
+  const result = await api.get(`/api/bangumi/${id}${q}`)
+  if (String(route.params.id) !== id) return
+  b.value = result
   phase.value = b.value.phase          // 首次由后端定默认阶段,之后保持用户选择
   autoBest.value = !!b.value.auto_best
   bdOwned.value = !!b.value.bd_owned
@@ -205,12 +214,13 @@ function toggleExpand(id) {
 }
 
 const retrying = ref(null)   // 重试中的 torrent_id(防连点)
-async function redownload(ep) {
+async function retryTask(ep) {
   if (!ep.torrent_id) return
   retrying.value = ep.torrent_id
   opMsg.value = ''
   try {
-    await api.post(`/api/tasks/${ep.torrent_id}/resume`)
+    const action = ep.status === 'completed' ? 'postprocess' : 'resume'
+    await api.post(`/api/tasks/${ep.torrent_id}/${action}`)
     await load()
   } catch (e) { opMsg.value = e.message }
   finally { retrying.value = null }
@@ -281,21 +291,42 @@ async function syncAnidb() {
   finally { anidbBusy.value = false }
 }
 
-onMounted(async () => {
-  await load()
-  loadSeries()       // 系列导航条:不阻塞主内容
-  loadAutoStatus()   // 智能下载状态卡
-  const a = await api.get('/api/bangumi/auto-scan/status')
-  if (a.running) { autoScan.value = a; pollAuto() }
+async function initialize() {
+  clearTimeout(autoTimer)
+  b.value = null
+  phase.value = null
+  series.value = []
+  autoStatus.value = null
+  loadError.value = ''
+  expanded.value = new Set()
+  try {
+    await load()
+    loadSeries()       // 系列导航条:不阻塞主内容
+    loadAutoStatus()   // 智能下载状态卡
+    const a = await api.get('/api/bangumi/auto-scan/status')
+    if (a.running) { autoScan.value = a; pollAuto() }
+  } catch (e) { loadError.value = e.message }
+}
+
+onMounted(initialize)
+watch(() => route.params.id, (id, oldId) => {
+  if (oldId !== undefined && id !== oldId) initialize()
 })
 onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
 </script>
 
 <template>
-  <div v-if="b">
+  <div v-if="loadError" class="page">
+    <div class="card load-error">
+      <Icon name="alert" :size="18" />
+      <span>番剧详情加载失败:{{ loadError }}</span>
+      <button class="btn sm" @click="initialize"><Icon name="refresh" :size="13" /> 重试</button>
+    </div>
+  </div>
+  <div v-else-if="b">
     <div class="hero" :style="b.backdrop ? { backgroundImage: `url(${b.backdrop})` } : {}">
       <div class="hero-inner page">
-        <img v-if="b.poster" :src="b.poster" class="hero-poster" />
+        <img v-if="b.poster" :src="b.poster" :alt="b.title" class="hero-poster" />
         <div class="hero-info">
           <h1>{{ b.title }}</h1>
           <div class="muted" v-if="b.title_original">{{ b.title_original }}</div>
@@ -490,10 +521,11 @@ onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
           <span class="tag" :class="epStatus[ep.status]?.[1]">{{ epStatus[ep.status]?.[0] ?? ep.status }}</span>
           <span v-if="ep.version > 1" class="tag accent">v{{ ep.version }}</span>
           <div class="spacer" />
-          <button v-if="['download_error', 'submit_failed'].includes(ep.status) && ep.torrent_id"
+          <button v-if="['download_error', 'submit_failed', 'completed'].includes(ep.status) && ep.torrent_id"
                   class="btn xs" :disabled="retrying === ep.torrent_id"
-                  title="重新提交/恢复该集下载" @click.stop="redownload(ep)">
-            <Icon name="refresh" :size="12" /> 重试
+                  :title="ep.status === 'completed' ? '重新执行媒体探测与入库' : '重新提交或恢复该集下载'"
+                  @click.stop="retryTask(ep)">
+            <Icon name="refresh" :size="12" /> {{ ep.status === 'completed' ? '重试入库' : '重试下载' }}
           </button>
           <template v-if="ep.files.length">
             <button class="btn xs" title="用默认播放器播放" @click.stop="native(ep.files[0].play_url)">
@@ -627,6 +659,7 @@ onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
       </div>
     </div>
   </div>
+  <div v-else class="page muted">加载中…</div>
 </template>
 
 <style scoped>
@@ -684,6 +717,7 @@ onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
 .auto-toggle input { accent-color: var(--accent); }
 .auto-status { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-dim); }
 .op-msg { color: var(--red); font-size: 12.5px; margin-bottom: 10px; }
+.load-error { display: flex; align-items: center; gap: 10px; color: var(--red); }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .seg-btn { background: transparent; color: var(--text-dim); border: none; padding: 4px 14px;
   font-size: 12.5px; cursor: pointer; }

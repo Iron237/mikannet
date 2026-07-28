@@ -32,6 +32,8 @@ DATA_MODELS = [Bangumi, Subscription, Episode, Torrent, TorrentEpisode,
 # 但排除「本机/连接相关、由首次向导各机自配」的项,避免导入把新机的配置覆盖回旧机的。
 _SETTING_DENYLIST = {
     "qb_host", "qb_port", "qb_username", "qb_password", "download_root", "proxy_url",
+    "bitcomet_host", "bitcomet_port", "bitcomet_username", "bitcomet_password",
+    "bitcomet_download_root",
     "media_host_root", "bd_owned_host_root", "data_host_root", "powerdvd_path",
 }
 

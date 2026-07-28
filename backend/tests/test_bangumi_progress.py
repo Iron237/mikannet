@@ -9,10 +9,10 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.api.bangumi import _eps_aired, _weekly_aired
+from app.api.bangumi import _eps_aired, _weekly_aired, detail
 from app.database import Base
 from app.models import (Bangumi, Episode, EpisodeType, Kind, Subscription, Torrent,
-                        TorrentStatus, VideoFile)
+                        TorrentEpisode, TorrentStatus, VideoFile)
 
 
 @pytest.fixture()
@@ -105,3 +105,21 @@ def test_aired_capped_to_total(db):
 def test_aired_none_for_non_tv_or_no_total(db):
     assert _eps_aired(db, _bangumi(db, kind=Kind.MOVIE)) is None
     assert _eps_aired(db, _bangumi(db, eps_total=None)) is None
+
+
+def test_detail_does_not_claim_archived_when_file_is_gone(db):
+    """历史任务留在 ARCHIVED、实际文件记录已清掉时,详情必须显示未下载而非“已入库”。"""
+    b = _bangumi(db, eps_total=1)
+    sub = _sub(db, b)
+    ep = Episode(bangumi_id=b.id, number=1, type=EpisodeType.REGULAR)
+    db.add(ep)
+    db.flush()
+    t = _torrent(db, sub, [1], guid="ghost", status=TorrentStatus.ARCHIVED)
+    db.add(TorrentEpisode(torrent_id=t.id, episode_id=ep.id))
+    db.flush()
+
+    result = detail(b.id, phase="official", db=db)
+    row = next(e for e in result["episodes"] if e["number"] == 1)
+    assert row["status"] == "missing"
+    assert row["torrent_id"] is None
+    assert row["files"] == []

@@ -38,7 +38,10 @@ router.beforeEach(async (to) => {
   if (_configured === null) {
     try {
       const r = await fetch('/api/setup/status')
-      _configured = (await r.json()).configured
+      if (!r.ok) throw new Error(`setup status ${r.status}`)
+      const data = await r.json()
+      if (typeof data.configured !== 'boolean') throw new Error('setup status 响应无效')
+      _configured = data.configured
     } catch {
       _configured = true   // 接口异常不锁死用户
     }

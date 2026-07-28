@@ -10,16 +10,32 @@ const bangumiList = ref([])
 const scan = ref(null)
 const importReleases = ref(null)   // 非空 = 打开正片导入向导(传入的发行数组)
 const filter = ref('all')          // all | owned | unowned | unbound
+const loading = ref(true)
+const loadError = ref('')
 let scanTimer = null
 let mounted = true
 
-async function reload() { releases.value = await api.get('/api/bd/releases') }
+async function reload() {
+  loadError.value = ''
+  try { releases.value = await api.get('/api/bd/releases') }
+  catch (e) { loadError.value = e.message; throw e }
+}
+async function loadAll() {
+  loadError.value = ''
+  try {
+    const [rs, bs] = await Promise.all([api.get('/api/bd/releases'), api.get('/api/bangumi')])
+    releases.value = rs
+    bangumiList.value = bs
+  } catch (e) { loadError.value = e.message; throw e }
+}
 
 onMounted(async () => {
-  await reload()
-  bangumiList.value = await api.get('/api/bangumi')
-  const s = await api.get('/api/bd/scan/status')
-  if (s.running) { scan.value = s; poll() }
+  try { await loadAll() } catch { /* 页面显示 loadError */ }
+  finally { loading.value = false }
+  try {
+    const s = await api.get('/api/bd/scan/status')
+    if (s.running) { scan.value = s; poll() }
+  } catch { /* 扫描状态不影响发行列表 */ }
 })
 onUnmounted(() => { mounted = false; clearTimeout(scanTimer) })
 
@@ -39,11 +55,13 @@ async function startScan() {
   catch (e) { scan.value = { error: e.message } }
 }
 async function poll() {
-  const s = await api.get('/api/bd/scan/status')
-  if (!mounted) return
-  scan.value = s
-  if (scan.value.running) scanTimer = setTimeout(poll, 1500)
-  else await reload()
+  try {
+    const s = await api.get('/api/bd/scan/status')
+    if (!mounted) return
+    scan.value = s
+    if (scan.value.running) scanTimer = setTimeout(poll, 1500)
+    else await reload()
+  } catch (e) { scan.value = { error: e.message } }
 }
 async function toggleOwned(r) {
   await api.patch(`/api/bd/releases/${r.id}`, { owned: !r.owned }); await reload()
@@ -85,7 +103,8 @@ const SRC = { bdrip: ['BDRip', 'accent'], raw_disc: ['自购原盘', 'green'] }
         <span class="muted" v-if="scan.current">· {{ scan.current }}</span>
         <span>· 发行 {{ scan.releases }} 套</span>
         <div class="spacer" />
-        <button v-if="!scan.running" class="btn sm" @click="scan = null"><Icon name="close" :size="13" /></button>
+        <button v-if="!scan.running" class="btn sm" title="关闭扫描结果" aria-label="关闭扫描结果"
+                @click="scan = null"><Icon name="close" :size="13" /></button>
       </template>
     </div>
 
@@ -94,11 +113,18 @@ const SRC = { bdrip: ['BDRip', 'accent'], raw_disc: ['自购原盘', 'green'] }
       「已购买」会让对应番剧<b>完全不自动下载</b>(收藏即可)。
     </p>
 
-    <div v-if="!shown.length" class="empty card">还没有 BD 记录 — 点「扫描 BD」识别。</div>
+    <div v-if="loading" class="muted">加载中…</div>
+    <div v-else-if="loadError" class="empty card" style="color: var(--red);">
+      加载失败:{{ loadError }}
+      <button class="btn sm" style="margin-left: 8px;" @click="loadAll">
+        <Icon name="refresh" :size="13" /> 重试
+      </button>
+    </div>
+    <div v-else-if="!shown.length" class="empty card">还没有 BD 记录 — 点「扫描 BD」识别。</div>
 
     <div v-for="r in shown" :key="r.id" class="bd-row card">
       <div class="row" style="flex-wrap: wrap; gap: 8px;">
-        <img v-if="r.poster" :src="r.poster" class="bd-poster" />
+        <img v-if="r.poster" :src="r.poster" :alt="r.title" class="bd-poster" />
         <div class="bd-meta">
           <div class="row" style="gap: 8px; flex-wrap: wrap;">
             <strong class="bd-title" :title="r.title">{{ r.title }}</strong>

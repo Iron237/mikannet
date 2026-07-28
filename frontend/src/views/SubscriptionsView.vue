@@ -30,6 +30,8 @@ const selected = ref(new Set())
 const delConfirm = ref(null)     // { ids: [...] } 待确认删除
 const delFiles = ref(false)
 const busy = ref(false)
+const loading = ref(true)
+const loadError = ref('')
 let pollTimer = null
 let mounted = true
 
@@ -45,7 +47,13 @@ function selectAll() { selected.value = new Set(subs.value.map(s => s.id)) }
 function clearSel() { selected.value = new Set() }
 
 async function load() {
-  subs.value = await api.get('/api/subscriptions')
+  loadError.value = ''
+  try {
+    subs.value = await api.get('/api/subscriptions')
+  } catch (e) {
+    loadError.value = e.message
+    throw e
+  }
   const ids = new Set(subs.value.map(s => s.id))
   selected.value = new Set([...selected.value].filter(id => ids.has(id)))
 }
@@ -78,10 +86,12 @@ async function startImportAll() {
   } catch (e) { allError.value = e.message }
 }
 async function pollImportAll() {
-  allStatus.value = await api.get('/api/import/mikan-all/status')
-  if (!mounted) return            // 卸载后别再轮询/起定时器(否则导入数分钟内切页会泄漏)
-  await load()
-  if (allStatus.value.running) allTimer = setTimeout(pollImportAll, 2000)
+  try {
+    allStatus.value = await api.get('/api/import/mikan-all/status')
+    if (!mounted) return            // 卸载后别再轮询/起定时器(否则导入数分钟内切页会泄漏)
+    await load()
+    if (allStatus.value.running) allTimer = setTimeout(pollImportAll, 2000)
+  } catch (e) { allError.value = e.message }
 }
 
 async function startImport() {
@@ -93,15 +103,20 @@ async function startImport() {
 }
 
 async function pollImport() {
-  importStatus.value = await api.get('/api/import/mikan/status')
-  if (!mounted) return
-  await load()
-  if (importStatus.value.running) {
-    pollTimer = setTimeout(pollImport, 2000)
-  }
+  try {
+    importStatus.value = await api.get('/api/import/mikan/status')
+    if (!mounted) return
+    await load()
+    if (importStatus.value.running) {
+      pollTimer = setTimeout(pollImport, 2000)
+    }
+  } catch (e) { importError.value = e.message }
 }
 
-onMounted(load)
+onMounted(async () => {
+  try { await load() } catch { /* 页面显示 loadError */ }
+  finally { loading.value = false }
+})
 onUnmounted(() => { mounted = false; clearTimeout(pollTimer); clearTimeout(allTimer) })
 </script>
 
@@ -115,8 +130,8 @@ onUnmounted(() => { mounted = false; clearTimeout(pollTimer); clearTimeout(allTi
       </button>
       <button v-if="subs.length" class="btn sm" :disabled="!selected.size" @click="clearSel">清空选择</button>
       <button class="btn" @click="showLocalImport = true"><Icon name="folder" :size="14" /> 导入本地番剧</button>
-      <button class="btn" @click="showImportAll = true"><Icon name="folder-in" :size="14" /> 蜜柑订阅入库</button>
-      <button class="btn" @click="showImport = true"><Icon name="download" :size="14" /> 导入蜜柑订阅</button>
+      <button class="btn" @click="showImportAll = true"><Icon name="folder-in" :size="14" /> 同步蜜柑收藏</button>
+      <button class="btn" @click="showImport = true"><Icon name="download" :size="14" /> 导入蜜柑 RSS</button>
       <button class="btn primary" @click="showWizard = true"><Icon name="plus" :size="14" /> 添加订阅</button>
     </div>
 
@@ -128,7 +143,14 @@ onUnmounted(() => { mounted = false; clearTimeout(pollTimer); clearTimeout(allTi
       </button>
     </div>
 
-    <div v-if="!subs.length" class="card" style="text-align: center; padding: 50px; color: var(--text-dim);">
+    <div v-if="loading" class="muted">加载中…</div>
+    <div v-else-if="loadError" class="card" style="text-align: center; padding: 30px; color: var(--red);">
+      加载失败:{{ loadError }}
+      <button class="btn sm" style="margin-left: 8px;" @click="load">
+        <Icon name="refresh" :size="13" /> 重试
+      </button>
+    </div>
+    <div v-else-if="!subs.length" class="card" style="text-align: center; padding: 50px; color: var(--text-dim);">
       还没有订阅 — 点击右上角「添加订阅」搜索蜜柑番剧
     </div>
 
@@ -179,7 +201,7 @@ onUnmounted(() => { mounted = false; clearTimeout(pollTimer); clearTimeout(allTi
         </p>
         <label class="row" style="margin: 16px 0; cursor: pointer;">
           <input type="checkbox" v-model="delFiles" />
-          同时删除已下载的文件
+          同时删除已下载的文件(不可恢复)
         </label>
         <div class="row" style="justify-content: flex-end;">
           <button class="btn" @click="delConfirm = null">取消</button>

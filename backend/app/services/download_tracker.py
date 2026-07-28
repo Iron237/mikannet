@@ -197,6 +197,7 @@ def _sync_once() -> tuple[list[dict], bool]:
                 "progress": round(t.progress, 4), "dlspeed": t.dlspeed,
                 "size": t.size, "eta": lt.eta if lt else None,
                 "state": lt.state if lt else None,
+                "paused": bool(lt.paused) if lt else False,
                 "upspeed": lt.upspeed if lt else 0,
                 "seeds": lt.seeds if lt else 0,
                 "peers": lt.peers if lt else 0,

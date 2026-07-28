@@ -57,6 +57,8 @@ def list_tasks(status: TorrentStatus | None = None, db: Session = Depends(get_db
             seeds=lt.seeds if lt else 0,
             peers=lt.peers if lt else 0,
             eta=lt.eta if lt else None,
+            state=lt.state if lt else None,
+            paused=bool(lt.paused) if lt else False,
             bangumi_title=b.title if b else None,
             season_number=(b.season_number or 1) if b else 1,
             error_message=t.error_message, published_at=t.published_at,
@@ -86,12 +88,12 @@ def retry_postprocess(task_id: int, db: Session = Depends(get_db)):
 
 @router.post("/batch")
 def batch(payload: dict, background: BackgroundTasks, db: Session = Depends(get_db)):
-    """批量操作下载任务。payload: {ids:[...], action:'pause'|'resume'|'delete', delete_files?:bool}。
+    """批量操作下载任务。payload: {ids:[...], action:'pause'|'resume'|'retry'|'delete', delete_files?:bool}。
     delete 对无 info_hash 的任务也能处理(仅标记 DB SKIPPED),不像单条接口会 409。"""
     ids = payload.get("ids") or []
     action = payload.get("action")
     delete_files = bool(payload.get("delete_files"))
-    if action not in ("pause", "resume", "delete"):
+    if action not in ("pause", "resume", "retry", "delete"):
         raise HTTPException(400, "未知操作")
     done: list[int] = []
     failed: list[int] = []
@@ -106,16 +108,31 @@ def batch(payload: dict, background: BackgroundTasks, db: Session = Depends(get_
                     downloader.delete(t.info_hash, delete_files=delete_files)
                 t.status = TorrentStatus.SKIPPED
                 t.error_message = "手动删除"
-            elif t.info_hash:               # pause/resume 仅对已提交任务有意义
-                (downloader.pause if action == "pause" else downloader.resume)(t.info_hash)
+            elif action == "pause":
+                if not t.info_hash or t.status != TorrentStatus.DOWNLOADING:
+                    failed.append(tid)
+                    continue
+                downloader.pause(t.info_hash)
                 # 暂停/恢复都清计时:暂停期间不积累坏种/无进度判定,恢复后重新计
                 t.stalled_since = None
                 t.progress_at = None
-                if action == "resume" and t.status == TorrentStatus.DOWNLOAD_ERROR:
+            elif action in ("resume", "retry") and t.info_hash and t.status in (
+                    TorrentStatus.DOWNLOADING, TorrentStatus.DOWNLOAD_ERROR):
+                downloader.resume(t.info_hash)
+                t.stalled_since = None
+                t.progress_at = None
+                if t.status == TorrentStatus.DOWNLOAD_ERROR:
                     t.status = TorrentStatus.DOWNLOADING   # 恢复无进度暂停/错误 → 重新跟踪
                     t.error_message = None
-            elif action == "resume" and t.status == TorrentStatus.SUBMIT_FAILED and t.subscription:
+            elif action in ("resume", "retry") and t.status == TorrentStatus.SUBMIT_FAILED \
+                    and t.subscription:
                 background.add_task(_resubmit_in_background, t.id)   # 重试提交失败=异步重新提交
+            elif action == "retry" and t.status == TorrentStatus.COMPLETED:
+                from app.services.postprocess import enqueue
+                background.add_task(enqueue, t.id)
+            else:
+                failed.append(tid)
+                continue
             done.append(tid)
         except Exception:  # noqa: BLE001 — 单条失败不阻断其余
             log.warning("批量 %s 失败 task=%s", action, tid, exc_info=True)

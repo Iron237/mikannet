@@ -11,6 +11,8 @@ import qbittorrentapi
 from app.clients.bencode import info_hash_of
 from app.clients.downloader import DlTask
 from app.config import settings
+from app.services.download_paths import (legacy_download_root, rebase_path,
+                                         relative_under)
 
 log = logging.getLogger(__name__)
 
@@ -53,6 +55,9 @@ class QbClient:
         if settings.qb_category not in self.client.torrent_categories.categories:
             self.client.torrent_categories.create_category(name=settings.qb_category)
         self._migrate_legacy_category()
+        old_root = legacy_download_root(settings.download_root)
+        if old_root:
+            self.rebase_save_paths(old_root, settings.download_root)
 
     def _migrate_legacy_category(self) -> None:
         """项目改名 mikanarr→mikannet:把旧分类下的所有种子重新归到新分类,再删空的旧分类。
@@ -108,12 +113,32 @@ class QbClient:
         """种子内文件列表;name 为相对 download_root 的路径(与 BitComet 后端一致)。"""
         info = self.client.torrents.info(torrent_hashes=info_hash)
         save_path = info[0].save_path if info else settings.download_root
-        root = settings.download_root.replace("\\", "/").rstrip("/")
-        sp = (save_path or "").replace("\\", "/").rstrip("/")
-        rel = sp[len(root):].lstrip("/") if sp.startswith(root) else ""
+        rel = relative_under(save_path, settings.download_root)
+        if rel is None:
+            raise RuntimeError(
+                f"qB 保存路径不在当前下载根下: save_path={save_path!r}, "
+                f"download_root={settings.download_root!r}")
         prefix = rel + "/" if rel else ""
         return [{"name": prefix + f["name"], "size": f.get("size")}
                 for f in self.client.torrents.files(torrent_hash=info_hash)]
+
+    def rebase_save_paths(self, old_root: str, new_root: str) -> int:
+        """让 qB 原地迁移旧下载根内的任务，保持做种并保留各番剧子目录。"""
+        moved = 0
+        for torrent in self.client.torrents.info(category=settings.qb_category):
+            new_path = rebase_path(torrent.save_path, old_root, new_root)
+            if new_path is None or relative_under(torrent.save_path, new_root) is not None:
+                continue
+            try:
+                self.client.torrents.set_location(
+                    location=new_path, torrent_hashes=torrent.hash)
+                moved += 1
+            except Exception as e:  # noqa: BLE001 — 单个任务失败不阻断其它迁移/启动
+                log.warning("qB 下载根迁移失败 %s → %s: %s",
+                            torrent.save_path, new_path, e)
+        if moved:
+            log.info("qB 下载根迁移：%s 个任务 %s → %s", moved, old_root, new_root)
+        return moved
 
     def pause(self, info_hash: str) -> None:
         self.client.torrents.pause(torrent_hashes=info_hash)

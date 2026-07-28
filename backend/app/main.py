@@ -28,6 +28,8 @@ async def lifespan(_app: FastAPI):
     init_db()
     from app.services import settings_service
     settings_service.load_overrides()   # DB 设置覆盖 .env(在连下载器之前)
+    from app.services.download_paths import migrate_legacy_subscription_paths
+    migrate_legacy_subscription_paths()  # 项目改名后存量订阅 mikanarr → mikannet
     from app.services import storage
     storage.ensure_at_startup()          # smb 模式:把 NAS 挂到 /downloads(失败不阻塞)
     try:

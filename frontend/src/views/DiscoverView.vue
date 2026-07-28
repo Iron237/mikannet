@@ -70,20 +70,19 @@ onMounted(load)
           <span v-if="d.isToday" class="tag accent">今天</span>
         </h3>
         <div v-if="!d.list.length" class="muted" style="font-size: 12px;">—</div>
-        <component v-for="b in d.list" :key="b.subject_id"
-                   :is="b.local_id ? 'RouterLink' : 'RouterLink'"
+        <RouterLink v-for="b in d.list" :key="b.subject_id"
                    :to="b.local_id ? `/bangumi/${b.local_id}` : `/search?searchstr=${encodeURIComponent(b.title)}`"
                    class="disc-item" :title="b.local_id ? '已入库,点击进入详情' : '点击去搜索订阅'">
-          <img v-if="b.image" :src="b.image" loading="lazy" referrerpolicy="no-referrer" />
+          <img v-if="b.image" :src="b.image" :alt="b.title" loading="lazy" referrerpolicy="no-referrer" />
           <div class="disc-info">
             <div class="disc-title">{{ b.title }}</div>
             <div class="muted disc-meta">
               <span v-if="b.local_id" class="tag green" style="font-size: 10px;">已入库</span>
               <span v-else class="tag" style="font-size: 10px;">订阅</span>
-              <span v-if="b.score" style="color: var(--accent);">★{{ b.score }}</span>
+              <span v-if="b.score" style="color: var(--accent);"><Icon name="star" :size="10" />{{ b.score }}</span>
             </div>
           </div>
-        </component>
+        </RouterLink>
       </section>
     </div>
   </div>

@@ -48,7 +48,12 @@ def assign(file_id: int, payload: dict, db: Session = Depends(get_db)):
             raise HTTPException(400, "正片必须指定 episode_number")
         number = None
     else:
-        number = float(number)
+        try:
+            number = float(number)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "episode_number 必须是数字") from None
+        if number < 0:
+            raise HTTPException(400, "episode_number 不能小于 0")
 
     t: Torrent = vf.torrent
     bangumi_id = t.subscription.bangumi_id
@@ -125,8 +130,11 @@ def delete_file(file_id: int, delete_disk: bool = False, db: Session = Depends(g
             raise HTTPException(400, "文件路径非法(超出下载根)")
         try:
             os.remove(path)
-        except OSError as e:  # noqa: BLE001 — 文件可能已不在/做种锁定
+        except FileNotFoundError:
+            pass   # 磁盘上本就不存在,继续清掉幽灵记录
+        except OSError as e:  # 做种锁定/权限错误时保留库记录,让用户知道文件没有被删除
             log.warning("删除磁盘文件失败 %s: %s", path, e)
+            raise HTTPException(409, f"删除磁盘文件失败:{e}") from None
     db.delete(vf)
     db.flush()
     if old_ep:

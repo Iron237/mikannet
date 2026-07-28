@@ -4,6 +4,7 @@ import { api } from '../api'
 import Icon from '../components/Icon.vue'
 
 const data = ref(null)
+const error = ref('')
 const DAY_NAMES = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
 const today = (new Date().getDay() + 6) % 7   // JS 周日=0 → 我们 周一=0
 
@@ -31,7 +32,9 @@ function airLabel(b) {
 }
 
 async function load() {
-  try { data.value = await api.get('/api/bangumi/calendar/week') } catch { /* 忽略,保留上次 */ }
+  error.value = ''
+  try { data.value = await api.get('/api/bangumi/calendar/week') }
+  catch (e) { error.value = e.message }
 }
 
 // 手动刷新:重拉 bgm.tv 放送信息(延期/提档检测),结果就地展示
@@ -68,7 +71,11 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisible))
       </button>
     </div>
     <p v-if="refreshMsg" class="muted" style="font-size: 12px; margin: 6px 0 10px;">{{ refreshMsg }}</p>
-    <div v-if="!data" class="muted">加载中…</div>
+    <div v-if="error && !data" class="card load-error">
+      加载失败:{{ error }}
+      <button class="btn sm" @click="load"><Icon name="refresh" :size="13" /> 重试</button>
+    </div>
+    <div v-else-if="!data" class="muted">加载中…</div>
     <template v-else>
       <div class="week">
         <section v-for="d in ordered" :key="d.day" class="day" :class="{ today: d.isToday }">
@@ -79,7 +86,7 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisible))
           </h3>
           <div v-if="!d.list.length" class="muted" style="font-size: 12px;">—</div>
           <RouterLink v-for="b in d.list" :key="b.id" :to="`/bangumi/${b.id}`" class="cal-item">
-            <img v-if="b.poster" :src="b.poster" loading="lazy" />
+            <img v-if="b.poster" :src="b.poster" :alt="b.title" loading="lazy" />
             <div class="cal-info">
               <div class="cal-title">{{ b.title }}</div>
               <div class="muted cal-eps">
@@ -102,7 +109,7 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisible))
                 <template v-else>
                   已下载 {{ b.eps_downloaded }}{{ b.eps_total ? '/' + b.eps_total : '' }} 集
                 </template>
-                <span v-if="b.score" style="color: var(--accent);">★{{ b.score }}</span>
+                <span v-if="b.score" style="color: var(--accent);"><Icon name="star" :size="10" />{{ b.score }}</span>
               </div>
             </div>
           </RouterLink>
@@ -145,6 +152,7 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisible))
 }
 .cal-eps { font-size: 11px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .new-ep { color: var(--red, #e5484d); font-weight: 700; font-size: 10.5px; }
+.load-error { display: flex; align-items: center; gap: 10px; color: var(--red); }
 @media (max-width: 768px) {
   .week { grid-template-columns: 1fr 1fr; }
 }

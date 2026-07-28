@@ -9,6 +9,7 @@ const level = ref('ALL')
 const lines = ref([])
 const logsDir = ref(null)   // { reveal_url, configured, archive_count }
 const paused = ref(false)
+const copyMsg = ref('')
 const logbox = ref(null)
 let stick = true            // 终端式跟随底部;用户上滚查看旧日志时暂停跟随,滚回底部恢复
 let timer = null
@@ -39,7 +40,10 @@ function openLogDir() { if (logsDir.value?.reveal_url) requestNative(logsDir.val
 async function copyAll() {
   const text = lines.value.map(l =>
     `${new Date(l.ts).toLocaleString('zh-CN')} ${l.level} ${l.logger}: ${l.msg}`).join('\n')
-  try { await navigator.clipboard.writeText(text) } catch { /* ignore */ }
+  try {
+    await navigator.clipboard.writeText(text)
+    copyMsg.value = `已复制 ${lines.value.length} 条`
+  } catch { copyMsg.value = '复制失败:浏览器未授予剪贴板权限' }
 }
 
 onMounted(async () => {
@@ -56,9 +60,10 @@ onUnmounted(() => clearInterval(timer))
       <div class="page-title" style="margin: 0;">日志</div>
       <div class="spacer" />
       <button class="btn sm" :class="{ primary: paused }" @click="paused = !paused">
-        {{ paused ? '已暂停' : '实时' }}
+        <Icon :name="paused ? 'play' : 'pause'" :size="13" /> {{ paused ? '继续刷新' : '暂停刷新' }}
       </button>
       <button class="btn sm" @click="copyAll"><Icon name="copy" :size="13" /> 复制</button>
+      <span v-if="copyMsg" class="muted" style="font-size: 12px;">{{ copyMsg }}</span>
     </div>
 
     <div class="tabs">
@@ -83,12 +88,12 @@ onUnmounted(() => clearInterval(timer))
       <Icon name="folder-open" :size="14" class="muted" />
       <span class="muted">历史日志(重启时压缩,全部保留<span v-if="logsDir?.archive_count">,{{ logsDir.archive_count }} 个归档</span>)都在 log 目录里,按文件名时间排列。</span>
       <div class="spacer" />
-      <button class="btn sm" :disabled="!logsDir?.reveal_url" title="在资源管理器中定位 log 目录" @click="openLogDir">
-        <Icon name="folder-open" :size="13" /> 打开 log 目录
+      <button class="btn sm" :disabled="!logsDir?.reveal_url" title="在资源管理器中定位日志目录" @click="openLogDir">
+        <Icon name="folder-open" :size="13" /> 打开日志目录
       </button>
     </div>
     <div v-if="logsDir && !logsDir.reveal_url" class="muted logdir-hint">
-      「打开 log 目录」需配置:设置 → 播放 填「data 目录路径」并安装协议处理器(mikannet://)后可一键打开。
+      「打开日志目录」需配置:设置 → 播放 填「data 目录路径」并安装协议处理器(mikannet://)后可一键打开。
     </div>
   </div>
 </template>

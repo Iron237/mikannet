@@ -6,9 +6,9 @@ import SubscribeWizard from '../components/SubscribeWizard.vue'
 import Icon from '../components/Icon.vue'
 
 const SOURCES = [
-  { id: 'mikan', label: 'mikan', hint: '蜜柑计划(按番剧聚合)' },
-  { id: 'nyaa', label: 'nyaa', hint: 'nyaa.si(全球)' },
-  { id: 'dmhy', label: 'dmhy', hint: '动漫花园' },
+  { id: 'mikan', label: 'Mikan', hint: '蜜柑计划(按番剧聚合)' },
+  { id: 'nyaa', label: 'Nyaa', hint: 'Nyaa.si(全球)' },
+  { id: 'dmhy', label: '动漫花园', hint: '动漫花园' },
 ]
 
 const source = ref('mikan')
@@ -23,6 +23,7 @@ const wizardPreset = ref(null)
 const sourceOpen = ref(false)
 const route = useRoute()
 const router = useRouter()
+const sourceLabel = computed(() => SOURCES.find(s => s.id === source.value)?.label || source.value)
 
 // 分面筛选
 const active = ref({ group: new Set(), resolution: new Set(), lang: new Set() })
@@ -132,7 +133,7 @@ onUnmounted(() => document.removeEventListener('click', closeMenu))
       <input v-model="keyword" class="input" placeholder="输入番剧名 / 字幕组关键词…"
              @keyup.enter="search" autofocus />
       <div class="src-select" @click.stop="sourceOpen = !sourceOpen">
-        <span>{{ source }}</span><span class="caret">▾</span>
+        <span>{{ sourceLabel }}</span><span class="caret">▾</span>
         <div v-if="sourceOpen" class="src-menu" @click.stop>
           <div v-for="s in SOURCES" :key="s.id" class="src-opt"
                :class="{ on: s.id === source }" @click="pickSource(s.id)">
@@ -150,7 +151,7 @@ onUnmounted(() => document.removeEventListener('click', closeMenu))
     <!-- mikan 番剧选择(海报) -->
     <div v-if="series.length && !currentSeries" class="series-grid">
       <div v-for="s in series" :key="s.mikan_bangumi_id" class="series-card" @click="pickSeries(s)">
-        <img v-if="s.cover" :src="s.cover" loading="lazy" />
+        <img v-if="s.cover" :src="s.cover" :alt="s.title" loading="lazy" />
         <div v-else class="no-cover">无封面</div>
         <div class="series-title">{{ s.title }}</div>
       </div>
@@ -159,7 +160,7 @@ onUnmounted(() => document.removeEventListener('click', closeMenu))
     <!-- 结果区:左海报(mikan)+ 右 chips 墙 -->
     <div v-if="torrents.length" class="results">
       <aside v-if="currentSeries" class="poster-col">
-        <img v-if="currentSeries.cover" :src="currentSeries.cover" />
+        <img v-if="currentSeries.cover" :src="currentSeries.cover" :alt="currentSeries.title" />
         <div class="poster-title">{{ currentSeries.title }}</div>
         <button class="btn primary" style="width: 100%;"
                 @click="wizardPreset = { mikan_bangumi_id: currentSeries.mikan_bangumi_id, title: currentSeries.title }">
@@ -201,7 +202,8 @@ onUnmounted(() => document.removeEventListener('click', closeMenu))
                 ▲{{ t.seeders }} ▼{{ t.leechers }}
               </span>
               <span class="meta">{{ fmtSize(t.size) }}</span>
-              <button class="icon-btn" title="复制链接" @click="copyLink(t)"><Icon name="copy" :size="14" /></button>
+              <button class="icon-btn" title="复制链接" aria-label="复制链接"
+                      @click="copyLink(t)"><Icon name="copy" :size="14" /></button>
               <a v-if="t.page_url" class="icon-btn" :href="t.page_url" target="_blank"
                  rel="noopener" title="打开详情页"><Icon name="link" :size="14" /></a>
             </div>
@@ -215,7 +217,7 @@ onUnmounted(() => document.removeEventListener('click', closeMenu))
       没有结果 — 换个关键词或来源试试
     </div>
     <div v-if="!keyword && !torrents.length && !series.length" class="empty muted">
-      选择来源(mikan / nyaa / dmhy),输入关键词开始搜索
+      选择来源(Mikan / Nyaa / 动漫花园),输入关键词开始搜索
     </div>
 
     <SubscribeWizard v-if="wizardPreset" :preset="wizardPreset" @close="wizardPreset = null" />

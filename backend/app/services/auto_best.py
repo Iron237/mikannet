@@ -135,6 +135,7 @@ def _current_ranks(db: Session, bangumi_id: int) -> dict[int, int]:
 
 def _auto_sub(db: Session, bangumi: Bangumi) -> Subscription:
     from app.api.subscriptions import _safe_dirname
+    expected_path = f"{settings.download_root}/{_safe_dirname(bangumi.title)}"
     sub = db.execute(select(Subscription).where(
         Subscription.bangumi_id == bangumi.id,
         Subscription.mikan_subgroup_id == AUTO_SUBGROUP_ID)).scalar_one_or_none()
@@ -142,8 +143,12 @@ def _auto_sub(db: Session, bangumi: Bangumi) -> Subscription:
         sub = Subscription(
             bangumi_id=bangumi.id, mikan_subgroup_id=AUTO_SUBGROUP_ID,
             subgroup_name="智能下载", enabled=False, backfill=False, exclude_batch=False,
-            save_path=f"{settings.download_root}/{_safe_dirname(bangumi.title)}")
+            save_path=expected_path)
         db.add(sub)
+        db.flush()
+    elif sub.save_path != expected_path:
+        # 智能下载订阅是内部容器，路径必须始终跟随当前下载根；否则改根后新集仍落旧目录。
+        sub.save_path = expected_path
         db.flush()
     return sub
 

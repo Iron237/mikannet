@@ -19,7 +19,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 
 from app.config import settings
 from app.database import db_session
@@ -221,20 +221,27 @@ def _register_file(db, b: Bangumi, t: Torrent, rel: str, abspath: Path,
 
 
 def _reconcile_removed(db) -> int:
-    """反向比对:容器(库扫描/本地导入)登记过、但磁盘已不在的文件 → 移除,重算 is_active。
+    """反向比对:所有库记录里磁盘已不在的文件 → 移除并重算 is_active。
 
-    安全:仅当父目录可访问、唯独该文件不在时才删(整挂载掉线时父目录也不在 → 跳过,不误删)。
+    安全:下载根不可访问或 App 管理的 SMB 未挂载时整轮跳过，避免断线时清空库。
+    根健康时父目录整体消失也属于真实缺失（正是旧下载根漂移留下幽灵记录的场景）。
     """
     from app.services.postprocess import _apply_version_switch
     root = Path(settings.download_root_local)
-    rows = db.execute(select(VideoFile).join(Torrent).where(
-        or_(Torrent.guid.like("library:%"), Torrent.guid.like("library-preview:%"),
-            Torrent.guid.like("local:%")))).scalars().all()
+    if not root.is_dir():
+        log.warning("库扫描反向比对跳过：下载根不可访问 %s", root)
+        return 0
+    if settings.storage_mode == "smb":
+        from app.services import storage
+        if not storage.is_mounted(str(root)):
+            log.warning("库扫描反向比对跳过：SMB 未挂载 %s", root)
+            return 0
+    rows = db.execute(select(VideoFile)).scalars().all()
     removed = 0
     touched: set[int] = set()
     for vf in rows:
         fp = root / vf.relative_path
-        if not fp.exists() and fp.parent.exists():   # 文件没了、但目录还在 → 确属删除
+        if not fp.is_file():
             if vf.episode_id:
                 touched.add(vf.episode_id)
             db.delete(vf)

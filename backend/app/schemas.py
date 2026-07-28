@@ -58,6 +58,8 @@ class TorrentOut(BaseModel):
     seeds: int = 0
     peers: int = 0
     eta: int | None = None
+    state: str | None = None
+    paused: bool = False
     bangumi_title: str | None = None
     season_number: int = 1
     error_message: str | None

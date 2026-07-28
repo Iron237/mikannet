@@ -11,6 +11,7 @@ const bdLabel = computed(() => srcFilter.value === 'bd_owned' ? 'BD·已购'
   : srcFilter.value === 'bd_unowned' ? 'BD·未购' : 'BD')
 const keyword = ref('')
 const loading = ref(true)
+const loadError = ref('')
 const scan = ref(null)       // 番剧库扫描状态
 let scanTimer = null
 const manageMode = ref(false)
@@ -78,7 +79,13 @@ function onCard(b, e) {
 }
 
 async function reload() {
-  items.value = await api.get('/api/bangumi')
+  loadError.value = ''
+  try {
+    items.value = await api.get('/api/bangumi')
+  } catch (e) {
+    loadError.value = e.message
+    throw e
+  }
   const ids = new Set(items.value.map(b => b.id))
   selected.value = new Set([...selected.value].filter(id => ids.has(id)))
 }
@@ -104,11 +111,13 @@ async function doAutoScan() {
   finally { busy.value = false }
 }
 async function pollAutoScan() {
-  const s = await api.get('/api/bangumi/auto-scan/status')
-  if (!mounted) return
-  autoScan.value = s
-  if (autoScan.value.running) { autoTimer = setTimeout(pollAutoScan, 1500) }
-  else { await reload() }
+  try {
+    const s = await api.get('/api/bangumi/auto-scan/status')
+    if (!mounted) return
+    autoScan.value = s
+    if (autoScan.value.running) { autoTimer = setTimeout(pollAutoScan, 1500) }
+    else { await reload() }
+  } catch (e) { autoScan.value = { error: e.message } }
 }
 const autoSubmitted = computed(() =>
   (autoScan.value?.result || []).reduce((n, r) => n + (r.submitted || 0), 0))
@@ -120,23 +129,29 @@ async function startScan() {
   } catch (e) { scan.value = { error: e.message } }
 }
 async function pollScan() {
-  const s = await api.get('/api/import/library-scan/status')
-  if (!mounted) return
-  scan.value = s
-  if (scan.value.running) {
-    scanTimer = setTimeout(pollScan, 1500)
-  } else {
-    await reload()   // 扫描完成,刷新封面墙(集数角标会更新)
-  }
+  try {
+    const s = await api.get('/api/import/library-scan/status')
+    if (!mounted) return
+    scan.value = s
+    if (scan.value.running) {
+      scanTimer = setTimeout(pollScan, 1500)
+    } else {
+      await reload()   // 扫描完成,刷新封面墙(集数角标会更新)
+    }
+  } catch (e) { scan.value = { error: e.message } }
 }
 
 onMounted(async () => {
-  await reload()
-  loading.value = false
-  const s = await api.get('/api/import/library-scan/status')
-  if (s.running) { scan.value = s; pollScan() }
-  const a = await api.get('/api/bangumi/auto-scan/status')
-  if (a.running) { autoScan.value = a; pollAutoScan() }
+  try { await reload() } catch { /* 页面显示 loadError */ }
+  finally { loading.value = false }
+  try {
+    const s = await api.get('/api/import/library-scan/status')
+    if (s.running) { scan.value = s; pollScan() }
+  } catch { /* 非关键状态查询失败不覆盖主列表 */ }
+  try {
+    const a = await api.get('/api/bangumi/auto-scan/status')
+    if (a.running) { autoScan.value = a; pollAutoScan() }
+  } catch { /* 非关键状态查询失败不覆盖主列表 */ }
 })
 onUnmounted(() => { mounted = false; clearTimeout(scanTimer); clearTimeout(autoTimer) })
 </script>
@@ -196,7 +211,8 @@ onUnmounted(() => { mounted = false; clearTimeout(scanTimer); clearTimeout(autoT
         <span class="muted" v-if="scan.skipped">· 跳过 {{ scan.skipped }} 裸盘</span>
         <span class="muted" v-if="scan.unmatched?.length">· 未匹配 {{ scan.unmatched.length }}</span>
         <div class="spacer" />
-        <button v-if="!scan.running" class="btn sm" @click="scan = null"><Icon name="close" :size="13" /></button>
+        <button v-if="!scan.running" class="btn sm" title="关闭扫描结果" aria-label="关闭扫描结果"
+                @click="scan = null"><Icon name="close" :size="13" /></button>
       </template>
     </div>
 
@@ -225,7 +241,8 @@ onUnmounted(() => { mounted = false; clearTimeout(scanTimer); clearTimeout(autoT
         <span class="muted" v-if="autoScan.current">· {{ autoScan.current }}</span>
         <span v-if="!autoScan.running">· 共提交 {{ autoSubmitted }} 个种子</span>
         <div class="spacer" />
-        <button v-if="!autoScan.running" class="btn sm" @click="autoScan = null"><Icon name="close" :size="13" /></button>
+        <button v-if="!autoScan.running" class="btn sm" title="关闭智能扫描结果" aria-label="关闭智能扫描结果"
+                @click="autoScan = null"><Icon name="close" :size="13" /></button>
       </template>
     </div>
 
@@ -252,6 +269,12 @@ onUnmounted(() => { mounted = false; clearTimeout(scanTimer); clearTimeout(autoT
     </div>
 
     <div v-if="loading" class="muted">加载中…</div>
+    <div v-else-if="loadError" class="empty card">
+      加载失败:{{ loadError }}
+      <button class="btn sm" style="margin-left: 8px;" @click="reload">
+        <Icon name="refresh" :size="13" /> 重试
+      </button>
+    </div>
     <div v-else-if="!groups.length" class="empty card">
       {{ keyword ? '没有匹配的番剧' : '番剧库还是空的 — 去订阅管理添加第一部番剧吧' }}
     </div>
@@ -271,10 +294,10 @@ onUnmounted(() => { mounted = false; clearTimeout(scanTimer); clearTimeout(autoT
             <!-- 源角标(右下角,像剧场版那样):自购原盘优先,其次正片已全替为 BDrip -->
             <span v-if="b.bd_owned" class="src-badge owned" title="自购原盘(收藏,跳 PowerDVD)">原盘BD</span>
             <span v-else-if="b.bd_rip" class="src-badge rip" title="正片已替换为 BDrip">BDrip</span>
-            <!-- TV 显示集进度;剧场版/OVA 不是集概念 → 显示形态分类(已入库/未入库) -->
+            <!-- TV 角标始终显示已下载进度;红点表示另有已播但未下载的集 -->
             <div class="ep-badge" v-if="b.kind === 'tv' && b.eps_total" :class="{ 'has-new': hasNew(b) }"
                  :title="b.eps_aired != null ? `已播 ${b.eps_aired}/${b.eps_total},已下载 ${b.eps_downloaded}` : `已下载 ${b.eps_downloaded}/${b.eps_total}`">
-              <span v-if="hasNew(b)" class="nd" />{{ b.eps_aired != null ? b.eps_aired : b.eps_downloaded }}/{{ b.eps_total }}
+              <span v-if="hasNew(b)" class="nd" />{{ b.eps_downloaded }}/{{ b.eps_total }}
             </div>
             <div class="ep-badge kind" v-else-if="b.kind && b.kind !== 'tv'" :class="{ dim: !b.has_resource }">
               {{ b.kind === 'movie' ? '剧场版' : 'OVA' }}{{ b.has_resource ? '' : '·未入库' }}
@@ -286,7 +309,7 @@ onUnmounted(() => { mounted = false; clearTimeout(scanTimer); clearTimeout(autoT
           <div class="info">
             <div class="title" :title="b.title">{{ b.title }}</div>
             <div class="meta muted">
-              <span v-if="b.score" class="score">★ {{ b.score }}</span>
+              <span v-if="b.score" class="score"><Icon name="star" :size="11" /> {{ b.score }}</span>
               <span class="studio" v-if="b.studio" :title="b.studio">{{ b.studio }}</span>
             </div>
           </div>
@@ -323,7 +346,7 @@ onUnmounted(() => { mounted = false; clearTimeout(scanTimer); clearTimeout(autoT
         </p>
         <label class="row" style="margin: 16px 0; cursor: pointer;">
           <input type="checkbox" v-model="delFiles" />
-          同时删除已下载的文件
+          同时删除已下载的文件(不可恢复)
         </label>
         <div class="row" style="justify-content: flex-end;">
           <button class="btn" @click="delConfirm = null">取消</button>
