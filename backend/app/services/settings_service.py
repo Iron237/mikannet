@@ -49,11 +49,11 @@ EDITABLE: dict[str, tuple[str, type, bool]] = {
     "dead_torrent_hours": ("坏种清理", int, False),
     "stall_pause_enabled": ("坏种清理", bool, False),
     "stall_pause_hours": ("坏种清理", int, False),
-    # 智能下载偏好
-    "auto_dl_resolution": ("智能下载", str, False),
-    "auto_dl_sub_lang": ("智能下载", str, False),
-    "auto_dl_prefer_bd": ("智能下载", bool, False),
-    "auto_dl_interval_min": ("智能下载", int, False),
+    # 自动补全与升级偏好
+    "auto_dl_resolution": ("自动补全与升级", str, False),
+    "auto_dl_sub_lang": ("自动补全与升级", str, False),
+    "auto_dl_prefer_bd": ("自动补全与升级", bool, False),
+    "auto_dl_interval_min": ("自动补全与升级", int, False),
     # 原生启动(协议头播放/打开)
     "media_host_root": ("播放", str, False),
     "bd_owned_host_root": ("播放", str, False),

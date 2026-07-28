@@ -9,6 +9,8 @@ import BdReleases from '../components/BdReleases.vue'
 import BdImportWizard from '../components/BdImportWizard.vue'
 import SubscribeWizard from '../components/SubscribeWizard.vue'
 import EditSubscriptionModal from '../components/EditSubscriptionModal.vue'
+import ChangeSourceModal from '../components/ChangeSourceModal.vue'
+import ResourceStrategyCard from '../components/ResourceStrategyCard.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -22,16 +24,13 @@ const confirmRemove = ref(false)
 const removeFiles = ref(false)
 const removing = ref(false)
 const editSub = ref(null)        // 正在编辑的订阅(augmented for EditSubscriptionModal)
+const changeSub = ref(null)      // 正在原子更换来源的订阅
 const delSub = ref(null)         // 待删订阅 { id, name }
 const delSubFiles = ref(false)
 const anidbMsg = ref('')
 const anidbBusy = ref(false)
-// 智能下载 / BD
-const autoBest = ref(false)
-const bdOwned = ref(false)
-const autoScan = ref(null)
-let autoTimer = null
 let mounted = true
+const resourceCard = ref(null)
 // 文件管理
 const opMsg = ref('')
 const fileBusy = ref(0)          // 正在操作的文件 id
@@ -44,7 +43,11 @@ const KIND = { tv: ['tv', 'TV 连载'], movie: ['film', '剧场版'], ova: ['dis
 const EP_TYPE = { special: '特别篇', credits: 'OP/ED', trailer: 'PV/预告', other: '映像特典' }
 // 正片导入向导
 const importReleases = ref(null)   // 非空 = 打开向导(传入的发行数组)
-function onImported() { importReleases.value = null; load() }
+async function onImported() {
+  importReleases.value = null
+  await load()
+  resourceCard.value?.load()
+}
 const EP_TYPE_OPTS = [['regular', '正片'], ['special', '特别篇'], ['credits', 'OP/ED'], ['trailer', 'PV/预告'], ['other', '其他']]
 const epStatus = {
   missing: ['未下载', ''], pending: ['等待中', 'blue'], downloading: ['下载中', 'accent'],
@@ -85,8 +88,6 @@ async function load() {
   if (String(route.params.id) !== id) return
   b.value = result
   phase.value = b.value.phase          // 首次由后端定默认阶段,之后保持用户选择
-  autoBest.value = !!b.value.auto_best
-  bdOwned.value = !!b.value.bd_owned
 }
 
 // 先行 / 正式 分段切换:切阶段后重新拉取该阶段的剧集与文件
@@ -115,53 +116,6 @@ async function reorganize() {
       ? `已提交整理 ${r.torrents} 个种子(后台执行,稍后刷新查看)` : '没有可整理的下载器种子'
   } catch (e) { reorgMsg.value = e.message }
 }
-
-async function toggleBdOwned() {
-  await api.patch(`/api/bangumi/${b.value.id}`, { bd_owned: bdOwned.value })
-  await load()
-}
-
-// ---- 智能下载 ----
-async function scanBest() {
-  opMsg.value = ''
-  try {
-    await api.post(`/api/bangumi/${b.value.id}/auto-scan`, {})
-    pollAuto()
-  } catch (e) { opMsg.value = e.message }
-}
-async function pollAuto() {
-  const s = await api.get('/api/bangumi/auto-scan/status')
-  if (!mounted) return            // 卸载后别再起定时器/写已销毁组件
-  autoScan.value = s
-  if (autoScan.value.running) { autoTimer = setTimeout(pollAuto, 1500) }
-  else { await load(); loadAutoStatus() }   // 扫描结束刷新状态卡(上次结果/种子分布)
-}
-async function toggleAutoBest() {
-  await api.patch(`/api/bangumi/${b.value.id}`, { auto_best: autoBest.value })
-  loadAutoStatus()
-}
-const autoMine = computed(() =>
-  (autoScan.value?.result || []).find(r => r.bangumi === b.value?.id))
-
-// 智能下载当前状态卡(开关/上次扫描/种子分布/缺集)
-const autoStatus = ref(null)
-async function loadAutoStatus() {
-  try { autoStatus.value = await api.get(`/api/bangumi/${route.params.id}/auto-status`) }
-  catch { autoStatus.value = null }
-}
-function fmtEps(nums) {
-  if (!nums?.length) return ''
-  const parts = []
-  let s = nums[0], p = nums[0]
-  for (const n of nums.slice(1).concat([NaN])) {
-    if (n === p + 1) { p = n; continue }
-    parts.push(s === p ? `${s}` : `${s}-${p}`)
-    s = p = n
-  }
-  return parts.join(', ')
-}
-const AUTO_ST = { pending: '待提交', downloading: '下载中', submit_failed: '提交失败',
-                  download_error: '出错', completed: '待整理', archived: '已入库', skipped: '已跳过' }
 
 // ---- 文件管理 ----
 function startFileEdit(f, ep) {
@@ -292,19 +246,14 @@ async function syncAnidb() {
 }
 
 async function initialize() {
-  clearTimeout(autoTimer)
   b.value = null
   phase.value = null
   series.value = []
-  autoStatus.value = null
   loadError.value = ''
   expanded.value = new Set()
   try {
     await load()
     loadSeries()       // 系列导航条:不阻塞主内容
-    loadAutoStatus()   // 智能下载状态卡
-    const a = await api.get('/api/bangumi/auto-scan/status')
-    if (a.running) { autoScan.value = a; pollAuto() }
   } catch (e) { loadError.value = e.message }
 }
 
@@ -312,7 +261,7 @@ onMounted(initialize)
 watch(() => route.params.id, (id, oldId) => {
   if (oldId !== undefined && id !== oldId) initialize()
 })
-onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
+onUnmounted(() => { mounted = false })
 </script>
 
 <template>
@@ -373,56 +322,12 @@ onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
             <span v-if="savingEpStart" class="muted" style="font-size: 12px;">保存中…</span>
           </div>
           <div class="row" style="margin-top: 14px; flex-wrap: wrap;">
-            <button class="btn primary" @click="showWizard = true"><Icon name="plus" /> 添加订阅</button>
-            <button v-if="b.mikan_bangumi_id" class="btn" :disabled="autoScan?.running" @click="scanBest"
-                    title="扫所有字幕组,按偏好(BD>Web/分辨率/简中)补全缺集并升级现有源">
-              <Icon name="zap" /> {{ autoScan?.running ? '扫描中…' : '扫描最佳源' }}
-            </button>
-            <label v-if="b.mikan_bangumi_id" class="row auto-toggle" title="开启后定期自动扫描补全/升级">
-              <input type="checkbox" v-model="autoBest" @change="toggleAutoBest" /> 智能下载(常驻)
-            </label>
-            <label class="row auto-toggle" title="有原盘/已购 → 该番剧完全不自动下载">
-              <input type="checkbox" v-model="bdOwned" @change="toggleBdOwned" /> 已购买(有原盘)
-            </label>
             <button class="btn" :disabled="anidbBusy" @click="syncAnidb">
               <Icon name="refresh" /> {{ anidbBusy ? '同步中…' : '同步 AniDB 剧集' }}
             </button>
             <button class="btn danger" @click="confirmRemove = true"><Icon name="trash" /> 移除番剧</button>
           </div>
           <div v-if="anidbMsg" class="muted" style="margin-top: 8px; font-size: 12px;">{{ anidbMsg }}</div>
-          <div v-if="autoScan && (autoScan.running || autoMine)" class="auto-status" style="margin-top: 8px;">
-            <Icon name="zap" :size="13" style="color: var(--accent);" />
-            <span v-if="autoScan.running">智能扫描中…</span>
-            <span v-else-if="autoMine">智能扫描完成 —
-              {{ autoMine.submitted ? `提交 ${autoMine.submitted} 个种子(集 ${(autoMine.needed||[]).join(', ')})` : (autoMine.note || '无需下载') }}
-            </span>
-          </div>
-          <!-- 智能下载当前状态卡:开关/上次扫描摘要/种子分布/缺集与在途 -->
-          <div v-if="autoStatus && (autoStatus.enabled || autoStatus.last_scan_at
-                     || Object.keys(autoStatus.torrents || {}).length)"
-               class="auto-status" style="margin-top: 8px; flex-wrap: wrap; row-gap: 4px;">
-            <Icon name="zap" :size="13" :style="{ color: autoStatus.enabled ? 'var(--accent)' : 'var(--muted, #888)' }" />
-            <span>智能下载{{ autoStatus.enabled ? '常驻开启' : '未常驻' }}</span>
-            <span v-if="autoStatus.last_scan_at" class="muted">
-              · 上次扫描 {{ fmtTime(autoStatus.last_scan_at) }}:{{
-                autoStatus.last_result?.error ? `失败(${autoStatus.last_result.error})`
-                : autoStatus.last_result?.submitted ? `提交 ${autoStatus.last_result.submitted} 个种子`
-                : (autoStatus.last_result?.note || '无需下载') }}
-              <template v-if="autoStatus.last_result?.gaps?.length">
-                ,留待 {{ fmtEps(autoStatus.last_result.gaps) }}(避免重复大合集)
-              </template>
-            </span>
-            <span v-if="Object.keys(autoStatus.torrents || {}).length" class="muted">
-              · 种子:{{ Object.entries(autoStatus.torrents)
-                  .map(([k, v]) => `${AUTO_ST[k] || k} ${v}`).join(' / ') }}
-            </span>
-            <span v-if="autoStatus.missing?.length" class="muted">
-              · 缺 {{ fmtEps(autoStatus.missing) }} 集<template v-if="autoStatus.in_flight?.length">(其中
-                {{ fmtEps(autoStatus.in_flight) }} 在途)</template>
-            </span>
-            <span v-else-if="autoStatus.enabled && b.eps_total" class="muted" style="color: var(--green, #46a758);">
-              · 正片已齐</span>
-          </div>
         </div>
       </div>
     </div>
@@ -442,6 +347,11 @@ onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
         </template>
       </div>
 
+      <ResourceStrategyCard ref="resourceCard" :bangumi="b"
+                            @add-subscription="showWizard = true"
+                            @change-source="changeSub = $event"
+                            @changed="load" />
+
       <!-- 订阅源详情 -->
       <div class="page-title">订阅源 <span class="muted" style="font-size: 13px; font-weight: 400;">{{ realSubs.length }} 个</span></div>
       <div v-if="!realSubs.length" class="muted" style="margin-bottom: 18px;">还没有订阅源 — 点「添加订阅」选字幕组</div>
@@ -460,6 +370,7 @@ onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
             <button class="btn sm" @click="toggleSub(s)">
               <Icon :name="s.enabled ? 'pause' : 'play'" :size="13" /> {{ s.enabled ? '停用' : '启用' }}
             </button>
+            <button class="btn sm" @click="changeSub = s"><Icon name="refresh" :size="13" /> 更换来源</button>
             <button class="btn sm" @click="openEdit(s)"><Icon name="edit" :size="13" /> 编辑</button>
             <button class="btn sm danger" @click="delSub = { id: s.id, name: s.subgroup_name }">
               <Icon name="trash" :size="13" /> 删除
@@ -605,6 +516,10 @@ onUnmounted(() => { mounted = false; clearTimeout(autoTimer) })
                      @close="showWizard = false; load()" />
 
     <EditSubscriptionModal v-if="editSub" :sub="editSub" @close="editSub = null; load()" />
+
+    <ChangeSourceModal v-if="changeSub" :sub="changeSub" :bangumi="b"
+                       @close="changeSub = null"
+                       @done="changeSub = null; load(); resourceCard?.load()" />
 
     <BdImportWizard v-if="importReleases" :releases="importReleases"
                     @close="importReleases = null" @done="onImported" />

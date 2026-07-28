@@ -82,7 +82,8 @@ def _file_quality(f: VideoFile) -> tuple:
     体积兜底很关键:同集挂了多个 BD 文件(真正片 + 被误映射的菜单/NC 小片)时,
     最大的那个才是正片 → 选它,其余置灰隐藏(用户说的「同一集多个源」只留一个)。
     """
-    return (_SOURCE_RANK.get(f.source, 2), -(f.torrent.version or 1), -(f.size or 0), f.id)
+    return (0 if f.is_preferred else 1,
+            _SOURCE_RANK.get(f.source, 2), -(f.torrent.version or 1), -(f.size or 0), f.id)
 
 
 def _apply_version_switch(db: Session, episode_id: int) -> None:

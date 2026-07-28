@@ -99,9 +99,11 @@ def _migrate_columns() -> None:
                     ("anidb_synced_at", "DATETIME"),
                     ("kind", "VARCHAR(8) DEFAULT 'TV'"),   # SQLAlchemy 存 Enum 名:TV/MOVIE/OVA
                     ("auto_best", "BOOLEAN DEFAULT 0"),
+                    ("auto_mode", "VARCHAR(24) DEFAULT 'fill_upgrade'"),
                     ("auto_scan_at", "DATETIME"),          # 上次智能扫描时间
                     ("auto_scan_result", "JSON"),          # 上次扫描摘要(状态卡)
-                    ("bd_owned", "BOOLEAN DEFAULT 0")],
+                    ("bd_owned", "BOOLEAN DEFAULT 0"),
+                    ("auto_download_disabled", "BOOLEAN DEFAULT 0")],
         "torrent": [("stalled_since", "DATETIME"),
                     ("last_progress", "FLOAT DEFAULT 0"),
                     ("progress_at", "DATETIME"),
@@ -112,7 +114,8 @@ def _migrate_columns() -> None:
                        ("source", "VARCHAR(32)"),
                        ("color_depth", "VARCHAR(8)"),
                        ("hdr", "VARCHAR(16)"),
-                       ("original_name", "VARCHAR(1024)")],
+                       ("original_name", "VARCHAR(1024)"),
+                       ("is_preferred", "BOOLEAN DEFAULT 0")],
         "bd_release": [("manual_import", "BOOLEAN DEFAULT 0")],
         "bd_extra": [("video_codec", "VARCHAR(32)"),
                      ("color_depth", "VARCHAR(8)"),
@@ -124,12 +127,19 @@ def _migrate_columns() -> None:
                      ("track_no", "INTEGER"),
                      ("track_title", "VARCHAR(512)")],
     }
+    added: set[tuple[str, str]] = set()
     with engine.connect() as conn:
         for table, cols in additions.items():
             existing = {r[1] for r in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
             for name, ddl in cols:
                 if name not in existing:
                     conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+                    added.add((table, name))
+        # 从“已购买即停自动下载”的旧模型迁移到独立策略。只在首次加列时复制一次，
+        # 后续用户即使取消“停止自动获取”也不会被下一次启动重新打开。
+        if ("bangumi", "auto_download_disabled") in added:
+            conn.exec_driver_sql(
+                "UPDATE bangumi SET auto_download_disabled = 1 WHERE bd_owned = 1")
         conn.commit()
         _migrate_episode_type(conn)
         _backfill_preview(conn)

@@ -100,7 +100,7 @@ def _require_bdrip_bound(db: Session, release_id: int) -> BdRelease:
 
 @router.get("/releases/{release_id}/candidates")
 def import_candidates(release_id: int, db: Session = Depends(get_db)):
-    """正片导入向导:列**整个番剧目录**内全部视频(含 Season 等子文件夹)+ 自动猜测 + 当前登记。
+    """正片导入向导:列番剧目录视频,但只允许发行内/已明确为 BD 的文件成为正片。
 
     扫整个番剧目录而非仅发行文件夹:整理器(organize)会把 BD 剧集改名移进 `番剧名/Season xx/`,
     与发行文件夹平级 → 只扫发行文件夹会漏掉剧集。返回 guess(按文件名序号)作预填,用户可改集号 /
@@ -136,6 +136,13 @@ def import_candidates(release_id: int, db: Session = Depends(get_db)):
         guess = parsed.episodes[0] if len(parsed.episodes) == 1 and parsed.episodes[0] > 0 else None
         in_extra_dir = any(is_extra_dir(seg) for seg in sub.parts[:-1])
         vf = cur.get(rel)
+        in_release = rel == r.root_path or rel.startswith(r.root_path + "/")
+        registered_bd = bool(vf and vf.source == "BD")
+        filename_bd = parsed.source == "BD"
+        selectable = in_release or registered_bd or filename_bd
+        origin = ("发行目录" if in_release else
+                  "已登记 BD" if registered_bd else
+                  "文件名识别为 BD" if filename_bd else "其他来源")
         cur_num = None
         if vf and vf.episode_id:
             ep = db.get(Episode, vf.episode_id)
@@ -149,6 +156,8 @@ def import_candidates(release_id: int, db: Session = Depends(get_db)):
             "guess_number": guess,
             "guess_extra": bd_is_extra_video(p.name) or in_extra_dir,
             "current_number": cur_num, "registered": vf is not None,
+            "current_source": vf.source if vf else None,
+            "inside_release": in_release, "selectable": selectable, "origin": origin,
         })
     eps = db.execute(select(Episode).where(
         Episode.bangumi_id == b.id, Episode.type == EpisodeType.REGULAR)).scalars().all()
@@ -182,6 +191,9 @@ def import_main(release_id: int, payload: dict, db: Session = Depends(get_db)):
         path, num = a.get("path"), a.get("episode_number")
         if not path or num in (None, ""):
             continue
+        rel_obj = PurePosixPath(path)
+        if rel_obj.is_absolute() or ".." in rel_obj.parts:
+            raise HTTPException(400, f"文件路径非法:{path}")
         try:
             want[path] = float(num)
         except (TypeError, ValueError):
@@ -193,6 +205,14 @@ def import_main(release_id: int, payload: dict, db: Session = Depends(get_db)):
     cur = {vf.relative_path: vf for vf in db.execute(
         select(VideoFile).join(Torrent).join(Subscription).where(
             Subscription.bangumi_id == b.id)).scalars()}
+    # 防止把同一番剧目录中的 Web/未知文件借导入向导强制改标成 BD。整理到 Season
+    # 目录的 BD 文件必须已有 BD 登记,或文件名本身仍带明确 BD 标记。
+    for path in want:
+        vf = cur.get(path)
+        in_release = path == rel_prefix or path.startswith(rel_prefix + "/")
+        parsed_source = parse(PurePosixPath(path).name).source
+        if not (in_release or (vf and vf.source == "BD") or parsed_source == "BD"):
+            raise HTTPException(400, f"不能把非 BD 文件标为 BD:{path}")
 
     touched: set[int] = set()
     imported = removed = 0
@@ -232,6 +252,8 @@ def import_main(release_id: int, payload: dict, db: Session = Depends(get_db)):
             continue
         if not (path == rel_prefix or path.startswith(rel_prefix + "/")):
             continue
+        if vf.source != "BD":
+            continue
         if vf.episode_id:
             touched.add(vf.episode_id)
         db.delete(vf)
@@ -267,7 +289,7 @@ def scan_status():
 
 @router.patch("/releases/{release_id}")
 def update_release(release_id: int, payload: dict, db: Session = Depends(get_db)):
-    """改购买状态 / 绑定番剧。owned + 已绑番剧 时,顺带把番剧设为 bd_owned(排除自动下载)。"""
+    """改购买状态 / 绑定番剧。owned 只同步番剧收藏属性,不改自动获取策略。"""
     r = db.get(BdRelease, release_id)
     if not r:
         raise HTTPException(404)
@@ -280,7 +302,7 @@ def update_release(release_id: int, payload: dict, db: Session = Depends(get_db)
     if "owned" in payload:
         r.owned = bool(payload["owned"])
     db.flush()
-    # 重算受影响番剧的 bd_owned(新绑 + 旧绑/解绑都要):有 owned 发行 → 排除自动下载,否则解除
+    # 重算受影响番剧的收藏属性(新绑 + 旧绑/解绑都要);下载门控独立不动。
     for bid in {old_bid, r.bangumi_id} - {None}:
         b = db.get(Bangumi, bid)
         if b:

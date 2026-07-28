@@ -22,7 +22,7 @@ const detail = ref(null)
 const group = ref(null)
 const submitting = ref(false)
 const error = ref('')
-const previewStats = ref({ pass: -1, total: 0 })
+const previewStats = ref({ pass: -1, total: 0, error: '' })
 const overrides = ref({})   // guid → true(强制下)/false(强制排除)
 // 添加 BD 源:入库 → 选一套已扫描的 BD 发行绑定 → 正片导入向导
 const router = useRouter()
@@ -36,7 +36,7 @@ const bdImportRel = ref(null)
 const form = ref({
   include_keywords: '',
   exclude_keywords: '',
-  exclude_batch: null,
+  exclude_batch: true,
   backfill: true,
 })
 
@@ -216,8 +216,9 @@ onMounted(() => {
           <strong>{{ picked.title }}</strong>
           <span class="tag accent">{{ group.name }}</span>
           <div class="spacer" />
-          <button class="btn primary" :disabled="submitting || previewStats.pass === 0"
-                  :title="previewStats.pass === 0 ? '当前规则不会下载任何内容' : ''"
+          <button class="btn primary" :disabled="submitting || previewStats.pass <= 0 || !!previewStats.error"
+                  :title="previewStats.error ? '源预览失败,暂不能创建'
+                    : previewStats.pass === 0 ? '当前规则不会下载任何内容' : ''"
                   @click="submit">
             {{ submitting ? '创建中…' : '创建订阅' }}
           </button>
@@ -231,7 +232,6 @@ onMounted(() => {
           </label>
           <label>合集策略
             <select v-model="form.exclude_batch" class="input">
-              <option :value="null">自动(连载排除合集,完结允许)</option>
               <option :value="true">总是排除合集</option>
               <option :value="false">总是允许合集</option>
             </select>
@@ -247,6 +247,7 @@ onMounted(() => {
         <RulePreview :bangumi-id="picked.mikan_bangumi_id" :subgroup-id="group.subgroup_id"
                      :include="form.include_keywords" :exclude="form.exclude_keywords"
                      :exclude-batch="form.exclude_batch"
+                     :eps-total="detail?.eps_total || 0"
                      :overrides="overrides"
                      @update:overrides="overrides = $event"
                      @stats="previewStats = $event" />

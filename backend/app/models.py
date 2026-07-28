@@ -68,10 +68,14 @@ class Bangumi(Base):
     kind: Mapped[Kind] = mapped_column(Enum(Kind), default=Kind.TV)   # 作品形态:tv/movie/ova
     # 智能下载:开启后定期扫所有字幕组,按偏好(BD>Web/分辨率/简中)补全缺集+升级现有源
     auto_best: Mapped[bool] = mapped_column(Boolean, default=False)
+    # fill_upgrade=补缺并升级 Web→BD;fill_only=只补缺;review=只生成待确认建议。
+    auto_mode: Mapped[str] = mapped_column(String(24), default="fill_upgrade")
     auto_scan_at: Mapped[datetime | None] = mapped_column(DateTime)   # 上次智能扫描时间
     auto_scan_result: Mapped[dict | None] = mapped_column(JSON)       # 上次扫描摘要(详情页状态卡)
-    # 有原盘/已购 BD → 完全排除出自动下载(auto-best + RSS 轮询都跳过)。见 ADR-0004
+    # 收藏属性:是否拥有原盘。下载策略与收藏解耦,由 auto_download_disabled 单独控制。
     bd_owned: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 用户策略:停止该番剧的一切自动获取(auto-best + RSS 轮询),本地/手动操作不受影响。
+    auto_download_disabled: Mapped[bool] = mapped_column(Boolean, default=False)
 
     title: Mapped[str] = mapped_column(String(255))            # 官方中文译名优先
     title_original: Mapped[str | None] = mapped_column(String(255))
@@ -98,6 +102,19 @@ class Bangumi(Base):
 
     subscriptions: Mapped[list[Subscription]] = relationship(back_populates="bangumi")
     episodes: Mapped[list[Episode]] = relationship(back_populates="bangumi")
+
+
+class AutoScanLog(Base):
+    """一部番剧的一次智能资源扫描审计；review 模式还承载可批准的精确候选。"""
+    __tablename__ = "auto_scan_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    bangumi_id: Mapped[int] = mapped_column(ForeignKey("bangumi.id"), index=True)
+    mode: Mapped[str] = mapped_column(String(24), default="fill_upgrade")
+    trigger: Mapped[str] = mapped_column(String(24), default="manual")
+    result_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
 class Subscription(Base):
@@ -221,6 +238,8 @@ class VideoFile(Base):
     subtitle_tracks: Mapped[list] = mapped_column(JSON, default=list)
     probed_at: Mapped[datetime | None] = mapped_column(DateTime)   # None=未探测/失败可重试
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)  # v2 切换翻转
+    # 用户在资源策略中手动指定的当前版本;同集同阶段最多一个。取消后恢复自动 BD>Web 判优。
+    is_preferred: Mapped[bool] = mapped_column(Boolean, default=False)
 
     torrent: Mapped[Torrent] = relationship(back_populates="files")
 

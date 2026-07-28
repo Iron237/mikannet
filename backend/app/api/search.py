@@ -5,11 +5,15 @@
 import hashlib
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.clients.mikan import mikan_client
 from app.config import settings
+from app.database import get_db
+from app.models import Bangumi
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/search", tags=["search"])
@@ -118,16 +122,19 @@ def multi_search(source: str, keyword: str = "", bangumi_id: int | None = None):
 
 
 @router.get("/bangumi/{mikan_bangumi_id}")
-def bangumi_detail(mikan_bangumi_id: int):
+def bangumi_detail(mikan_bangumi_id: int, db: Session = Depends(get_db)):
     """番剧页:字幕组列表 + 各组最近发布(向导选组依据)+ bgm.tv 关联。"""
     try:
         d = mikan_client.get_bangumi(mikan_bangumi_id)
     except Exception as e:  # noqa: BLE001 — HTML 结构变化/番剧页缺失 → 502 而非 500
         log.warning("番剧页解析失败 id=%s: %s", mikan_bangumi_id, e)
         raise HTTPException(502, f"Mikan 番剧页获取失败:{e}") from e
+    local = db.execute(select(Bangumi).where(
+        Bangumi.mikan_bangumi_id == mikan_bangumi_id)).scalar_one_or_none()
     return {
         "mikan_bangumi_id": d.mikan_bangumi_id,
         "title": d.title,
+        "eps_total": local.eps_total if local else None,
         "cover": f"/api/search/cover?path={d.cover_url}" if d.cover_url else None,
         "bgmtv_subject_id": d.bgmtv_subject_id,
         "air_date": d.air_date_str,

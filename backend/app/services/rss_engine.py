@@ -311,9 +311,10 @@ def poll_all(db: Session) -> list[dict]:
     """并发拉取 RSS(网络阶段并行,数据库阶段串行 — SQLite 单写者)。"""
     from concurrent.futures import ThreadPoolExecutor, as_completed
     subs = db.execute(select(Subscription).where(Subscription.enabled)).scalars().all()
-    # 排除本地导入/智能下载等容器伪订阅(无单一 RSS 源);已购买原盘的番剧整体跳过(ADR-0004)
+    # 排除本地导入/自动补全等容器伪订阅(无单一 RSS 源);
+    # “是否拥有原盘”只是收藏属性,仅显式停止自动获取的番剧才跳过。
     subs = [s for s in subs if s.mikan_subgroup_id not in ("local", "auto")
-            and not s.bangumi.bd_owned]
+            and not s.bangumi.auto_download_disabled]
 
     fetched: dict[int, list | Exception] = {}
     with ThreadPoolExecutor(max_workers=8) as pool:

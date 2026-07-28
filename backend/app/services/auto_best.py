@@ -12,6 +12,7 @@ import logging
 import re
 import threading
 from collections import defaultdict
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -19,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.clients.mikan import mikan_client
 from app.config import settings
 from app.database import db_session
-from app.models import (Bangumi, Episode, EpisodeType, Subscription, Torrent,
+from app.models import (AutoScanLog, Bangumi, Episode, EpisodeType, Subscription, Torrent,
                         TorrentEpisode, TorrentStatus, VideoFile)
 from app.parsers.title_parser import detect_subtitle_tags, parse
 
@@ -27,14 +28,31 @@ log = logging.getLogger(__name__)
 
 AUTO_SUBGROUP_ID = "auto"
 _SOURCE_RANK = {"BD": 0, "Web": 1}
+AUTO_MODES = {
+    "fill_upgrade": "补全缺集并升级 Web→BD",
+    "fill_only": "仅补全缺集",
+    "review": "只生成建议，确认后下载",
+}
 
 # 批量/定期扫描进度(前端轮询)
 state: dict = {"running": False, "phase": "", "done": 0, "total": 0, "current": "",
                "result": [], "error": None}
 
 
+def normalize_mode(value: str | None) -> str:
+    mode = str(value or "fill_upgrade").strip().lower()
+    return mode if mode in AUTO_MODES else "fill_upgrade"
+
+
 def _source_rank(source: str | None) -> int:
     return _SOURCE_RANK.get(source, 2)
+
+
+def _file_exists(relative_path: str) -> bool:
+    try:
+        return (settings.download_root_local / relative_path).is_file()
+    except OSError:
+        return False
 
 
 def _has_pref_sub(title: str) -> bool:
@@ -119,14 +137,14 @@ def _candidate(subgroup_id: str, subgroup_name: str | None, st) -> dict | None:
 def _current_ranks(db: Session, bangumi_id: int) -> dict[int, int]:
     """各正片集当前 is_active 文件的最佳片源等级(用于判断是否值得升级)。"""
     rows = db.execute(
-        select(Episode.number, VideoFile.source)
+        select(Episode.number, VideoFile.source, VideoFile.relative_path)
         .join(VideoFile, VideoFile.episode_id == Episode.id)
         .join(Torrent, VideoFile.torrent_id == Torrent.id)
         .where(Episode.bangumi_id == bangumi_id, Episode.type == EpisodeType.REGULAR,
                VideoFile.is_active.is_(True))).all()
     out: dict[int, int] = {}
-    for number, source in rows:
-        if number is None:
+    for number, source, relative_path in rows:
+        if number is None or not _file_exists(relative_path):
             continue
         ep = int(number)
         out[ep] = min(out.get(ep, 99), _source_rank(source))
@@ -163,8 +181,19 @@ def _submit_candidate(db: Session, sub: Subscription, c: dict) -> bool:
     existing = db.execute(select(Torrent).where(
         Torrent.guid == c["guid"])).scalar_one_or_none()
     if existing is not None:
-        if existing.status != TorrentStatus.SUBMIT_FAILED:
+        retry_missing_archive = (
+            existing.status == TorrentStatus.ARCHIVED
+            and not any(f.is_active and _file_exists(f.relative_path) for f in existing.files)
+        )
+        if existing.status != TorrentStatus.SUBMIT_FAILED and not retry_missing_archive:
             return False
+        if retry_missing_archive and existing.info_hash:
+            from app.clients.downloader import downloader
+            try:
+                downloader.delete(existing.info_hash, delete_files=False)
+            except Exception:  # noqa: BLE001 — 下载器任务可能已不存在
+                pass
+            existing.info_hash = None
         existing.torrent_url = c["torrent_url"]   # 修正旧的相对/坏 URL
         existing.status = TorrentStatus.PENDING
         existing.error_message = None
@@ -199,12 +228,12 @@ def _submit_candidate(db: Session, sub: Subscription, c: dict) -> bool:
 
 
 def scan_bangumi(db: Session, bangumi: Bangumi, do_fill: bool = True,
-                 do_upgrade: bool = True) -> dict:
+                 do_upgrade: bool = True, submit: bool = True) -> dict:
     """扫一部番剧:挑最佳源补缺集 + 升级现有源。返回结果摘要。"""
     if not bangumi.mikan_bangumi_id:
         return {"bangumi": bangumi.id, "title": bangumi.title, "note": "无蜜柑 ID,跳过"}
-    if bangumi.bd_owned:
-        return {"bangumi": bangumi.id, "title": bangumi.title, "note": "已购买(有原盘),跳过"}
+    if bangumi.auto_download_disabled:
+        return {"bangumi": bangumi.id, "title": bangumi.title, "note": "已设置停止自动获取,跳过"}
     do_upgrade = do_upgrade and settings.auto_dl_prefer_bd
 
     detail = mikan_client.get_bangumi(bangumi.mikan_bangumi_id)
@@ -221,11 +250,17 @@ def scan_bangumi(db: Session, bangumi: Bangumi, do_fill: bool = True,
     # 已下过的 guid 不重复下
     # 排除已处理过的 guid:SKIPPED 也算(过滤/手动删/坏种 → 不该再被选中,否则贪心占了集却
     # 在 _submit_candidate 被跳过 → 漏下);仅 SUBMIT_FAILED 留待重试
-    have = set(db.execute(
-        select(Torrent.guid).join(Subscription).where(
+    handled = db.execute(
+        select(Torrent).join(Subscription).where(
             Subscription.bangumi_id == bangumi.id,
             Torrent.status != TorrentStatus.SUBMIT_FAILED)
-        ).scalars().all())
+        ).scalars().all()
+    have = {
+        torrent.guid for torrent in handled
+        if not (torrent.status == TorrentStatus.ARCHIVED
+                and not any(f.is_active and _file_exists(f.relative_path)
+                            for f in torrent.files))
+    }
     cands = [c for c in cands if c["guid"] not in have]
     if not cands:
         return {"bangumi": bangumi.id, "title": bangumi.title, "candidates": 0,
@@ -286,22 +321,32 @@ def scan_bangumi(db: Session, bangumi: Bangumi, do_fill: bool = True,
             remaining -= eps
         del by_sg[sg]
 
-    sub = _auto_sub(db, bangumi)
-    submitted = sum(1 for c in selected if _submit_candidate(db, sub, c))
+    submitted = 0
+    if submit and selected:
+        sub = _auto_sub(db, bangumi)
+        submitted = sum(1 for c in selected if _submit_candidate(db, sub, c))
     db.flush()
     gaps = sorted(remaining)   # 仍缺、但只有「会重复已有集的大合集」能补 → 按去重策略未下,显式留痕
-    log.info("智能扫描 %s:候选 %s,补/升 %s 集,提交 %s 个种子%s",
-             bangumi.title, len(cands), len(needed), submitted,
+    pending = len(selected) if not submit else 0
+    log.info("智能扫描 %s:候选 %s,补/升 %s 集,%s %s 个种子%s",
+             bangumi.title, len(cands), len(needed),
+             "待确认" if not submit else "提交", pending if not submit else submitted,
              f",留待 {gaps}(仅大合集源,避免重复未下)" if gaps else "")
-    return {"bangumi": bangumi.id, "title": bangumi.title, "candidates": len(cands),
-            "needed": sorted(needed), "submitted": submitted, "gaps": gaps,
+    result = {"bangumi": bangumi.id, "title": bangumi.title, "candidates": len(cands),
+              "needed": sorted(needed), "submitted": submitted, "pending": pending,
+              "gaps": gaps,
             # 进度列表用:本次选中的种子(画质标签 + 集范围),展示「进入下载前」挑了什么
-            "picked": [{"title": c["title"][:80], "source": c["source"],
-                        "quality": c["quality"], "episodes": sorted(c["episodes"])[:3],
-                        "ep_count": len(c["episodes"])} for c in selected]}
+              "picked": [{"title": c["title"][:80], "source": c["source"],
+                          "quality": c["quality"], "episodes": sorted(c["episodes"])[:3],
+                          "ep_count": len(c["episodes"])} for c in selected]}
+    if pending:
+        result["note"] = f"已生成 {pending} 个待确认建议"
+        result["_proposals"] = selected
+    return result
 
 
-def run_scan(bangumi_ids: list[int], do_fill: bool = True, do_upgrade: bool = True) -> None:
+def run_scan(bangumi_ids: list[int], mode: str | None = None,
+             trigger: str = "manual") -> None:
     state.update(running=True, phase="智能扫描", done=0, total=len(bangumi_ids),
                  current="", result=[], error=None)
     try:
@@ -312,15 +357,27 @@ def run_scan(bangumi_ids: list[int], do_fill: bool = True, do_upgrade: bool = Tr
                     state["done"] += 1
                     continue
                 state["current"] = b.title
+                scan_mode = normalize_mode(mode or b.auto_mode)
+                do_upgrade = scan_mode in ("fill_upgrade", "review")
+                submit = scan_mode != "review"
                 try:
-                    r = scan_bangumi(db, b, do_fill, do_upgrade)
+                    r = scan_bangumi(db, b, True, do_upgrade, submit=submit)
                 except Exception as e:  # noqa: BLE001 — 单部失败不拖垮整批
                     log.exception("智能扫描 #%s 失败", bid)
                     r = {"bangumi": bid, "error": str(e)}
+                proposals = r.pop("_proposals", [])
+                r["mode"] = scan_mode
+                r["trigger"] = trigger
                 # 摘要落库:详情页「智能下载状态」卡展示上次扫描时间与结果
-                from datetime import datetime, timezone
                 b.auto_scan_at = datetime.now(timezone.utc)
-                b.auto_scan_result = {k: v for k, v in r.items() if k != "picked"}
+                # picked 体积很小且是用户最需要的解释信息,持久化后重启也能追溯选择结果。
+                b.auto_scan_result = r
+                log_result = dict(r)
+                if proposals:
+                    log_result["proposals"] = proposals
+                db.add(AutoScanLog(
+                    bangumi_id=b.id, mode=scan_mode, trigger=trigger,
+                    result_json=log_result))
             state["result"].append(r)
             state["done"] += 1
     except Exception as e:  # noqa: BLE001
@@ -329,10 +386,11 @@ def run_scan(bangumi_ids: list[int], do_fill: bool = True, do_upgrade: bool = Tr
         state.update(running=False, phase="完成", current="")
 
 
-def start_scan(bangumi_ids: list[int], do_fill: bool = True, do_upgrade: bool = True) -> bool:
+def start_scan(bangumi_ids: list[int], mode: str | None = None,
+               trigger: str = "manual") -> bool:
     if state["running"]:
         return False
-    threading.Thread(target=run_scan, args=(bangumi_ids, do_fill, do_upgrade),
+    threading.Thread(target=run_scan, args=(bangumi_ids, mode, trigger),
                      daemon=True).start()
     return True
 
@@ -344,8 +402,8 @@ def scan_auto_all() -> None:
     with db_session() as db:
         ids = db.execute(select(Bangumi.id).where(
             Bangumi.auto_best.is_(True),
-            Bangumi.bd_owned.is_(False),          # 已购买原盘 → 不自动下载
+            Bangumi.auto_download_disabled.is_(False),
             Bangumi.mikan_bangumi_id.isnot(None))).scalars().all()
     if ids:
         log.info("定期智能扫描:%s 部番剧", len(ids))
-        run_scan(list(ids), do_fill=True, do_upgrade=True)
+        run_scan(list(ids), mode=None, trigger="scheduled")

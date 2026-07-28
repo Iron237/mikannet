@@ -326,7 +326,7 @@ def _scan_owned_discs(db) -> None:
                             source_kind="raw_disc", root_rel=f"@owned/{folder.name}",
                             owned=True, disc_count=disc_count, total_size=total)
             if b is not None:
-                b.bd_owned = True   # 自购原盘 → 番剧排除自动下载
+                b.bd_owned = True   # 收藏属性;是否停止自动获取由用户单独决定
             state["releases"] += 1
         except Exception as e:  # noqa: BLE001
             log.warning("BD 原盘扫描 %s 失败: %s", folder.name, e)

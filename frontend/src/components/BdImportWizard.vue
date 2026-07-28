@@ -23,8 +23,10 @@ function initRows(files) {
     path: f.path, name: f.name, folder: f.folder, size: f.size,
     guess_number: f.guess_number, guess_extra: f.guess_extra,
     current_number: f.current_number, registered: f.registered,
+    current_source: f.current_source, selectable: f.selectable, origin: f.origin,
     // 预选:已登记为某集→沿用;否则按猜测(非特典且有集号才默认正片)
-    main: f.current_number != null ? true : (!f.guess_extra && f.guess_number != null),
+    main: f.selectable && (f.current_number != null
+      ? f.current_source === 'BD' : (!f.guess_extra && f.guess_number != null)),
     number: f.current_number ?? f.guess_number ?? '',
   }))
 }
@@ -42,7 +44,7 @@ watch(sel, load)
 
 function autoMatch() {
   for (const r of rows.value) {
-    r.main = !r.guess_extra && r.guess_number != null
+    r.main = r.selectable && !r.guess_extra && r.guess_number != null
     r.number = r.guess_number ?? ''
   }
 }
@@ -94,9 +96,11 @@ async function save() {
 
         <div class="wiz-list">
           <div v-for="r in rows" :key="r.path" class="wiz-row" :class="{ off: !r.main }">
-            <button class="role" :class="r.main ? 'primary' : ''" @click="r.main = !r.main"
-                    :title="r.main ? '点为特典(不导入)' : '点为正片(导入)'">
-              {{ r.main ? '正片' : '特典' }}
+            <button class="role" :class="r.main ? 'primary' : ''" :disabled="!r.selectable"
+                    @click="r.main = !r.main"
+                    :title="!r.selectable ? '该文件不在发行目录内,也没有明确 BD 标记,不能导入'
+                      : r.main ? '点为特典(不导入)' : '点为正片(导入)'">
+              {{ !r.selectable ? '非 BD' : r.main ? '正片' : '特典' }}
             </button>
             <input v-if="r.main" class="input num" type="number" step="0.5" min="0"
                    v-model="r.number" placeholder="集号" />
@@ -105,6 +109,7 @@ async function save() {
               <span v-if="r.folder" class="ffolder">{{ r.folder }}/</span>{{ r.name }}
             </span>
             <span class="muted hint">
+              <span class="tag" :class="r.selectable ? 'blue' : 'red'">{{ r.origin }}</span>
               <template v-if="r.current_number != null">当前 {{ r.current_number }} · </template>
               <template v-if="r.guess_extra">疑似特典</template>
               <template v-else-if="r.guess_number != null">猜 {{ r.guess_number }}</template>
@@ -116,7 +121,7 @@ async function save() {
         </div>
 
         <div class="wiz-foot">
-          <span class="muted">未选为正片的 BD 文件会从剧集网格移除(不动磁盘,仍可「打开目录」浏览)。</span>
+          <span class="muted">仅发行目录或已明确识别为 BD 的文件可导入;不会改标同目录中的 Web 文件。</span>
           <div class="spacer" />
           <button class="btn sm" @click="emit('close')">取消</button>
           <button class="btn sm primary" :disabled="saving" @click="save">
@@ -142,6 +147,7 @@ async function save() {
 .role { width: 48px; flex-shrink: 0; padding: 3px 0; font-size: 12px; border: 1px solid var(--border);
   border-radius: 6px; background: transparent; color: var(--text); cursor: pointer; }
 .role.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.role:disabled { cursor: not-allowed; opacity: .65; }
 .num { width: 66px; flex-shrink: 0; padding: 3px 6px; }
 .num-spacer { width: 66px; flex-shrink: 0; }
 .fname { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

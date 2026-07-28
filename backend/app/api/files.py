@@ -116,6 +116,31 @@ def reprobe(file_id: int, db: Session = Depends(get_db)):
     return {"ok": True, "resolution": r.resolution}
 
 
+@router.post("/{file_id}/activate")
+def activate_version(file_id: int, payload: dict | None = None, db: Session = Depends(get_db)):
+    """手动选择同集当前版本;preferred=false 时清除手选并恢复自动 BD>Web 判优。"""
+    vf = db.get(VideoFile, file_id)
+    if not vf:
+        raise HTTPException(404)
+    if not vf.episode_id:
+        raise HTTPException(400, "未归位文件不能设为当前版本")
+    phase = bool(vf.torrent.is_preview)
+    peers = db.execute(
+        select(VideoFile).join(Torrent, VideoFile.torrent_id == Torrent.id)
+        .where(VideoFile.episode_id == vf.episode_id,
+               Torrent.is_preview.is_(phase))).scalars().all()
+    for peer in peers:
+        peer.is_preferred = False
+    if (payload or {}).get("preferred", True):
+        vf.is_preferred = True
+    from app.services.postprocess import _apply_version_switch
+    _apply_version_switch(db, vf.episode_id)
+    db.commit()
+    return {"ok": True, "active_file_id": next(
+        (peer.id for peer in peers if peer.is_active), None),
+        "preferred_file_id": next((peer.id for peer in peers if peer.is_preferred), None)}
+
+
 @router.delete("/{file_id}")
 def delete_file(file_id: int, delete_disk: bool = False, db: Session = Depends(get_db)):
     """从库里移除该文件记录;delete_disk=True 时尽力删磁盘文件(做种中的种子谨慎)。"""

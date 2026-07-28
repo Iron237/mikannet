@@ -257,3 +257,35 @@ def test_import_main_authoritative(db, monkeypatch):
     assert db.get(VideoFile, f_main.id) is not None   # 选中 → 保留为正片
     db.refresh(r)
     assert r.manual_import is True                     # 标记后库扫描不再自动改这套
+
+
+def test_import_main_rejects_relabeling_sibling_web_as_bd(db):
+    """发行向导可以看见同番 Season 文件,但不得把明确的 Web 文件强制改标为 BD。"""
+    from fastapi import HTTPException
+    from app.api.bd import import_main
+    b = Bangumi(mikan_bangumi_id=6, title="番", eps_total=1)
+    db.add(b)
+    db.flush()
+    r = BdRelease(bangumi_id=b.id, title="rel", source_kind="bdrip",
+                  root_path="番/BDRip", owned=False)
+    sub = Subscription(bangumi_id=b.id, mikan_subgroup_id="local",
+                       enabled=False, save_path="/d")
+    db.add_all([r, sub])
+    db.flush()
+    t = Torrent(subscription_id=sub.id, guid="library:6", title_raw="x", torrent_url="",
+                status=TorrentStatus.ARCHIVED)
+    db.add(t)
+    db.flush()
+    ep = Episode(bangumi_id=b.id, number=1.0, type=EpisodeType.REGULAR)
+    db.add(ep)
+    db.flush()
+    web = VideoFile(torrent_id=t.id, episode_id=ep.id, source="Web", is_active=True,
+                    relative_path="番/Season 01/番 - S01E01.mkv")
+    db.add(web)
+    db.flush()
+    with pytest.raises(HTTPException) as exc:
+        import_main(r.id, {"assignments": [
+            {"path": web.relative_path, "episode_number": 1}]}, db)
+    assert exc.value.status_code == 400
+    db.refresh(web)
+    assert web.source == "Web"

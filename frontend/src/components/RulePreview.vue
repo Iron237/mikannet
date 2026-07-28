@@ -18,6 +18,7 @@ const emit = defineEmits(['stats', 'update:overrides'])
 
 const items = ref([])
 const loading = ref(false)
+const loadError = ref('')
 const health = ref({})        // torrent_url → {seeders, leechers} | {error}
 const healthLoading = ref(false)
 let timer = null
@@ -79,6 +80,7 @@ function fmtRange(nums) {
 
 async function load() {
   loading.value = true
+  loadError.value = ''
   try {
     const p = new URLSearchParams({
       bangumi_id: props.bangumiId, subgroup_id: props.subgroupId,
@@ -87,7 +89,11 @@ async function load() {
     })
     items.value = await api.get(`/api/search/preview?${p}`)
     emitAll()
-  } catch { /* 预览失败不阻塞表单 */ }
+  } catch (e) {
+    items.value = []
+    loadError.value = e.message
+    emit('stats', { pass: -1, total: 0, error: e.message })
+  }
   loading.value = false
 }
 
@@ -123,6 +129,9 @@ onMounted(load)
       </button>
     </div>
 
+    <p v-if="loadError" class="warn error">
+      <Icon name="alert" :size="14" /> 源预览失败:{{ loadError }}。请重试后再保存。
+    </p>
     <div v-if="epsTotal > 0 && !loading" class="coverage muted">
       完整度:覆盖 <b style="color: var(--green)">{{ fmtRange(coverage.covered) }}</b>
       <template v-if="coverage.missing.length">
@@ -161,6 +170,7 @@ onMounted(load)
   background: #2a2113; border: 1px solid var(--accent-dim);
   border-radius: 8px; padding: 7px 12px;
 }
+.warn.error { color: var(--red); border-color: var(--red); }
 .coverage { font-size: 12.5px; margin-bottom: 8px; }
 .preview-list {
   max-height: 36vh; overflow-y: auto; border: 1px solid var(--border);

@@ -18,14 +18,14 @@ from sqlalchemy import Enum as SAEnum
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.models import (Bangumi, BdExtra, BdRelease, Episode, NotificationConfig,
+from app.models import (AutoScanLog, Bangumi, BdExtra, BdRelease, Episode, NotificationConfig,
                         Subscription, Torrent, TorrentEpisode, VideoFile)
 
 FORMAT = "mikannet-backup"
 VERSION = 2
 
 # 外键安全的插入顺序(父先于子);清空用逆序
-DATA_MODELS = [Bangumi, Subscription, Episode, Torrent, TorrentEpisode,
+DATA_MODELS = [Bangumi, AutoScanLog, Subscription, Episode, Torrent, TorrentEpisode,
                VideoFile, BdRelease, BdExtra]
 
 # 设置迁移:导出 EDITABLE 的「生效值」(含 .env 配的,如 tmdb_api_key 也能带走),

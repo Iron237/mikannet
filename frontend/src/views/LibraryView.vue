@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api } from '../api'
 import Icon from '../components/Icon.vue'
+import ResourceIssueCenter from '../components/ResourceIssueCenter.vue'
 
 const items = ref([])
 const filter = ref('all')      // all | airing | finished
@@ -20,8 +21,10 @@ const delConfirm = ref(null)
 const delFiles = ref(false)
 const busy = ref(false)
 const autoConfirm = ref(null)   // 智能下载确认 { ids }
-const autoEnable = ref(false)   // 同时设为常驻智能下载
+const autoEnable = ref(false)   // 同时设为常驻自动补全与升级
+const autoMode = ref('fill_upgrade')
 const autoScan = ref(null)      // 智能扫描进度
+const issueCenter = ref(null)
 let autoTimer = null
 let mounted = true
 
@@ -104,7 +107,7 @@ async function doAutoScan() {
   busy.value = true
   try {
     await api.post('/api/bangumi/auto-scan',
-      { ids: autoConfirm.value.ids, enable_auto: autoEnable.value })
+      { ids: autoConfirm.value.ids, enable_auto: autoEnable.value, mode: autoMode.value })
     autoConfirm.value = null; autoEnable.value = false; clearSel(); manageMode.value = false
     pollAutoScan()
   } catch (e) { autoScan.value = { error: e.message } }
@@ -116,7 +119,7 @@ async function pollAutoScan() {
     if (!mounted) return
     autoScan.value = s
     if (autoScan.value.running) { autoTimer = setTimeout(pollAutoScan, 1500) }
-    else { await reload() }
+    else { await reload(); await issueCenter.value?.load() }
   } catch (e) { autoScan.value = { error: e.message } }
 }
 const autoSubmitted = computed(() =>
@@ -199,6 +202,8 @@ onUnmounted(() => { mounted = false; clearTimeout(scanTimer); clearTimeout(autoT
       </div>
     </div>
 
+    <ResourceIssueCenter ref="issueCenter" />
+
     <div v-if="scan" class="scan-bar card">
       <template v-if="scan.error"><span style="color: var(--red);">扫描失败:{{ scan.error }}</span></template>
       <template v-else>
@@ -226,17 +231,17 @@ onUnmounted(() => { mounted = false; clearTimeout(scanTimer); clearTimeout(autoT
       <button class="btn sm primary" :disabled="!selected.size || busy || autoScan?.running"
               @click="autoConfirm = { ids: [...selected] }"
               title="扫所有字幕组,按偏好(BD>Web/分辨率/简中)补全缺集并升级现有源">
-        <Icon name="zap" :size="13" /> 智能下载
+        <Icon name="zap" :size="13" /> 自动补全/升级
       </button>
       <button class="btn sm danger" :disabled="!selected.size || busy"
               @click="delConfirm = { ids: [...selected] }"><Icon name="trash" :size="13" /> 批量删除</button>
     </div>
 
     <div v-if="autoScan" class="scan-bar card">
-      <template v-if="autoScan.error"><span style="color: var(--red);">智能下载失败:{{ autoScan.error }}</span></template>
+      <template v-if="autoScan.error"><span style="color: var(--red);">自动补全失败:{{ autoScan.error }}</span></template>
       <template v-else>
         <Icon name="zap" :size="14" style="color: var(--accent);" />
-        <strong>{{ autoScan.running ? '智能扫描中' : '智能扫描完成' }}</strong>
+        <strong>{{ autoScan.running ? '资源扫描中' : '资源扫描完成' }}</strong>
         <span class="muted">{{ autoScan.done }}/{{ autoScan.total }}</span>
         <span class="muted" v-if="autoScan.current">· {{ autoScan.current }}</span>
         <span v-if="!autoScan.running">· 共提交 {{ autoSubmitted }} 个种子</span>
@@ -246,12 +251,13 @@ onUnmounted(() => { mounted = false; clearTimeout(scanTimer); clearTimeout(autoT
       </template>
     </div>
 
-    <!-- 智能下载进度列表:展示「进入下载任务前」每部挑了什么源 -->
+    <!-- 自动补全进度列表:展示「进入下载任务前」每部挑了什么源 -->
     <div v-if="autoScan && !autoScan.error && (autoScan.result?.length || autoScan.running)" class="auto-list card">
       <div v-for="(r, i) in autoScan.result" :key="i" class="auto-row">
         <div class="row" style="gap: 8px; flex-wrap: wrap; align-items: baseline;">
           <strong>{{ r.title }}</strong>
           <span v-if="r.submitted" class="tag green">提交 {{ r.submitted }}</span>
+          <span v-else-if="r.pending" class="tag">待确认 {{ r.pending }}</span>
           <span v-else-if="r.error" class="tag red">出错</span>
           <span v-else class="tag">{{ r.note || '—' }}</span>
           <span v-if="r.candidates" class="muted" style="font-size: 11.5px;">候选 {{ r.candidates }} · 待补/升 {{ r.needed?.length || 0 }}</span>
@@ -290,10 +296,18 @@ onUnmounted(() => { mounted = false; clearTimeout(scanTimer); clearTimeout(autoT
             <img v-if="b.poster" :src="b.poster" loading="lazy" :alt="b.title" />
             <div v-else class="poster-fallback">{{ b.title.slice(0, 2) }}</div>
             <span v-if="b.kind === 'tv' && b.airing_status === 'airing'" class="airing-badge">连载中</span>
-            <span v-if="b.auto_best" class="auto-badge" title="已开启智能下载(定期扫描升级)"><Icon name="zap" :size="11" /></span>
-            <!-- 源角标(右下角,像剧场版那样):自购原盘优先,其次正片已全替为 BDrip -->
+            <span v-if="b.auto_best" class="auto-badge" title="已开启自动补全与升级"><Icon name="zap" :size="11" /></span>
+            <!-- 源角标:购买属性与实际 BD 覆盖分开表达 -->
             <span v-if="b.bd_owned" class="src-badge owned" title="自购原盘(收藏,跳 PowerDVD)">原盘BD</span>
-            <span v-else-if="b.bd_rip" class="src-badge rip" title="正片已替换为 BDrip">BDrip</span>
+            <span v-else-if="b.bd_status === 'complete'" class="src-badge rip" title="全部正片当前均使用 BD">BD完整</span>
+            <span v-else-if="b.bd_status === 'partial'" class="src-badge rip"
+                  :title="`部分正片使用 BD:${b.bd_active_eps}/${b.eps_total || '?'}`">
+              BD {{ b.bd_active_eps }}/{{ b.eps_total || '?' }}
+            </span>
+            <span v-else-if="b.bd_status === 'active'" class="src-badge rip"
+                  title="影片当前使用 BD 片源">BD资源</span>
+            <span v-else-if="b.bd_status === 'release_only'" class="src-badge release"
+                  title="已检测到 BD 发行,但尚无生效的 BD 正片">仅BD发行</span>
             <!-- TV 角标始终显示已下载进度;红点表示另有已播但未下载的集 -->
             <div class="ep-badge" v-if="b.kind === 'tv' && b.eps_total" :class="{ 'has-new': hasNew(b) }"
                  :title="b.eps_aired != null ? `已播 ${b.eps_aired}/${b.eps_total},已下载 ${b.eps_downloaded}` : `已下载 ${b.eps_downloaded}/${b.eps_total}`">
@@ -319,15 +333,23 @@ onUnmounted(() => { mounted = false; clearTimeout(scanTimer); clearTimeout(autoT
 
     <div v-if="autoConfirm" class="modal-mask" @click.self="autoConfirm = null">
       <div class="modal" style="width: 460px;">
-        <h3 style="margin-bottom: 10px;">智能下载 {{ autoConfirm.ids.length }} 部番剧</h3>
+        <h3 style="margin-bottom: 10px;">自动补全/升级 {{ autoConfirm.ids.length }} 部番剧</h3>
         <p class="muted" style="font-size: 12.5px; line-height: 1.7;">
           扫描每部番剧的<b>所有字幕组</b>种子,按偏好挑最佳源:<br>
           片源 <b>BD &gt; Web</b> · 严格匹配分辨率与字幕(默认 1080P / 简中,可在设置改)。<br>
-          缺失的集会补全;已有 Web 而出现合格 BD 的会下 BD 升级(完成后自动顶替)。
+          选择下面的执行方式后再扫描；“只生成建议”不会立即提交下载。
         </p>
+        <label class="mode-field">
+          <span>执行方式</span>
+          <select v-model="autoMode" class="input">
+            <option value="fill_upgrade">补全缺集并升级 Web→BD</option>
+            <option value="fill_only">仅补全缺集，不替换现有版本</option>
+            <option value="review">只生成建议，确认后下载</option>
+          </select>
+        </label>
         <label class="row" style="margin: 16px 0; cursor: pointer;">
           <input type="checkbox" v-model="autoEnable" />
-          同时设为常驻智能下载(之后定期自动扫描补全/升级)
+          同时保存为这批番剧的常驻扫描方式
         </label>
         <div class="row" style="justify-content: flex-end;">
           <button class="btn" @click="autoConfirm = null">取消</button>
@@ -358,6 +380,8 @@ onUnmounted(() => { mounted = false; clearTimeout(scanTimer); clearTimeout(autoT
 </template>
 
 <style scoped>
+.mode-field { display: grid; gap: 6px; margin-top: 14px; font-size: 12.5px; }
+.mode-field .input { width: 100%; }
 .search-wrap { position: relative; display: inline-flex; align-items: center; }
 .search-ic { position: absolute; left: 10px; color: var(--text-dim); pointer-events: none; }
 .search-box { width: 240px; padding-left: 32px; }
@@ -435,6 +459,7 @@ onUnmounted(() => { mounted = false; clearTimeout(scanTimer); clearTimeout(autoT
 }
 .src-badge.owned { color: var(--green); }
 .src-badge.rip { color: var(--accent); }
+.src-badge.release { color: var(--text-dim); }
 .info { padding: 10px 12px 12px; }
 .title {
   font-weight: 600; font-size: 13.5px; white-space: nowrap;

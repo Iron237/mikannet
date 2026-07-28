@@ -38,13 +38,13 @@ const LABELS = {
   auto_dl_resolution: '目标分辨率(严格匹配,如 1080p)',
   auto_dl_sub_lang: '字幕语言要求(简中 = 必须含简体)',
   auto_dl_prefer_bd: '片源优先 BD > Web(并把已有 Web 升级为 BD)',
-  auto_dl_interval_min: '定期智能扫描间隔(分钟,0=关闭)',
+  auto_dl_interval_min: '定期自动补全扫描间隔(分钟,0=关闭)',
   media_host_root: '番剧库文件夹路径(你电脑上看到的,如 Z:\\番剧\\mikannet)',
   bd_owned_host_root: '已购原盘文件夹路径(如 Z:\\BD\\已购BD翻录)',
   data_host_root: 'data 目录路径(用于「打开 log 目录」,如 C:\\mikannet\\data\\mikannet)',
   powerdvd_path: 'PowerDVD.exe 路径(留空 → 自动探测常见安装位)',
 }
-const GROUP_ORDER = ['常规', '智能下载', '下载器', '代理', '搜索源', '整理', '播放',
+const GROUP_ORDER = ['常规', '自动补全与升级', '下载器', '代理', '搜索源', '整理', '播放',
   '坏种清理', 'bgm.tv 联动', 'AniDB', 'LLM']
 
 const channelMeta = {

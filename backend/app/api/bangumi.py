@@ -1,5 +1,6 @@
 """番剧库与详情(虚拟库视图,ADR-0001:全部由数据库渲染)。"""
 import logging
+import time
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import select
@@ -7,12 +8,31 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
-from app.models import (Bangumi, BdRelease, Episode, EpisodeType, Kind, Subscription,
-                        Torrent, TorrentEpisode, TorrentStatus, VideoFile)
+from app.models import (AutoScanLog, Bangumi, BdRelease, Episode, EpisodeType, Kind,
+                        Subscription, Torrent, TorrentEpisode, TorrentStatus, VideoFile)
 from app.services.local_import import LOCAL_SUBGROUP_ID
 
 router = APIRouter(prefix="/api/bangumi", tags=["bangumi"])
 log = logging.getLogger(__name__)
+_FILE_EXIST_CACHE: dict[str, tuple[float, bool]] = {}
+_FILE_EXIST_TTL = 3.0
+
+
+def _file_exists(relative_path: str) -> bool:
+    path = settings.download_root_local / relative_path
+    key = str(path)
+    now = time.monotonic()
+    cached = _FILE_EXIST_CACHE.get(key)
+    if cached and now - cached[0] < _FILE_EXIST_TTL:
+        return cached[1]
+    try:
+        exists = path.is_file()
+    except OSError:
+        exists = False
+    if len(_FILE_EXIST_CACHE) > 10000:
+        _FILE_EXIST_CACHE.clear()
+    _FILE_EXIST_CACHE[key] = (now, exists)
+    return exists
 
 
 def _poster_url(b: Bangumi) -> str | None:
@@ -25,6 +45,7 @@ def _file_out(f) -> dict:
     from pathlib import PurePosixPath
 
     from app.services import launch
+    exists = _file_exists(f.relative_path)
     return {
         "id": f.id, "path": f.relative_path, "name": PurePosixPath(f.relative_path).name,
         "original_name": f.original_name,   # 整理改名前的原始文件名(保留字幕组/版本等信息)
@@ -32,35 +53,142 @@ def _file_out(f) -> dict:
         "source": f.source, "codec": f.video_codec,
         "color_depth": f.color_depth, "hdr": f.hdr, "bitrate": f.bitrate,
         "audio_tracks": f.audio_tracks, "subtitle_tracks": f.subtitle_tracks,
-        "play_url": launch.media_launch("play", f.relative_path),
-        "reveal_url": launch.media_launch("reveal", f.relative_path),
+        "preferred": bool(f.is_preferred),
+        "exists": exists,
+        "play_url": launch.media_launch("play", f.relative_path) if exists else None,
+        "reveal_url": launch.media_launch("reveal", f.relative_path) if exists else None,
     }
 
 
 @router.get("")
 def library(db: Session = Depends(get_db)):
     rows = db.execute(select(Bangumi).order_by(Bangumi.created_at.desc())).scalars().all()
-    return [{
-        "id": b.id, "title": b.title, "year": b.year, "season": b.season_str,
-        "studio": b.studio, "score": b.score, "airing_status": b.airing_status.value,
-        "kind": b.kind.value, "auto_best": b.auto_best,
-        "has_mikan": b.mikan_bangumi_id is not None,
-        "poster": _poster_url(b),
-        "backdrop": f"/data/{b.backdrop_path}" if b.backdrop_path else None,
-        "eps_total": b.eps_total,
-        # 影片/OVA 没有"正片集"概念,用是否有入库文件表达"已入库"(剧场版文件常未映射到集)
-        "has_resource": bool(db.execute(
-            select(VideoFile.id).join(Torrent).join(Subscription)
-            .where(Subscription.bangumi_id == b.id, VideoFile.is_active.is_(True))
-            .limit(1)).first()),
-        "eps_downloaded": _eps_done(db, b),
-        "eps_aired": _eps_aired(db, b),
-        "has_bd": _has_source(db, b.id, "BD"),
-        "has_web": _has_source(db, b.id, "Web"),
-        # 封面墙右下角「源」角标:原盘(自购)优先,其次正片已全替为 BDrip
-        "bd_owned": b.bd_owned,
-        "bd_rip": _has_active_file_source(db, b.id, "BD"),
-    } for b in rows]
+    out = []
+    for b in rows:
+        coverage = _resource_coverage(db, b, verify_files=True)
+        out.append({
+            "id": b.id, "title": b.title, "year": b.year, "season": b.season_str,
+            "studio": b.studio, "score": b.score, "airing_status": b.airing_status.value,
+            "kind": b.kind.value, "auto_best": b.auto_best, "auto_mode": b.auto_mode,
+            "auto_download_disabled": b.auto_download_disabled,
+            "has_mikan": b.mikan_bangumi_id is not None,
+            "poster": _poster_url(b),
+            "backdrop": f"/data/{b.backdrop_path}" if b.backdrop_path else None,
+            "eps_total": b.eps_total,
+            # 影片/OVA 没有"正片集"概念,用是否有入库文件表达"已入库"。
+            "has_resource": _has_any_active_file(db, b.id, verify_files=True),
+            "eps_downloaded": _eps_done(db, b, verify_files=True),
+            "eps_aired": _eps_aired(db, b, verify_files=True),
+            "has_bd": coverage["bd_status"] != "none",
+            "has_web": _has_active_file_source(db, b.id, "Web", verify_files=True),
+            "bd_owned": b.bd_owned,
+            # 兼容旧前端;新前端使用 bd_status + 精确覆盖数。
+            "bd_rip": bool(coverage["bd"] or coverage["bd_active_files"]),
+            "bd_status": coverage["bd_status"],
+            "bd_active_eps": len(coverage["bd"]),
+            "web_active_eps": len(coverage["web"]),
+            "bd_release_count": coverage["bd_release_count"],
+        })
+    return out
+
+
+def _resource_coverage(db: Session, b: Bangumi, include_cleanup: bool = False,
+                       verify_files: bool = False) -> dict:
+    """正式正片的资源覆盖矩阵。
+
+    active 表示当前实际播放版本;inactive 作为可恢复的备用版本保留。BD 发行记录与
+    可播放 BD 文件分开表达,避免“扫到发行”被误写成“全番已替换”。
+    """
+    rows = db.execute(
+        select(Episode.number, VideoFile.id, VideoFile.source, VideoFile.is_active,
+               VideoFile.is_preferred, VideoFile.relative_path, VideoFile.size)
+        .join(VideoFile, VideoFile.episode_id == Episode.id)
+        .join(Torrent, VideoFile.torrent_id == Torrent.id)
+        .where(Episode.bangumi_id == b.id, Episode.type == EpisodeType.REGULAR,
+               Episode.number.is_not(None), Torrent.is_preview.is_(False))).all()
+    rank = {"BD": 0, "Web": 1}
+    active: dict[float, str] = {}
+    fallback: dict[float, set[str]] = {}
+    versions: dict[float, list[dict]] = {}
+    for number, file_id, source, is_active, is_preferred, relative_path, size in rows:
+        num = float(number)
+        src = source or "未知"
+        exists = _file_exists(relative_path) if verify_files else True
+        versions.setdefault(num, []).append({
+            "id": file_id, "source": src, "active": bool(is_active and exists),
+            "recorded_active": bool(is_active), "exists": exists,
+            "preferred": bool(is_preferred),
+            "name": relative_path.rsplit("/", 1)[-1], "size": size,
+        })
+        if is_active and exists:
+            if num not in active or rank.get(src, 9) < rank.get(active[num], 9):
+                active[num] = src
+        elif exists:
+            fallback.setdefault(num, set()).add(src)
+
+    start = b.ep_start or 1
+    expected = ([float(n) for n in range(start, start + b.eps_total)]
+                if b.kind == Kind.TV and b.eps_total else [])
+    missing = [n for n in expected if n not in active]
+    bd = sorted(n for n, src in active.items() if src == "BD")
+    web = sorted(n for n, src in active.items() if src == "Web")
+    unknown = sorted(n for n, src in active.items() if src not in ("BD", "Web"))
+    active_file_sources = db.execute(
+        select(VideoFile.source, VideoFile.relative_path).join(Torrent).join(Subscription)
+        .where(Subscription.bangumi_id == b.id, VideoFile.is_active.is_(True),
+               Torrent.is_preview.is_(False))).all()
+    bd_active_files = sum(
+        1 for src, path in active_file_sources
+        if src == "BD" and (not verify_files or _file_exists(path)))
+    release_count = db.execute(select(BdRelease.id).where(
+        BdRelease.bangumi_id == b.id)).scalars().all()
+    if b.kind == Kind.TV:
+        if not bd:
+            bd_status = "release_only" if release_count else "none"
+        elif expected and all(active.get(n) == "BD" for n in expected):
+            bd_status = "complete"
+        else:
+            bd_status = "partial"
+    elif not bd_active_files:
+        bd_status = "release_only" if release_count else "none"
+    else:
+        bd_status = "active"
+
+    episodes = []
+    numbers = expected or sorted(set(active) | set(fallback))
+    for n in numbers:
+        episodes.append({
+            "number": int(n) if float(n).is_integer() else n,
+            "active_source": active.get(n),
+            "fallback_sources": sorted(fallback.get(n, set())),
+            "versions": sorted(versions.get(n, []),
+                               key=lambda v: (not v["active"], v["source"], v["id"])),
+        })
+
+    # 合集里同时存在被替换 Web 和仍生效文件时不能安全整包清理,显式告诉用户原因。
+    cleanup_blocked = 0
+    if include_cleanup:
+        torrents = db.execute(select(Torrent).join(Subscription).where(
+            Subscription.bangumi_id == b.id)).scalars().all()
+        for torrent in torrents:
+            files = list(torrent.files)
+            if (any(f.source == "Web" and not f.is_active for f in files)
+                    and any(f.is_active for f in files)):
+                cleanup_blocked += 1
+
+    return {
+        "total": len(expected) or None,
+        "bd": [int(n) if n.is_integer() else n for n in bd],
+        "web": [int(n) if n.is_integer() else n for n in web],
+        "unknown": [int(n) if n.is_integer() else n for n in unknown],
+        "missing": [int(n) if n.is_integer() else n for n in missing],
+        "fallback_count": len(fallback),
+        "episodes": episodes,
+        "bd_status": bd_status,
+        "bd_active_files": bd_active_files,
+        "bd_release_count": len(release_count),
+        "cleanup_blocked_torrents": cleanup_blocked,
+    }
 
 
 @router.post("/from-mikan")
@@ -86,19 +214,23 @@ def ensure_from_mikan(payload: dict, db: Session = Depends(get_db)):
     return {"id": b.id, "title": b.title, "mikan_bangumi_id": b.mikan_bangumi_id}
 
 
-def _eps_done(db: Session, b: Bangumi, official_only: bool = False) -> int:
+def _eps_done(db: Session, b: Bangumi, official_only: bool = False,
+              verify_files: bool = False) -> int:
     """已入库集数:只数有 active 文件的**正片**集(不含 SP/菜单/NC/特典),并封顶到总集数。
 
     封顶规避:跨季连续编号(S2 编 13-24)/ 错误元数据 / 旧整理残留的幽灵集 等导致的「超过总集数」。
     official_only:只数正式流(先行放送内容不算,「已播」推断用)。
     """
-    q = (select(Episode.id).join(VideoFile, VideoFile.episode_id == Episode.id)
+    q = (select(Episode.id, VideoFile.relative_path)
+         .join(VideoFile, VideoFile.episode_id == Episode.id)
          .where(Episode.bangumi_id == b.id, Episode.type == EpisodeType.REGULAR,
                 VideoFile.is_active.is_(True)))
     if official_only:
         q = q.join(Torrent, VideoFile.torrent_id == Torrent.id).where(
             Torrent.is_preview.is_(False))
-    n = len(db.execute(q.distinct()).scalars().all())
+    rows = db.execute(q.distinct()).all()
+    n = len({episode_id for episode_id, path in rows
+             if not verify_files or _file_exists(path)})
     return min(n, b.eps_total) if b.eps_total else n
 
 
@@ -115,7 +247,7 @@ def _weekly_aired(air_date: str | None) -> int:
     return days // 7 + 1 if days >= 0 else 0
 
 
-def _eps_aired(db: Session, b: Bangumi) -> int | None:
+def _eps_aired(db: Session, b: Bangumi, verify_files: bool = False) -> int | None:
     """已播/已发布集数(真实更新情况):取该番**所有种子**(含 SKIPPED 留痕)`parsed_json`
     解析出的最大正片集号 = 真实「种子已出到第几集」;没见过种子时按首播日 + 周更推算。封顶到总集数。
 
@@ -141,7 +273,7 @@ def _eps_aired(db: Session, b: Bangumi) -> int | None:
     if seen == 0:
         seen = _weekly_aired(b.air_date)
     # 已下载的正式集必然已播 → 下限(只用正式流数,先行集齐不代表官方播过)
-    seen = max(seen, _eps_done(db, b, official_only=True))
+    seen = max(seen, _eps_done(db, b, official_only=True, verify_files=verify_files))
     return min(seen, b.eps_total) if seen > 0 else None
 
 
@@ -153,12 +285,23 @@ def _has_source(db: Session, bangumi_id: int, source: str) -> bool:
     return _has_active_file_source(db, bangumi_id, source)
 
 
-def _has_active_file_source(db: Session, bangumi_id: int, source: str) -> bool:
+def _has_any_active_file(db: Session, bangumi_id: int,
+                         verify_files: bool = False) -> bool:
+    rows = db.execute(
+        select(VideoFile.relative_path).join(Torrent).join(Subscription)
+        .where(Subscription.bangumi_id == bangumi_id,
+               VideoFile.is_active.is_(True))).scalars().all()
+    return any(not verify_files or _file_exists(path) for path in rows)
+
+
+def _has_active_file_source(db: Session, bangumi_id: int, source: str,
+                            verify_files: bool = False) -> bool:
     """该番剧是否有指定片源的 active 视频文件(不认 BD 发行记录,用于「BDrip 已替换正片」角标)。"""
-    return bool(db.execute(
-        select(VideoFile.id).join(Torrent).join(Subscription)
+    rows = db.execute(
+        select(VideoFile.relative_path).join(Torrent).join(Subscription)
         .where(Subscription.bangumi_id == bangumi_id, VideoFile.is_active.is_(True),
-               VideoFile.source == source).limit(1)).first())
+               VideoFile.source == source)).scalars().all()
+    return any(not verify_files or _file_exists(path) for path in rows)
 
 
 def _upcoming_this_week(db: Session, b: Bangumi) -> dict | None:
@@ -205,6 +348,165 @@ def _upcoming_this_week(db: Session, b: Bangumi) -> dict | None:
             "date": target.isoformat(), "premiere": cnt == 1}
 
 
+@router.get("/resource-issues")
+def resource_issues(verify_files: bool = True, db: Session = Depends(get_db)):
+    """全局待处理中心：把资源覆盖、订阅健康、失败任务与物理文件漂移归到同一入口。"""
+    from datetime import datetime, timezone
+
+    groups = [
+        {"key": "missing_files", "label": "文件记录失效", "severity": "error", "items": []},
+        {"key": "failed_tasks", "label": "下载任务失败", "severity": "error", "items": []},
+        {"key": "missing_episodes", "label": "已播但缺集", "severity": "warning", "items": []},
+        {"key": "subscription_errors", "label": "订阅源异常", "severity": "warning", "items": []},
+        {"key": "bd_release_only", "label": "BD 尚未覆盖正片", "severity": "warning", "items": []},
+        {"key": "cleanup_blocked", "label": "合集阻止清理", "severity": "info", "items": []},
+        {"key": "auto_never_scanned", "label": "自动策略尚未运行", "severity": "info", "items": []},
+        {"key": "unbound_bd", "label": "BD 发行未绑定", "severity": "warning", "items": []},
+    ]
+    by_key = {g["key"]: g for g in groups}
+
+    def add(key: str, b: Bangumi | None, detail: str, **extra) -> None:
+        by_key[key]["items"].append({
+            "bangumi_id": b.id if b else None,
+            "title": b.title if b else extra.pop("title", "未绑定发行"),
+            "path": f"/bangumi/{b.id}" if b else "/bd",
+            "detail": detail,
+            **extra,
+        })
+
+    rows = db.execute(select(Bangumi).order_by(Bangumi.updated_at.desc())).scalars().all()
+    failed_statuses = (TorrentStatus.SUBMIT_FAILED, TorrentStatus.DOWNLOAD_ERROR)
+    for b in rows:
+        coverage = _resource_coverage(
+            db, b, include_cleanup=True, verify_files=verify_files)
+        aired = _eps_aired(db, b, verify_files=verify_files)
+        if aired and coverage["missing"]:
+            start = b.ep_start or 1
+            aired_numbers = set(range(start, start + aired))
+            due = [n for n in coverage["missing"] if n in aired_numbers]
+            if due:
+                add("missing_episodes", b, f"缺第 {', '.join(map(str, due[:12]))} 话",
+                    count=len(due), episodes=due)
+
+        failed = db.execute(
+            select(Torrent).join(Subscription)
+            .where(Subscription.bangumi_id == b.id,
+                   Torrent.status.in_(failed_statuses))).scalars().all()
+        if failed:
+            add("failed_tasks", b, f"{len(failed)} 个任务提交或下载失败",
+                count=len(failed))
+
+        bad_subs = db.execute(
+            select(Subscription).where(
+                Subscription.bangumi_id == b.id,
+                Subscription.enabled.is_(True),
+                Subscription.mikan_subgroup_id.notin_(("local", "auto")),
+                Subscription.last_poll_ok.is_(False))).scalars().all()
+        if bad_subs:
+            names = [s.subgroup_name or s.mikan_subgroup_id for s in bad_subs]
+            add("subscription_errors", b, f"{len(bad_subs)} 个订阅源检查失败",
+                count=len(bad_subs), sources=names)
+
+        if coverage["bd_status"] == "release_only":
+            add("bd_release_only", b,
+                f"检测到 {coverage['bd_release_count']} 套发行，但没有生效 BD 正片",
+                count=coverage["bd_release_count"])
+        if coverage["cleanup_blocked_torrents"]:
+            add("cleanup_blocked", b,
+                f"{coverage['cleanup_blocked_torrents']} 个合集同时含生效与备用文件",
+                count=coverage["cleanup_blocked_torrents"])
+        if b.auto_best and not b.auto_scan_at and not b.auto_download_disabled:
+            add("auto_never_scanned", b, "常驻策略已开启，但还没有扫描记录")
+
+        active_files = db.execute(
+            select(VideoFile).join(Torrent).join(Subscription)
+            .where(Subscription.bangumi_id == b.id,
+                   VideoFile.is_active.is_(True))).scalars().all()
+        missing_paths: list[str] = []
+        if verify_files:
+            for vf in active_files:
+                try:
+                    exists = _file_exists(vf.relative_path)
+                except OSError:
+                    exists = False
+                if not exists:
+                    missing_paths.append(vf.relative_path)
+        archived_without_file = db.execute(
+            select(Torrent).join(Subscription)
+            .where(Subscription.bangumi_id == b.id,
+                   Torrent.status == TorrentStatus.ARCHIVED)).scalars().all()
+        stale_archives = []
+        for torrent in archived_without_file:
+            if torrent.files or not torrent.episodes:
+                continue
+            # 已清理的旧版本任务可以没有自己的文件；只有其映射集也没有其它实盘版本时，
+            # 才会造成“任务已入库、详情却无文件”的真实漂移。
+            uncovered = False
+            for episode in torrent.episodes:
+                alternatives = db.execute(
+                    select(VideoFile.relative_path).where(
+                        VideoFile.episode_id == episode.id,
+                        VideoFile.is_active.is_(True))).scalars().all()
+                if not any(_file_exists(path) for path in alternatives):
+                    uncovered = True
+                    break
+            if uncovered:
+                stale_archives.append(torrent)
+        stale_count = len(missing_paths) + len(stale_archives)
+        if stale_count:
+            detail = (f"{len(missing_paths)} 个生效文件在磁盘上不存在"
+                      if missing_paths else f"{len(stale_archives)} 个已入库任务没有生效文件")
+            add("missing_files", b, detail, count=stale_count,
+                sample_paths=missing_paths[:3])
+
+    for release in db.execute(select(BdRelease).where(
+            BdRelease.bangumi_id.is_(None))).scalars().all():
+        add("unbound_bd", None, "扫描到发行，但尚未关联番剧",
+            release_id=release.id, title=release.title)
+
+    groups = [g for g in groups if g["items"]]
+    summary = {
+        "total": sum(len(g["items"]) for g in groups),
+        "error": sum(len(g["items"]) for g in groups if g["severity"] == "error"),
+        "warning": sum(len(g["items"]) for g in groups if g["severity"] == "warning"),
+        "info": sum(len(g["items"]) for g in groups if g["severity"] == "info"),
+    }
+    return {"generated_at": datetime.now(timezone.utc).isoformat(),
+            "verified_files": verify_files, "summary": summary, "groups": groups}
+
+
+@router.post("/refresh-metadata-all")
+def refresh_all_metadata():
+    """批量重拉所有番剧元数据/封面。静态路由须声明在 /{bangumi_id} 之前。"""
+    from app.services.metadata_service import start_refresh_all
+    if not start_refresh_all():
+        raise HTTPException(409, "已有重拉任务在进行中")
+    return {"started": True}
+
+
+@router.post("/auto-scan")
+def auto_scan(payload: dict, db: Session = Depends(get_db)):
+    """批量智能扫描。payload: {ids:[...], mode, enable_auto?:bool}。
+    mode 可选补全升级、仅补缺、只建议；enable_auto=True 时保存为常驻策略。"""
+    from app.services import auto_best
+    ids = [int(i) for i in (payload.get("ids") or [])]
+    if not ids:
+        raise HTTPException(400, "没有选择番剧")
+    mode = str(payload.get("mode") or "fill_upgrade").strip().lower()
+    if mode not in auto_best.AUTO_MODES:
+        raise HTTPException(400, "mode 非法(fill_upgrade/fill_only/review)")
+    if payload.get("enable_auto"):
+        for bid in ids:
+            b = db.get(Bangumi, bid)
+            if b:
+                b.auto_best = True
+                b.auto_mode = mode
+        db.commit()
+    if not auto_best.start_scan(ids, mode=mode, trigger="manual"):
+        raise HTTPException(409, "已有智能扫描在进行中")
+    return {"started": True, "total": len(ids), "mode": mode}
+
+
 @router.get("/calendar/week")
 def calendar(db: Session = Depends(get_db)):
     """放送日历:连载中番剧按星期分组(0=周一 … 6=周日)。"""
@@ -220,8 +522,8 @@ def calendar(db: Session = Depends(get_db)):
             "ep_start": b.ep_start or 1,   # 放送表按 bangumi 编号显示「第 N 话」
             "air_date": b.air_date,        # 未开播的显示「N月N日开播」
             "upcoming": _upcoming_this_week(db, b),   # 前瞻:下一话何时更新
-            "eps_downloaded": _eps_done(db, b),
-            "eps_aired": _eps_aired(db, b),
+            "eps_downloaded": _eps_done(db, b, verify_files=True),
+            "eps_aired": _eps_aired(db, b, verify_files=True),
         }
         up = entry["upcoming"]
         wd = b.air_weekday
@@ -287,6 +589,7 @@ def detail(bangumi_id: int, phase: str | None = None, db: Session = Depends(get_
             .where(VideoFile.episode_id == ep.id, VideoFile.is_active.is_(True),
                    Torrent.is_preview.is_(want_preview))
             .order_by(VideoFile.relative_path)).scalars().all()
+        ep_files = [f for f in ep_files if _file_exists(f.relative_path)]
         if current is None and not ep_files:
             continue   # 这一集在当前阶段无任何内容 → 不列(正式阶段下面按总集数补缺占位)
         # 历史任务可能仍是 ARCHIVED,但文件记录已被删除/迁移扫描清掉。详情状态必须以实际
@@ -300,7 +603,8 @@ def detail(bangumi_id: int, phase: str | None = None, db: Session = Depends(get_
             "id": ep.id, "number": ep.number, "type": ep.type.value, "title": ep.title,
             "air_date": ep.air_date,   # 每集精确放送日(bgm.tv 章节同步)
             "status": "missing" if archived_without_file
-                      else (current.status.value if current else "missing"),
+                      else (current.status.value if current else
+                            ("archived" if ep_files else "missing")),
             "version": None if archived_without_file else (current.version if current else None),
             "torrent_id": None if archived_without_file else (current.id if current else None),
             "files": [_file_out(f) for f in ep_files],
@@ -348,6 +652,7 @@ def detail(bangumi_id: int, phase: str | None = None, db: Session = Depends(get_
         "season_number": b.season_number or 1,
         "ep_start": b.ep_start or 1,
         "auto_best": b.auto_best, "bd_owned": b.bd_owned,
+        "auto_download_disabled": b.auto_download_disabled,
         "air_date": b.air_date,
         "phase": phase, "has_preview": has_preview, "has_official": has_official,
         "bd_releases": _bd_releases_out(db, b.id),
@@ -452,6 +757,9 @@ def _purge_bangumi(db: Session, b: Bangumi, delete_files: bool) -> None:
     # 必须在删 bangumi 前显式落删并 flush,否则 FK 约束报错
     for br in db.execute(select(BdRelease).where(BdRelease.bangumi_id == b.id)).scalars():
         db.delete(br)
+    for scan_log in db.execute(select(AutoScanLog).where(
+            AutoScanLog.bangumi_id == b.id)).scalars():
+        db.delete(scan_log)
     db.flush()
     db.delete(b)
 
@@ -486,13 +794,14 @@ def batch_delete(payload: dict, db: Session = Depends(get_db)):
 
 @router.get("/{bangumi_id}/auto-status")
 def auto_status(bangumi_id: int, db: Session = Depends(get_db)):
-    """智能下载当前状态(详情页状态卡):开关/上次扫描摘要/auto 种子分布/缺集与在途。"""
+    """自动补全与升级状态:开关、审计、内部任务、缺集与在途。"""
     from app.services import auto_best
     b = db.get(Bangumi, bangumi_id)
     if not b:
         raise HTTPException(404)
     # auto 容器订阅的种子按状态分布
     counts: dict[str, int] = {}
+    last_activity = None
     auto_sub_id = db.execute(select(Subscription.id).where(
         Subscription.bangumi_id == b.id,
         Subscription.mikan_subgroup_id == auto_best.AUTO_SUBGROUP_ID)).scalar_one_or_none()
@@ -501,6 +810,8 @@ def auto_status(bangumi_id: int, db: Session = Depends(get_db)):
         for t in db.execute(select(Torrent).where(
                 Torrent.subscription_id == auto_sub_id)).scalars():
             counts[t.status.value] = counts.get(t.status.value, 0) + 1
+            if t.created_at and (last_activity is None or t.created_at > last_activity):
+                last_activity = t.created_at
             if t.status in (TorrentStatus.PENDING, TorrentStatus.DOWNLOADING,
                             TorrentStatus.COMPLETED):
                 for te in db.execute(select(Episode.number).join(
@@ -520,15 +831,157 @@ def auto_status(bangumi_id: int, db: Session = Depends(get_db)):
         missing = [n for n in range(start, start + b.eps_total) if float(n) not in have]
     scanning = bool(auto_best.state.get("running")) and (
         auto_best.state.get("current") == b.title or auto_best.state.get("total", 0) > 1)
+    next_run = None
+    try:
+        from app import scheduler as scheduler_module
+        job = scheduler_module.scheduler.get_job("auto_best")
+        if job and job.next_run_time:
+            next_run = job.next_run_time.isoformat()
+    except Exception:  # noqa: BLE001 — 测试环境/调度器尚未启动
+        pass
+    latest_review = db.execute(
+        select(AutoScanLog).where(
+            AutoScanLog.bangumi_id == b.id,
+            AutoScanLog.mode == "review",
+            AutoScanLog.approved_at.is_(None))
+        .order_by(AutoScanLog.created_at.desc()).limit(1)).scalar_one_or_none()
+    pending_review = len((latest_review.result_json or {}).get("proposals") or []) if latest_review else 0
     return {
         "enabled": bool(b.auto_best),
+        "mode": auto_best.normalize_mode(b.auto_mode),
+        "blocked": bool(b.auto_download_disabled),
         "scanning": scanning,
         "last_scan_at": b.auto_scan_at.isoformat() + "Z" if b.auto_scan_at else None,
+        "last_activity_at": last_activity.isoformat() + "Z" if last_activity else None,
+        "next_run_at": next_run,
         "last_result": b.auto_scan_result,
+        "pending_review": pending_review,
+        "pending_review_log_id": latest_review.id if pending_review else None,
         "torrents": counts,
         "missing": missing,
         "in_flight": sorted(int(n) if float(n).is_integer() else n
                             for n in in_flight_eps if float(n) in {float(m) for m in missing}),
+    }
+
+
+@router.get("/{bangumi_id}/auto-history")
+def auto_history(bangumi_id: int, limit: int = 20, db: Session = Depends(get_db)):
+    """最近智能扫描审计；候选下载 URL 只保存在库内，不回传前端。"""
+    if not db.get(Bangumi, bangumi_id):
+        raise HTTPException(404)
+    rows = db.execute(
+        select(AutoScanLog).where(AutoScanLog.bangumi_id == bangumi_id)
+        .order_by(AutoScanLog.created_at.desc())
+        .limit(max(1, min(limit, 100)))).scalars().all()
+    out = []
+    for row in rows:
+        result = dict(row.result_json or {})
+        proposals = result.pop("proposals", [])
+        out.append({
+            "id": row.id, "mode": row.mode, "trigger": row.trigger,
+            "created_at": row.created_at.isoformat() + "Z" if row.created_at else None,
+            "approved_at": row.approved_at.isoformat() + "Z" if row.approved_at else None,
+            "pending": len(proposals) if not row.approved_at else 0,
+            "result": result,
+        })
+    return out
+
+
+@router.post("/{bangumi_id}/auto-history/{log_id}/approve")
+def approve_auto_review(bangumi_id: int, log_id: int, db: Session = Depends(get_db)):
+    """批准 review 模式保存的精确候选；幂等去重仍由 auto 下载容器负责。"""
+    from datetime import datetime, timezone
+    from app.services import auto_best
+
+    b = db.get(Bangumi, bangumi_id)
+    row = db.get(AutoScanLog, log_id)
+    if not b or not row or row.bangumi_id != bangumi_id:
+        raise HTTPException(404)
+    if b.auto_download_disabled:
+        raise HTTPException(409, "该番剧已设置停止自动获取")
+    result = dict(row.result_json or {})
+    proposals = result.get("proposals") or []
+    if row.mode != "review" or not proposals:
+        raise HTTPException(409, "这条扫描记录没有待确认候选")
+    if row.approved_at:
+        raise HTTPException(409, "这条扫描记录已经处理")
+    sub = auto_best._auto_sub(db, b)
+    submitted = sum(1 for candidate in proposals
+                    if auto_best._submit_candidate(db, sub, candidate))
+    row.approved_at = datetime.now(timezone.utc)
+    result.update(submitted=submitted, pending=0,
+                  note=f"已确认并提交 {submitted} 个种子")
+    result.pop("proposals", None)
+    row.result_json = result
+    b.auto_scan_result = {k: v for k, v in result.items() if k != "proposals"}
+    db.commit()
+    return {"ok": True, "submitted": submitted, "log_id": row.id}
+
+
+@router.get("/{bangumi_id}/resource-strategy")
+def resource_strategy(bangumi_id: int, db: Session = Depends(get_db)):
+    """P1 统一资源策略:覆盖矩阵 + 自动策略 + 真实订阅源。
+
+    前端以此为唯一状态入口,不再分别猜 BD 发行、active 文件、内部 auto 容器的含义。
+    """
+    from app.services import auto_best
+    b = db.get(Bangumi, bangumi_id)
+    if not b:
+        raise HTTPException(404)
+    real_subs = db.execute(select(Subscription).where(
+        Subscription.bangumi_id == b.id,
+        Subscription.mikan_subgroup_id.notin_(("local", "auto")))).scalars().all()
+    return {
+        "bangumi_id": b.id,
+        "coverage": _resource_coverage(
+            db, b, include_cleanup=True, verify_files=True),
+        "subscriptions": [_sub_out(s) for s in real_subs],
+        "auto": auto_status(b.id, db),
+        "policy": {
+            "owned": bool(b.bd_owned),
+            "stop_automatic": bool(b.auto_download_disabled),
+            "resolution": settings.auto_dl_resolution,
+            "subtitle_language": settings.auto_dl_sub_lang,
+            "upgrade_to_bd": bool(settings.auto_dl_prefer_bd),
+            "auto_mode": auto_best.normalize_mode(b.auto_mode),
+            "interval_minutes": settings.auto_dl_interval_min,
+        },
+    }
+
+
+@router.post("/{bangumi_id}/sync-resources")
+def sync_resources(bangumi_id: int, db: Session = Depends(get_db)):
+    """统一“立即同步”:检查本番真实订阅,并启动一次跨字幕组补缺/升 BD。
+
+    已停止自动获取时不偷偷绕过策略;本地/BD 文件扫描仍由对应显式按钮触发。
+    """
+    from app.services import auto_best
+    from app.services.rss_engine import safe_poll
+    b = db.get(Bangumi, bangumi_id)
+    if not b:
+        raise HTTPException(404)
+    if b.auto_download_disabled:
+        raise HTTPException(409, "该番剧已设置停止自动获取")
+    subs = db.execute(select(Subscription).where(
+        Subscription.bangumi_id == b.id,
+        Subscription.enabled.is_(True),
+        Subscription.mikan_subgroup_id.notin_(("local", "auto")))).scalars().all()
+    rss_results = [safe_poll(db, sub) for sub in subs]
+    db.commit()
+    auto_started = False
+    auto_note = None
+    if b.mikan_bangumi_id:
+        auto_started = auto_best.start_scan([b.id], mode=None, trigger="sync")
+        if not auto_started:
+            auto_note = "已有自动补全扫描在进行中"
+    else:
+        auto_note = "无蜜柑 ID,仅检查本地订阅"
+    return {
+        "ok": True,
+        "rss_checked": len(subs),
+        "rss_results": rss_results,
+        "auto_started": auto_started,
+        "auto_note": auto_note,
     }
 
 
@@ -621,11 +1074,20 @@ def update_bangumi(bangumi_id: int, payload: dict, db: Session = Depends(get_db)
             raise HTTPException(400, "kind 非法(tv/movie/ova)") from None
     if "auto_best" in payload:
         b.auto_best = bool(payload["auto_best"])
+    if "auto_mode" in payload:
+        from app.services.auto_best import AUTO_MODES
+        mode = str(payload["auto_mode"]).strip().lower()
+        if mode not in AUTO_MODES:
+            raise HTTPException(400, "auto_mode 非法(fill_upgrade/fill_only/review)")
+        b.auto_mode = mode
     if "bd_owned" in payload:
         b.bd_owned = bool(payload["bd_owned"])
+    if "auto_download_disabled" in payload:
+        b.auto_download_disabled = bool(payload["auto_download_disabled"])
     db.commit()
     return {"ok": True, "season_number": b.season_number, "kind": b.kind.value,
-            "auto_best": b.auto_best, "bd_owned": b.bd_owned}
+            "auto_best": b.auto_best, "auto_mode": b.auto_mode, "bd_owned": b.bd_owned,
+            "auto_download_disabled": b.auto_download_disabled}
 
 
 def _reorganize_bg(torrent_ids: list[int]) -> None:
@@ -727,15 +1189,6 @@ def refresh(bangumi_id: int, db: Session = Depends(get_db)):
     return {"ok": True, "title": b.title}
 
 
-@router.post("/refresh-metadata-all")
-def refresh_all_metadata():
-    """批量重拉所有番剧元数据/封面(迁移到新机、图片没带过来时一键补齐)。后台执行。"""
-    from app.services.metadata_service import start_refresh_all
-    if not start_refresh_all():
-        raise HTTPException(409, "已有重拉任务在进行中")
-    return {"started": True}
-
-
 @router.get("/refresh-metadata-all/status")
 def refresh_all_metadata_status():
     from app.services.metadata_service import refresh_state
@@ -750,34 +1203,19 @@ def auto_scan_status():
     return state
 
 
-@router.post("/auto-scan")
-def auto_scan(payload: dict, db: Session = Depends(get_db)):
-    """批量智能扫描。payload: {ids:[...], enable_auto?:bool}。
-    enable_auto=True 时同时把这些番剧设为常驻智能下载(定期扫描升级)。"""
-    from app.services import auto_best
-    ids = [int(i) for i in (payload.get("ids") or [])]
-    if not ids:
-        raise HTTPException(400, "没有选择番剧")
-    if payload.get("enable_auto"):
-        for bid in ids:
-            b = db.get(Bangumi, bid)
-            if b:
-                b.auto_best = True
-        db.commit()
-    if not auto_best.start_scan(ids):
-        raise HTTPException(409, "已有智能扫描在进行中")
-    return {"started": True, "total": len(ids)}
-
-
 @router.post("/{bangumi_id}/auto-scan")
-def auto_scan_one(bangumi_id: int, db: Session = Depends(get_db)):
-    """单部立即智能扫描(详情页按钮)。补全缺集 + 升级现有源。"""
+def auto_scan_one(bangumi_id: int, payload: dict | None = None,
+                  db: Session = Depends(get_db)):
+    """单部立即智能扫描；默认使用该番剧保存的常驻模式。"""
     from app.services import auto_best
     b = db.get(Bangumi, bangumi_id)
     if not b:
         raise HTTPException(404)
     if not b.mikan_bangumi_id:
         raise HTTPException(400, "该番剧无蜜柑 ID(本地导入),无法扫描线上源")
-    if not auto_best.start_scan([bangumi_id]):
+    mode = str((payload or {}).get("mode") or b.auto_mode or "fill_upgrade").strip().lower()
+    if mode not in auto_best.AUTO_MODES:
+        raise HTTPException(400, "mode 非法(fill_upgrade/fill_only/review)")
+    if not auto_best.start_scan([bangumi_id], mode=mode, trigger="manual"):
         raise HTTPException(409, "已有智能扫描在进行中")
-    return {"started": True}
+    return {"started": True, "mode": mode}

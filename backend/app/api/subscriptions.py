@@ -70,9 +70,15 @@ def create_subscription(payload: SubscriptionCreate, background: BackgroundTasks
 
 
 @router.get("", response_model=list[SubscriptionOut])
-def list_subscriptions(db: Session = Depends(get_db)):
-    # 显示所有来源:RSS 订阅 + 本地导入(local)+ 智能下载(auto)容器,前端按 source 区分操作
-    subs = db.execute(select(Subscription)).scalars().all()
+def list_subscriptions(include_internal: bool = False, db: Session = Depends(get_db)):
+    """默认只列用户创建的真实订阅。
+
+    local/auto 是实现用容器,不是用户可编辑的订阅源;仅诊断时显式 include_internal=true。
+    """
+    q = select(Subscription)
+    if not include_internal:
+        q = q.where(Subscription.mikan_subgroup_id.notin_(("local", "auto")))
+    subs = db.execute(q).scalars().all()
     return [_to_out(s, s.bangumi.title) for s in subs]
 
 
@@ -95,6 +101,54 @@ def update_subscription(sub_id: int, payload: dict, background: BackgroundTasks,
             setattr(sub, k, v)
     db.commit()
     background.add_task(_poll_in_background, sub.id)   # 规则变更立即重新评估
+    return _to_out(sub, sub.bangumi.title)
+
+
+@router.post("/{sub_id}/poll")
+def poll_subscription_now(sub_id: int, db: Session = Depends(get_db)):
+    """立即检查一个真实订阅,返回本次过滤/提交结果。"""
+    from app.services.rss_engine import safe_poll
+    sub = db.get(Subscription, sub_id)
+    if not sub:
+        raise HTTPException(404)
+    if sub.mikan_subgroup_id in ("local", "auto"):
+        raise HTTPException(400, "系统内部来源不能执行订阅检查")
+    if sub.bangumi.auto_download_disabled:
+        raise HTTPException(409, "该番剧已设置停止自动获取")
+    result = safe_poll(db, sub)
+    db.commit()
+    return result
+
+
+@router.post("/{sub_id}/replace-source", response_model=SubscriptionOut)
+def replace_subscription_source(sub_id: int, payload: dict, background: BackgroundTasks,
+                                db: Session = Depends(get_db)):
+    """原子更换字幕组:保留规则、路径和历史任务,清除只属于旧源的 GUID 偏差。"""
+    sub = db.get(Subscription, sub_id)
+    if not sub:
+        raise HTTPException(404)
+    if sub.mikan_subgroup_id in ("local", "auto"):
+        raise HTTPException(400, "系统内部来源不能更换")
+    subgroup_id = str(payload.get("mikan_subgroup_id") or "").strip()
+    if not subgroup_id or subgroup_id in ("local", "auto"):
+        raise HTTPException(400, "字幕组 ID 非法")
+    conflict = db.execute(select(Subscription.id).where(
+        Subscription.bangumi_id == sub.bangumi_id,
+        Subscription.mikan_subgroup_id == subgroup_id,
+        Subscription.id != sub.id)).scalar_one_or_none()
+    if conflict:
+        raise HTTPException(409, "该番剧已经订阅这个字幕组")
+    if subgroup_id != sub.mikan_subgroup_id:
+        sub.mikan_subgroup_id = subgroup_id
+        sub.subgroup_name = payload.get("subgroup_name") or f"字幕组 #{subgroup_id}"
+        sub.pinned_guids = []
+        sub.blocked_guids = []
+        sub.last_checked_at = None
+        sub.last_poll_ok = True
+        sub.last_poll_error = None
+        db.commit()
+        if sub.enabled and not sub.bangumi.auto_download_disabled:
+            background.add_task(_poll_in_background, sub.id)
     return _to_out(sub, sub.bangumi.title)
 
 
@@ -145,6 +199,8 @@ def delete_subscription(sub_id: int, delete_files: bool = False, db: Session = D
     sub = db.get(Subscription, sub_id)
     if not sub:
         raise HTTPException(404)
+    if sub.mikan_subgroup_id in ("local", "auto"):
+        raise HTTPException(400, "系统内部来源不能单独删除;请在番剧页管理对应资源")
     _purge_subscription(db, sub, delete_files)
     db.commit()
 
@@ -158,7 +214,7 @@ def batch_delete(payload: dict, db: Session = Depends(get_db)):
     failed: list[int] = []
     for sid in ids:
         sub = db.get(Subscription, sid)
-        if not sub:
+        if not sub or sub.mikan_subgroup_id in ("local", "auto"):
             failed.append(sid)
             continue
         _purge_subscription(db, sub, delete_files)

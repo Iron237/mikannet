@@ -47,3 +47,7 @@ mikan cookie.json
 /*.png
 # 发行构建产物(git archive 生成的 zip 等;通过 GitHub Release 分发,不入源码仓库)
 dist/
+# 仅限本机的真实服务器联调说明与同步脚本（含内网地址和本机路径）
+/LOCAL-TESTING.md
+/scripts/sync-server-test-db.ps1
+/.release-notes-*.md

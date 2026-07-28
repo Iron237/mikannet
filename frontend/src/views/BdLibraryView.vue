@@ -110,7 +110,7 @@ const SRC = { bdrip: ['BDRip', 'accent'], raw_disc: ['自购原盘', 'green'] }
 
     <p class="muted" style="font-size: 12.5px; margin-bottom: 12px;">
       共 {{ counts.all }} 套 · 已购买 {{ counts.owned }} · 未绑定 {{ counts.unbound }}。
-      「已购买」会让对应番剧<b>完全不自动下载</b>(收藏即可)。
+      「已购买」只记录收藏状态;是否停止订阅与自动补全请在番剧的“资源策略”中设置。
     </p>
 
     <div v-if="loading" class="muted">加载中…</div>
