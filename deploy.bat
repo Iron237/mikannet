@@ -55,6 +55,14 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
+echo Verifying future full-update support...
+docker exec mikannet python -c "from app.services.updater import full_update_readiness as f; import sys; r=f(); print(r); sys.exit(0 if r['ready'] else 2)"
+if errorlevel 1 (
+  echo [X] Deployment started, but full-update readiness failed.
+  echo     Do not ignore this: future dependency updates will require a manual repair.
+  pause
+  exit /b 1
+)
 set "MK_PORT=9000"
 for /f "usebackq tokens=1,* delims==" %%A in (".env") do if /i "%%A"=="HOST_PORT" set "MK_PORT=%%B"
 set "MK_HANDLER=%TEMP%\mikannet-handler-install.bat"

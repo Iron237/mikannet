@@ -126,6 +126,11 @@ def _check_internal(include_prerelease: bool | None = None):
 def check(include_prerelease: bool | None = None) -> dict:
     """只读检查更新;网络/解析失败抛异常由上层转友好错误。"""
     result, _m, _r = _check_internal(include_prerelease)
+    if result["type"] == "full":
+        readiness = full_update_readiness()
+        result["full_update_ready"] = readiness["ready"]
+        result["full_update_issues"] = readiness["issues"]
+        result["full_update_guidance"] = readiness["guidance"]
     return result
 
 
@@ -266,6 +271,55 @@ def apply_code(manifest: dict) -> None:
 _FULL_UPDATE_TIMEOUT = 600.0   # helper 拉镜像+重建的宽限(秒);超时本进程还活着 = helper 失败
 
 
+def full_update_readiness() -> dict:
+    """检查当前部署是否具备换镜像自举能力。"""
+    from app.services import docker_api
+
+    issues: list[dict[str, str]] = []
+    if not docker_api.available():
+        issues.append({
+            "code": "docker_socket_unavailable",
+            "message": "容器无法访问 /var/run/docker.sock",
+        })
+    if not settings.compose_host_dir:
+        issues.append({
+            "code": "compose_host_dir_missing",
+            "message": "缺少宿主机 Compose 目录配置 MIKANNET_COMPOSE_HOST_DIR",
+        })
+
+    compose_root = Path("/compose")
+    names = [name.strip() for name in (settings.compose_files or "").split(",")
+             if name.strip()]
+    if not names:
+        names = ["compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"]
+    compose_paths = [compose_root / name for name in names if (compose_root / name).is_file()]
+    if not compose_root.is_dir() or not compose_paths:
+        issues.append({
+            "code": "compose_mount_missing",
+            "message": "容器内缺少 /compose 部署目录或指定的 Compose 文件",
+        })
+    elif not any("MIKANNET_IMAGE_REF" in path.read_text("utf-8", errors="replace")
+                 for path in compose_paths):
+        issues.append({
+            "code": "compose_image_contract",
+            "message": "Compose 镜像字段未使用 MIKANNET_IMAGE_REF，helper 无法切换版本",
+        })
+
+    return {
+        "ready": not issues,
+        "issues": issues,
+        "guidance": (
+            "请先在 Docker 宿主机使用当前版本的部署模板重建一次容器；"
+            "保留 /config、/downloads 与 /code 数据卷，并挂载 docker.sock 和 /compose。"
+        ),
+    }
+
+
+def _readiness_error(readiness: dict) -> str:
+    details = "；".join(issue["message"] for issue in readiness["issues"])
+    return f"完整更新部署未就绪：{details}。{readiness['guidance']}"
+
+
 def _arm_full_update_watchdog(timeout: float = _FULL_UPDATE_TIMEOUT) -> None:
     """helper 成功会重建本容器(本进程消失);超时还活着说明 helper 静默失败
     (镜像拉取失败 / GHCR 权限 / compose 目录不对等,helper 是脱管异步执行,
@@ -296,8 +350,9 @@ def apply_full(manifest: dict) -> None:
     if reason:
         _set_status(phase="error", error=reason)
         raise RuntimeError(reason)
-    if not docker_api.available():
-        msg = "docker.sock 不可用:完整更新需挂载 /var/run/docker.sock(见 README)"
+    readiness = full_update_readiness()
+    if not readiness["ready"]:
+        msg = _readiness_error(readiness)
         _set_status(phase="error", error=msg)
         raise RuntimeError(msg)
     version = manifest["version"]
@@ -335,6 +390,12 @@ def apply_latest() -> dict:
     if result["type"] == "none" or not manifest:
         raise RuntimeError("已是最新,无可用更新")
     typ = result["type"]
+    if typ == "full":
+        readiness = full_update_readiness()
+        if not readiness["ready"]:
+            msg = _readiness_error(readiness)
+            _set_status(phase="error", error=msg)
+            raise RuntimeError(msg)
     target = apply_code if typ == "code" else apply_full
     threading.Thread(target=target, args=(manifest,), daemon=True).start()
     return {"type": typ, "version": result["latest"]}

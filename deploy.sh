@@ -41,6 +41,11 @@ if ! $DC $FILES up -d --build; then
   echo "  编辑 /etc/docker/daemon.json 加 registry-mirrors 后重启 docker(见 DEPLOY.md「构建时拉基础镜像超时」),再重试。"
   exit 1
 fi
+echo "▶ 验证后续完整更新能力 ..."
+if ! docker exec mikannet python -c "from app.services.updater import full_update_readiness as f; import sys; r=f(); print(r); sys.exit(0 if r['ready'] else 2)"; then
+  echo "✗ 服务已启动,但完整更新预检失败。请先修复 compose 挂载,否则依赖更新仍需人工处理。"
+  exit 1
+fi
 echo
 echo "✓ 已启动。WebUI:  http://localhost:${HOST_PORT:-9000}"
 echo "  查看日志:        ./deploy.sh logs"

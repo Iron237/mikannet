@@ -53,6 +53,13 @@ def update_status():
     return updater.get_status()
 
 
+@router.get("/update/readiness")
+def update_readiness():
+    """部署是否具备完整换镜像更新能力，供部署脚本和设置页预检。"""
+    from app.services import updater
+    return updater.full_update_readiness()
+
+
 @router.post("/update/apply")
 def update_apply():
     """按检查结果的类型自动应用(纯代码就地 / 完整换镜像)。后台执行,前端轮询 status + version。"""

@@ -55,6 +55,14 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
+echo Verifying future full-update support...
+docker exec mikannet python -c "from app.services.updater import full_update_readiness as f; import sys; r=f(); print(r); sys.exit(0 if r['ready'] else 2)"
+if errorlevel 1 (
+  echo [X] Deployment started, but full-update readiness failed.
+  echo     Check docker-compose.release.yml before using WebUI updates.
+  pause
+  exit /b 1
+)
 set "MK_HANDLER=%TEMP%\mikannet-handler-install.bat"
 echo Installing Windows browser / Explorer integration...
 for /l %%I in (1,1,30) do (

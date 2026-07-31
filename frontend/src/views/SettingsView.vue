@@ -139,6 +139,8 @@ const updChecking = ref(false)
 const updApplying = ref(false)
 const updMsg = ref('')
 const updStatus = ref(null)        // /update/status 进度
+const fullUpdateBlocked = computed(() =>
+  updCheck.value?.type === 'full' && updCheck.value?.full_update_ready === false)
 let updTimer = null
 const PHASE_LABEL = {
   downloading: '下载代码包', verifying: '校验完整性', applying: '应用新版本',
@@ -161,6 +163,10 @@ const prerelease = computed({
 })
 async function applyUpdate() {
   if (!updCheck.value || updCheck.value.type === 'none') return
+  if (fullUpdateBlocked.value) {
+    updMsg.value = updCheck.value.full_update_guidance || '请先修复部署环境再更新'
+    return
+  }
   const full = updCheck.value.type === 'full'
   const ok = window.confirm(full
     ? `完整更新(换镜像)到 ${updCheck.value.latest}:拉新镜像并重建容器,期间短暂不可用。确定?`
@@ -415,6 +421,13 @@ onMounted(() => { load(); loadStorage(); loadVersion() })
           已是最新(v{{ updCheck.current }})。
         </div>
         <div v-else>
+          <div v-if="fullUpdateBlocked" class="update-readiness">
+            <strong>当前部署暂不支持自动换镜像</strong>
+            <div v-for="issue in updCheck.full_update_issues || []" :key="issue.code">
+              {{ issue.message }}
+            </div>
+            <div>{{ updCheck.full_update_guidance }}</div>
+          </div>
           <div class="row" style="gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
             <span class="tag green">新版 v{{ updCheck.latest }}</span>
             <span class="tag" :class="updCheck.type === 'full' ? 'red' : ''">
@@ -423,8 +436,8 @@ onMounted(() => { load(); loadStorage(); loadVersion() })
             <span v-if="updCheck.prerelease" class="tag">预发布</span>
             <span v-if="updCheck.size" class="muted" style="font-size: 12px;">{{ fmtSize(updCheck.size) }}</span>
             <div class="spacer" />
-            <button class="btn primary sm" :disabled="updApplying" @click="applyUpdate">
-              {{ updApplying ? '更新中…' : '立即更新' }}
+            <button class="btn primary sm" :disabled="updApplying || fullUpdateBlocked" @click="applyUpdate">
+              {{ updApplying ? '更新中…' : (fullUpdateBlocked ? '需先修复部署' : '立即更新') }}
             </button>
           </div>
           <pre v-if="updCheck.changelog" class="changelog">{{ updCheck.changelog }}</pre>
@@ -666,6 +679,9 @@ onMounted(() => { load(); loadStorage(); loadVersion() })
   background: var(--bg-soft, rgba(127,127,127,.08)); border-radius: 6px; padding: 8px 10px;
   max-height: 220px; overflow: auto; margin: 0; }
 .update-head { flex-wrap: wrap; gap: 8px; }
+.update-readiness { margin-bottom: 10px; padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--red) 45%, transparent);
+  border-radius: 8px; background: color-mix(in srgb, var(--red) 9%, transparent); color: var(--red);
+  font-size: 12px; line-height: 1.6; }
 .cfg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .cfg-field { font-size: 12.5px; color: var(--text-dim); display: flex; flex-direction: column; gap: 5px; }
 .cfg-field.toggle { flex-direction: row; align-items: center; gap: 8px; }

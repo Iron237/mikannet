@@ -56,7 +56,7 @@ docker compose up -d --build
 **运维须知 / 信任权衡**:
 
 - **GHCR 包须为 public**:匿名 `docker pull` 与完整更新依赖镜像公开;CI 会尝试自动设为 public,失败则在 GitHub → Packages 手动设置。
-- **完整更新需挂 `docker.sock`**:`/var/run/docker.sock` 挂进 app = **宿主 root 等价权限**(与既有 `SYS_ADMIN` 同级)。只用纯代码更新可不挂 socket(完整更新降级为手动 `docker compose pull && up -d`)。
+- **完整更新需挂 `docker.sock`**:`/var/run/docker.sock` 挂进 app = **宿主 root 等价权限**(与既有 `SYS_ADMIN` 同级)。正式部署模板默认包含该挂载、`/compose` 和动态镜像变量；部署脚本启动后会强制预检。若主动移除这些权限，设置页会在更新前明确阻止完整更新，而不是进入后台后失败。
 - **回滚**:纯代码失败自动回滚;完整失败为手动——把 `.env` 的 `MIKANNET_IMAGE_REF` 改回上一个可用 tag 后 `docker compose up -d`(步骤见 ADR-0005)。
 
 ## 架构速览

@@ -6,7 +6,8 @@
 # /downloads 默认绑定到随包的 ./downloads(本地模式直接用;SMB 模式由 App 挂载覆盖)。
 services:
   mikannet:
-    image: mikannet:latest
+    # helper 在完整更新时注入 MIKANNET_IMAGE_REF；默认值兼容离线包 docker load。
+    image: ${MIKANNET_IMAGE_REF:-mikannet:latest}
     container_name: mikannet
     cap_add:
       - SYS_ADMIN          # 容器内挂载 SMB(首次向导配的 NAS)所需
@@ -19,8 +20,20 @@ services:
       MIKANNET_QB_PORT: "${QB_PORT:-8080}"
       MIKANNET_DOWNLOAD_ROOT: ${DOWNLOAD_ROOT:-/downloads}
       MIKANNET_PROXY_URL: ${PROXY_URL:-}
+      # 完整更新契约：项目、宿主 Compose 目录及实际 -f 文件必须原样传给 helper。
+      MIKANNET_COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME:-mikannet}
+      MIKANNET_COMPOSE_HOST_DIR: ${PWD:-.}
+      MIKANNET_COMPOSE_FILES: docker-compose.release.yml
     volumes:
       - ./data/mikannet:/config
+      - code:/code
+      # 完整更新需要 Docker API 与原部署定义；docker.sock 等价宿主 root 权限。
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/compose:ro
       # 本地模式直接用此目录;SMB 模式 App 会把 NAS 挂到 /downloads(覆盖此绑定)
       - ${LOCAL_DOWNLOADS_PATH:-./downloads}:/downloads
     restart: unless-stopped
+
+volumes:
+  code:
+    driver: local

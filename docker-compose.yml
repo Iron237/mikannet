@@ -7,6 +7,7 @@
 # WEBUI_PORT 必须与宿主映射端口一致(此处统一 18080)。
 services:
   mikannet:
+    image: ${MIKANNET_IMAGE_REF:-mikannet:dev}
     build:
       context: .
       dockerfile: docker/app.Dockerfile

@@ -3,9 +3,14 @@
 不触网:monkeypatch _list_releases / _fetch_manifest。依赖 app 包(httpx 等),
 随 CI(pip install -e .[dev])/ 容器跑;裸机缺依赖会在 collection 跳过同其它 app 测试。
 """
+from pathlib import Path
+
 import pytest
 
 from app.services import update_gate, updater
+
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _releases():
@@ -55,6 +60,64 @@ def test_check_full_when_base_rev_differs(monkeypatch):
     _patch(monkeypatch, base_rev_remote="baseBBB")          # 不同 base_rev
     r = updater.check(include_prerelease=True)
     assert r["type"] == "full"
+
+
+def test_full_update_readiness_is_reported_during_check(monkeypatch):
+    _patch(monkeypatch, base_rev_remote="baseBBB")
+    monkeypatch.setattr(updater, "full_update_readiness", lambda: {
+        "ready": False,
+        "issues": [{"code": "docker_socket_unavailable", "message": "socket missing"}],
+        "guidance": "repair deployment",
+    })
+
+    result = updater.check(include_prerelease=True)
+
+    assert result["type"] == "full"
+    assert result["full_update_ready"] is False
+    assert result["full_update_issues"][0]["code"] == "docker_socket_unavailable"
+
+
+def test_full_update_is_rejected_before_background_thread_when_not_ready(monkeypatch):
+    manifest = {"version": "0.1.1", "image_ref": "ghcr.io/iron237/mikannet:0.1.1"}
+    monkeypatch.setattr(updater, "_check_internal", lambda: (
+        {"type": "full", "latest": "0.1.1"}, manifest, {},
+    ))
+    monkeypatch.setattr(updater, "full_update_readiness", lambda: {
+        "ready": False,
+        "issues": [{"code": "compose_image_contract", "message": "镜像变量不兼容"}],
+        "guidance": "请先在宿主机修复部署模板",
+    })
+    monkeypatch.setattr(updater.threading, "Thread", lambda *a, **k: pytest.fail(
+        "部署未就绪时不应启动后台更新线程"))
+
+    with pytest.raises(RuntimeError, match="请先在宿主机修复部署模板"):
+        updater.apply_latest()
+
+
+def test_production_compose_files_keep_full_update_contract():
+    """生产部署模板必须能让下一次基础镜像更新自举，不能只支持纯代码更新。"""
+    contracts = {
+        "docker-compose.yml": [
+            "image: ${MIKANNET_IMAGE_REF:-mikannet:dev}",
+            "/var/run/docker.sock:/var/run/docker.sock",
+            ".:/compose:ro",
+            "MIKANNET_COMPOSE_HOST_DIR:",
+            "MIKANNET_COMPOSE_FILES:",
+            "code:/code",
+        ],
+        "docker-compose.release.yml": [
+            "image: ${MIKANNET_IMAGE_REF:-mikannet:latest}",
+            "/var/run/docker.sock:/var/run/docker.sock",
+            ".:/compose:ro",
+            "MIKANNET_COMPOSE_HOST_DIR:",
+            "MIKANNET_COMPOSE_FILES:",
+            "code:/code",
+        ],
+    }
+    for filename, required in contracts.items():
+        text = (ROOT / filename).read_text(encoding="utf-8")
+        missing = [token for token in required if token not in text]
+        assert not missing, f"{filename} 缺少完整更新契约: {missing}"
 
 
 def test_check_none_when_prerelease_excluded(monkeypatch):
