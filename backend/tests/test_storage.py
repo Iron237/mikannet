@@ -88,3 +88,28 @@ def test_watchdog_skips_when_healthy(monkeypatch):
     monkeypatch.setattr(storage, "apply", lambda: calls.__setitem__("n", calls["n"] + 1))
     scheduler._storage_watchdog_job()
     assert calls["n"] == 0
+
+
+def test_windows_and_unc_paths_are_normalized():
+    assert storage.normalize_windows_path("d:/Anime/Mikannet/") == "D:\\Anime\\Mikannet"
+    assert storage.normalize_windows_path("//nas/anime/mikannet") == "\\\\nas\\anime\\mikannet"
+    assert storage.normalize_windows_path(r"G:\\Anime\\Mikannet") == r"G:\Anime\Mikannet"
+    assert storage.normalize_windows_path("C:/") == "C:\\"
+    assert storage.normalize_smb_path("\\\\nas\\anime\\mikannet\\") == "//nas/anime/mikannet"
+
+
+def test_nfs_apply_uses_nfs_filesystem(monkeypatch):
+    monkeypatch.setattr(settings, "storage_mode", "nfs")
+    monkeypatch.setattr(settings, "nfs_host_path", "nas:/volume1/anime")
+    monkeypatch.setattr(settings, "nfs_options", "vers=4,soft")
+    monkeypatch.setattr(storage, "is_mounted", lambda t=None: False)
+    monkeypatch.setattr(storage, "_proc_mounted", lambda t: False)
+    calls = []
+
+    def fake_mount(src, target, data, ro=False, fstype="cifs"):
+        calls.append((src, data, fstype))
+
+    monkeypatch.setattr(storage, "_mount", fake_mount)
+    st = storage.apply()
+    assert st["mounted"] is True
+    assert calls == [("nas:/volume1/anime", "vers=4,soft", "nfs")]

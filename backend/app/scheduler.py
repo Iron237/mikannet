@@ -54,9 +54,13 @@ def _air_refresh_job() -> None:
 
 
 def _storage_watchdog_job() -> None:
-    """SMB 挂载看门狗:运行中途 SMB 断线会留下僵尸挂载(/downloads 连不上),
+    """网络存储看门狗：SMB/NFS 断线后自动重挂。
     仅靠启动/手动重挂无法自愈。定期检测,发现未正常挂载即自动重挂(重挂含清僵尸挂载)。"""
-    if settings.storage_mode != "smb" or not settings.smb_host_path:
+    if settings.storage_mode not in ("smb", "nfs"):
+        return
+    if settings.storage_mode == "smb" and not settings.smb_host_path:
+        return
+    if settings.storage_mode == "nfs" and not settings.nfs_host_path:
         return
     from app.services import storage
     if storage.is_mounted():
@@ -66,7 +70,8 @@ def _storage_watchdog_job() -> None:
     if result.get("mounted"):
         log.info("存储看门狗:已自动重挂 /downloads")
     else:
-        log.warning("存储看门狗:重挂未成功(SMB 可能仍不可达): %s", result.get("error"))
+        log.warning("存储看门狗:重挂未成功(%s 可能仍不可达): %s",
+                    settings.storage_mode.upper(), result.get("error"))
 
 
 def start() -> None:
@@ -78,7 +83,7 @@ def start() -> None:
                       id="lifecycle", coalesce=True, max_instances=1)
     scheduler.add_job(_air_refresh_job, "interval", hours=12,
                       id="air_refresh", coalesce=True, max_instances=1)
-    if settings.storage_mode == "smb":
+    if settings.storage_mode in ("smb", "nfs"):
         scheduler.add_job(_storage_watchdog_job, "interval", minutes=2,
                           id="storage_watchdog", coalesce=True, max_instances=1)
     if settings.auto_dl_interval_min and settings.auto_dl_interval_min > 0:
@@ -88,16 +93,16 @@ def start() -> None:
 
 
 def ensure_storage_watchdog() -> None:
-    """按需注册 SMB 看门狗(首次向导把存储切到 smb 时调用)。
+    """按需注册 SMB/NFS 看门狗。
 
     start() 只在启动瞬间按当时的 storage_mode 决定是否注册——全新部署先启动后配 SMB,
     看门狗会一直缺席到下次重启,断线无法自愈。幂等:已注册则跳过。"""
     if not scheduler.running:
         return
-    if settings.storage_mode == "smb" and scheduler.get_job("storage_watchdog") is None:
+    if settings.storage_mode in ("smb", "nfs") and scheduler.get_job("storage_watchdog") is None:
         scheduler.add_job(_storage_watchdog_job, "interval", minutes=2,
                           id="storage_watchdog", coalesce=True, max_instances=1)
-        log.info("已注册 SMB 存储看门狗(运行时启用)")
+        log.info("已注册 %s 存储看门狗(运行时启用)", settings.storage_mode.upper())
 
 
 def reschedule_auto_best(minutes: int) -> None:

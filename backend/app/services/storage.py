@@ -1,20 +1,23 @@
-"""存储:首次向导配置的 NAS/SMB,由 App 在容器内自挂载到 download_root_local(/downloads)。
+"""媒体存储：本地绑定、SMB/CIFS、NFS。
 
 直接走内核 mount() 系统调用(ctypes),避开 mount.cifs setuid 助手在容器里的 capability 报错
 (Unable to apply new capability set)。只需:容器 cap_add: SYS_ADMIN + 宿主内核有 cifs 模块
 (Docker Desktop / 多数 Linux 自带)。设置存 DB(Setting),启动时灌进 settings 并按模式挂载。
 
 storage_mode:
-- ""     compose 托管(旧/dev:/downloads 由 compose 的 CIFS 卷/绑定提供,App 不挂)
-- "smb"  App 用 mount() 把 //host/share 挂到 /downloads
-- "local" /downloads 为容器内本地路径(由 compose 绑定提供),App 不挂
+- ""       compose 托管(旧/dev:/downloads 已由 compose 提供)
+- "smb"    App 用 mount() 把 //host/share 挂到 /downloads
+- "nfs"    App 用 mount() 把 host:/export 挂到 /downloads
+- "local"  Docker 已把 Windows/Linux 宿主目录绑定到 /downloads，App 不自行挂载
 """
 from __future__ import annotations
 
 import ctypes
 import errno
 import logging
+import ntpath
 import os
+import re
 import tempfile
 
 from app.config import settings
@@ -23,8 +26,13 @@ from app.models import Setting
 
 log = logging.getLogger(__name__)
 
-_KEYS = ("storage_mode", "smb_host_path", "smb_username", "smb_password", "smb_vers", "setup_done")
+_KEYS = (
+    "storage_mode", "local_host_path",
+    "smb_host_path", "smb_username", "smb_password", "smb_vers",
+    "nfs_host_path", "nfs_options", "setup_done",
+)
 _MS_RDONLY = 1
+_NETWORK_MODES = {"smb", "nfs"}
 state: dict = {"mounted": False, "error": None}
 
 
@@ -63,9 +71,32 @@ def _mount_data(user: str, pwd: str, vers: str) -> str:
             "iocharset=utf8,uid=0,gid=0,file_mode=0664,dir_mode=0775")
 
 
-def _mount(src: str, target: str, data: str, ro: bool = False) -> None:
+def normalize_windows_path(path: str) -> str:
+    r"""接受 D:\Anime、D:/Anime 与 UNC，保留可复制回 Windows 的标准形式。"""
+    value = (path or "").strip().strip('"')
+    if not value:
+        return ""
+    windows_value = value.replace("/", "\\")
+    if value.startswith("//") or value.startswith("\\\\"):
+        return ntpath.normpath("\\\\" + windows_value.lstrip("\\"))
+    if re.match(r"^[A-Za-z]:[\\/]", value):
+        normalized = ntpath.normpath(windows_value)
+        return normalized[0].upper() + normalized[1:]
+    return value.rstrip("/\\")
+
+
+def normalize_smb_path(path: str) -> str:
+    r"""Docker/Linux CIFS 接受 //server/share；同时兼容用户粘贴 \\server\share。"""
+    value = (path or "").strip().strip('"').replace("\\", "/")
+    if value.startswith("//"):
+        return "//" + value.lstrip("/").rstrip("/")
+    return value.rstrip("/")
+
+
+def _mount(src: str, target: str, data: str, ro: bool = False,
+           fstype: str = "cifs") -> None:
     os.makedirs(target, exist_ok=True)
-    r = _libc().mount(src.encode(), target.encode(), b"cifs",
+    r = _libc().mount(src.encode(), target.encode(), fstype.encode(),
                       _MS_RDONLY if ro else 0, data.encode())
     if r != 0:
         e = ctypes.get_errno()
@@ -102,24 +133,11 @@ def is_mounted(target: str | None = None) -> bool:
         return False
 
 
-def test(mode: str, host_path: str, username: str, password: str, vers: str) -> dict:
-    """不影响 /downloads:smb 挂到临时点验证读写后卸载;local 直接验证 download_root_local 读写。"""
-    if mode != "smb":
-        p = str(settings.download_root_local)
-        try:
-            os.makedirs(p, exist_ok=True)
-            t = os.path.join(p, ".mikannet_wtest")
-            with open(t, "w"):
-                pass
-            os.remove(t)
-            return {"ok": True, "writable": True, "sample": sorted(os.listdir(p))[:8]}
-        except Exception as e:  # noqa: BLE001
-            return {"ok": False, "error": f"本地路径不可写: {e}"}
-    if not host_path:
-        return {"ok": False, "error": "请填写 SMB 共享地址(//主机/共享名)"}
-    tmp = tempfile.mkdtemp(prefix="smbtest_")
+def _test_mounted(src: str, fstype: str, options: str) -> dict:
+    """挂临时点验证目录可读写，绝不替换正在使用的 /downloads。"""
+    tmp = tempfile.mkdtemp(prefix=f"{fstype}test_")
     try:
-        _mount(host_path, tmp, _mount_data(username, password, vers))
+        _mount(src, tmp, options, fstype=fstype)
     except OSError as e:
         _safe_rmdir(tmp)
         return {"ok": False, "error": f"挂载失败: {e.strerror} (errno {e.errno})"}
@@ -139,6 +157,33 @@ def test(mode: str, host_path: str, username: str, password: str, vers: str) -> 
         _safe_rmdir(tmp)
 
 
+def test(mode: str, host_path: str = "", username: str = "", password: str = "",
+         vers: str = "3.0", nfs_host_path: str = "", nfs_options: str = "") -> dict:
+    """不影响 /downloads：网络存储挂临时点验证，本地模式验证现有绑定目录。"""
+    if mode == "local":
+        p = str(settings.download_root_local)
+        try:
+            os.makedirs(p, exist_ok=True)
+            t = os.path.join(p, ".mikannet_wtest")
+            with open(t, "w"):
+                pass
+            os.remove(t)
+            return {"ok": True, "writable": True, "sample": sorted(os.listdir(p))[:8]}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": f"本地路径不可写: {e}"}
+    if mode == "nfs":
+        src = (nfs_host_path or "").strip()
+        if not src or ":" not in src:
+            return {"ok": False, "error": "请填写 NFS 地址（例如 nas:/volume1/anime）"}
+        return _test_mounted(src, "nfs", (nfs_options or "vers=4,soft,timeo=30,retrans=2").strip())
+    if mode != "smb":
+        return {"ok": False, "error": "不支持的存储模式"}
+    host_path = normalize_smb_path(host_path)
+    if not host_path:
+        return {"ok": False, "error": "请填写 SMB 共享地址(//主机/共享名)"}
+    return _test_mounted(host_path, "cifs", _mount_data(username, password, vers))
+
+
 def _safe_rmdir(p: str) -> None:
     try:
         os.rmdir(p)
@@ -150,19 +195,26 @@ def apply() -> dict:
     """按 storage_mode 把 download_root_local 挂好(smb)。启动 & 改配置后调用。返回 state。"""
     target = str(settings.download_root_local)
     state["error"] = None
-    if settings.storage_mode == "smb":
-        if not settings.smb_host_path:
-            state.update(mounted=False, error="SMB 未配置")
+    if settings.storage_mode in _NETWORK_MODES:
+        mode = settings.storage_mode
+        src = (settings.smb_host_path if mode == "smb" else settings.nfs_host_path)
+        if not src:
+            state.update(mounted=False, error=f"{mode.upper()} 未配置")
             return state
         # 先清理任何已存在挂载:含 SMB 断线留下的僵尸挂载(os.path.ismount 漏判,故也查 /proc/mounts),
         # 否则 mount() 会因目标已有挂载记录而报 EEXIST(File exists)。
         if is_mounted(target) or _proc_mounted(target):
             _umount(target)
-        data = _mount_data(settings.smb_username, settings.smb_password, settings.smb_vers)
+        data = (_mount_data(settings.smb_username, settings.smb_password, settings.smb_vers)
+                if mode == "smb" else settings.nfs_options)
+        fstype = "cifs" if mode == "smb" else "nfs"
         err = None
         for attempt in (1, 2):
             try:
-                _mount(settings.smb_host_path, target, data)   # //host/share → /downloads
+                if fstype == "cifs":
+                    _mount(src, target, data)
+                else:
+                    _mount(src, target, data, fstype=fstype)
                 err = None
                 break
             except OSError as e:
@@ -174,10 +226,10 @@ def apply() -> dict:
                 break
         if err is None:
             state.update(mounted=True, error=None)
-            log.info("SMB 已挂载 %s → %s", settings.smb_host_path, target)
+            log.info("%s 已挂载 %s → %s", mode.upper(), src, target)
         else:
             state.update(mounted=False, error=f"挂载失败: {err.strerror} (errno {err.errno})")
-            log.warning("SMB 挂载失败 %s: %s", settings.smb_host_path, state["error"])
+            log.warning("%s 挂载失败 %s: %s", mode.upper(), src, state["error"])
     else:
         state.update(mounted=is_mounted(target))   # local/compose:不由 App 挂载
     return state
@@ -187,7 +239,7 @@ def ensure_at_startup() -> None:
     """lifespan 调用:加载存储设置,smb 模式则挂载(失败不阻塞启动)。"""
     try:
         load()
-        if settings.storage_mode == "smb" and settings.smb_host_path:
+        if settings.storage_mode in _NETWORK_MODES:
             apply()
     except Exception as e:  # noqa: BLE001
         log.warning("存储启动挂载异常: %s", e)
@@ -197,10 +249,13 @@ def status() -> dict:
     """当前存储状态(密码打码),供向导/设置页展示。"""
     return {
         "mode": settings.storage_mode or "",
+        "local_host_path": settings.local_host_path or "",
         "smb_host_path": settings.smb_host_path or "",
         "smb_username": settings.smb_username or "",
         "smb_vers": settings.smb_vers or "3.0",
         "smb_password_set": bool(settings.smb_password),
+        "nfs_host_path": settings.nfs_host_path or "",
+        "nfs_options": settings.nfs_options or "vers=4,soft,timeo=30,retrans=2",
         "mounted": is_mounted(),
         "error": state.get("error"),
         "download_root_local": str(settings.download_root_local),

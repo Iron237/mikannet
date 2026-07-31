@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { api } from './api'
 import { useTasksStore } from './stores/tasks'
 import Icon from './components/Icon.vue'
+import MessageCenter from './components/MessageCenter.vue'
 import NativeLaunchModal from './components/NativeLaunchModal.vue'
 
 const route = useRoute()
@@ -74,6 +75,7 @@ onMounted(() => {
     <main class="content">
       <RouterView />
     </main>
+    <MessageCenter />
     <NativeLaunchModal />
   </div>
 </template>

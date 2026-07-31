@@ -2,16 +2,21 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api } from '../api'
 import Icon from '../components/Icon.vue'
-import ResourceIssueCenter from '../components/ResourceIssueCenter.vue'
 
-const items = ref([])
+const CACHE_KEY = 'mikannet_library_cache_v1'
+function readCache() {
+  try { return JSON.parse(sessionStorage.getItem(CACHE_KEY) || 'null') }
+  catch { return null }
+}
+const cached = readCache()
+const items = ref(Array.isArray(cached?.items) ? cached.items : [])
 const filter = ref('all')      // all | airing | finished
 const srcFilter = ref('all')   // all | bd | bd_owned | bd_unowned | web
 const bdMenuOpen = ref(false)  // BD 片源下拉(已购/未购作为子菜单)
 const bdLabel = computed(() => srcFilter.value === 'bd_owned' ? 'BD·已购'
   : srcFilter.value === 'bd_unowned' ? 'BD·未购' : 'BD')
 const keyword = ref('')
-const loading = ref(true)
+const loading = ref(!items.value.length)
 const loadError = ref('')
 const scan = ref(null)       // 番剧库扫描状态
 let scanTimer = null
@@ -24,8 +29,9 @@ const autoConfirm = ref(null)   // 智能下载确认 { ids }
 const autoEnable = ref(false)   // 同时设为常驻自动补全与升级
 const autoMode = ref('fill_upgrade')
 const autoScan = ref(null)      // 智能扫描进度
-const issueCenter = ref(null)
 let autoTimer = null
+let verifyTimer = null
+let verifyIdle = null
 let mounted = true
 
 const SEASON_ORDER = { '秋': 4, '夏': 3, '春': 2, '冬': 1 }
@@ -81,16 +87,41 @@ function onCard(b, e) {
   toggleSel(b.id)
 }
 
-async function reload() {
-  loadError.value = ''
+async function reload({ verifyFiles = true, background = false } = {}) {
+  if (!background) loadError.value = ''
   try {
-    items.value = await api.get('/api/bangumi')
+    items.value = await api.get(`/api/bangumi?verify_files=${verifyFiles}`)
+    const previous = readCache()
+    sessionStorage.setItem(CACHE_KEY, JSON.stringify({
+      items: items.value,
+      verifiedAt: verifyFiles ? Date.now() : (previous?.verifiedAt || 0),
+    }))
   } catch (e) {
-    loadError.value = e.message
-    throw e
+    if (!background || !items.value.length) {
+      loadError.value = e.message
+      throw e
+    }
   }
   const ids = new Set(items.value.map(b => b.id))
   selected.value = new Set([...selected.value].filter(id => ids.has(id)))
+}
+
+function scheduleVerifiedReload() {
+  const verifiedAt = Number(readCache()?.verifiedAt || 0)
+  if (Date.now() - verifiedAt < 60_000) return
+  const run = () => {
+    if (!mounted) return
+    reload({ verifyFiles: true, background: true })
+  }
+  if ('requestIdleCallback' in window) {
+    verifyIdle = window.requestIdleCallback(run, { timeout: 1500 })
+  } else {
+    verifyTimer = setTimeout(run, 100)
+  }
+}
+
+function notifyIssuesStale() {
+  window.dispatchEvent(new CustomEvent('mikannet:issues-stale'))
 }
 
 async function doDelete() {
@@ -99,7 +130,8 @@ async function doDelete() {
     await api.post('/api/bangumi/batch-delete',
       { ids: delConfirm.value.ids, delete_files: delFiles.value })
     delConfirm.value = null; delFiles.value = false; clearSel()
-    await reload()
+    await reload({ verifyFiles: true })
+    notifyIssuesStale()
   } finally { busy.value = false }
 }
 
@@ -119,7 +151,10 @@ async function pollAutoScan() {
     if (!mounted) return
     autoScan.value = s
     if (autoScan.value.running) { autoTimer = setTimeout(pollAutoScan, 1500) }
-    else { await reload(); await issueCenter.value?.load() }
+    else {
+      await reload({ verifyFiles: true })
+      notifyIssuesStale()
+    }
   } catch (e) { autoScan.value = { error: e.message } }
 }
 const autoSubmitted = computed(() =>
@@ -139,14 +174,19 @@ async function pollScan() {
     if (scan.value.running) {
       scanTimer = setTimeout(pollScan, 1500)
     } else {
-      await reload()   // 扫描完成,刷新封面墙(集数角标会更新)
+      await reload({ verifyFiles: true })   // 扫描完成,刷新封面墙(集数角标会更新)
+      notifyIssuesStale()
     }
   } catch (e) { scan.value = { error: e.message } }
 }
 
 onMounted(async () => {
-  try { await reload() } catch { /* 页面显示 loadError */ }
+  try {
+    // 首屏只取数据库快照；内容先出现，再在浏览器空闲时核对实盘文件。
+    await reload({ verifyFiles: false })
+  } catch { /* 页面显示 loadError */ }
   finally { loading.value = false }
+  scheduleVerifiedReload()
   try {
     const s = await api.get('/api/import/library-scan/status')
     if (s.running) { scan.value = s; pollScan() }
@@ -156,7 +196,15 @@ onMounted(async () => {
     if (a.running) { autoScan.value = a; pollAutoScan() }
   } catch { /* 非关键状态查询失败不覆盖主列表 */ }
 })
-onUnmounted(() => { mounted = false; clearTimeout(scanTimer); clearTimeout(autoTimer) })
+onUnmounted(() => {
+  mounted = false
+  clearTimeout(scanTimer)
+  clearTimeout(autoTimer)
+  clearTimeout(verifyTimer)
+  if (verifyIdle != null && 'cancelIdleCallback' in window) {
+    window.cancelIdleCallback(verifyIdle)
+  }
+})
 </script>
 
 <template>
@@ -201,8 +249,6 @@ onUnmounted(() => { mounted = false; clearTimeout(scanTimer); clearTimeout(autoT
         <button class="btn sm" :class="{ primary: srcFilter === 'web' }" @click="srcFilter = 'web'">Web</button>
       </div>
     </div>
-
-    <ResourceIssueCenter ref="issueCenter" />
 
     <div v-if="scan" class="scan-bar card">
       <template v-if="scan.error"><span style="color: var(--red);">扫描失败:{{ scan.error }}</span></template>
@@ -277,7 +323,8 @@ onUnmounted(() => { mounted = false; clearTimeout(scanTimer); clearTimeout(autoT
     <div v-if="loading" class="muted">加载中…</div>
     <div v-else-if="loadError" class="empty card">
       加载失败:{{ loadError }}
-      <button class="btn sm" style="margin-left: 8px;" @click="reload">
+      <button class="btn sm" style="margin-left: 8px;"
+              @click="reload({ verifyFiles: false })">
         <Icon name="refresh" :size="13" /> 重试
       </button>
     </div>
@@ -307,7 +354,7 @@ onUnmounted(() => { mounted = false; clearTimeout(scanTimer); clearTimeout(autoT
             <span v-else-if="b.bd_status === 'active'" class="src-badge rip"
                   title="影片当前使用 BD 片源">BD资源</span>
             <span v-else-if="b.bd_status === 'release_only'" class="src-badge release"
-                  title="已检测到 BD 发行,但尚无生效的 BD 正片">仅BD发行</span>
+                  title="已检测到 BD 原盘,但尚无生效的 BD 正片">仅BD原盘</span>
             <!-- TV 角标始终显示已下载进度;红点表示另有已播但未下载的集 -->
             <div class="ep-badge" v-if="b.kind === 'tv' && b.eps_total" :class="{ 'has-new': hasNew(b) }"
                  :title="b.eps_aired != null ? `已播 ${b.eps_aired}/${b.eps_total},已下载 ${b.eps_downloaded}` : `已下载 ${b.eps_downloaded}/${b.eps_total}`">

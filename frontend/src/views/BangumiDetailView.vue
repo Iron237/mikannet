@@ -11,6 +11,8 @@ import SubscribeWizard from '../components/SubscribeWizard.vue'
 import EditSubscriptionModal from '../components/EditSubscriptionModal.vue'
 import ChangeSourceModal from '../components/ChangeSourceModal.vue'
 import ResourceStrategyCard from '../components/ResourceStrategyCard.vue'
+import MediaPlayerModal from '../components/MediaPlayerModal.vue'
+import FileBrowserModal from '../components/FileBrowserModal.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -38,6 +40,9 @@ const fileEdit = ref(null)       // 正在归位编辑的文件 id
 const editForm = ref({ type: 'regular', number: '' })
 const delFile = ref(null)        // 待删文件
 const delFileDisk = ref(false)
+const playerFile = ref(null)
+const browserOpen = ref(false)
+const browserPath = ref('')
 
 const KIND = { tv: ['tv', 'TV 连载'], movie: ['film', '剧场版'], ova: ['disc', 'OVA'] }
 const EP_TYPE = { special: '特别篇', credits: 'OP/ED', trailer: 'PV/预告', other: '映像特典' }
@@ -144,8 +149,16 @@ async function reprobeFile(f) {
   catch (e) { opMsg.value = e.message } finally { fileBusy.value = 0 }
 }
 
-// 原生启动:未配置宿主机路径(url 空)或本机未装协议处理器 → 弹引导框(见 NativeLaunchModal)
+// 默认交互走 Windows：播放交给系统默认播放器，定位交给资源管理器。
+// url 为空时弹出路径配置引导；网页播放器/文件管理只作为备用。
 function native(url) { requestNative(url) }
+function webPlay(file) { if (file?.stream_url) playerFile.value = file }
+function browseFile(file) {
+  const parts = (file?.path || '').split('/')
+  parts.pop()
+  browserPath.value = parts.join('/')
+  browserOpen.value = true
+}
 // 番剧外链
 const bgmUrl = computed(() => b.value?.bgmtv_subject_id
   ? `https://bgm.tv/subject/${b.value.bgmtv_subject_id}` : null)
@@ -439,11 +452,11 @@ onUnmounted(() => { mounted = false })
             <Icon name="refresh" :size="12" /> {{ ep.status === 'completed' ? '重试入库' : '重试下载' }}
           </button>
           <template v-if="ep.files.length">
-            <button class="btn xs" title="用默认播放器播放" @click.stop="native(ep.files[0].play_url)">
-              <Icon name="play" :size="12" /> 播放
+            <button class="btn xs primary" title="使用 Windows 默认播放器（如 PotPlayer）" @click.stop="native(ep.files[0].play_url)">
+              <Icon name="play" :size="12" /> 本机播放
             </button>
-            <button class="btn xs" title="在资源管理器中打开" @click.stop="native(ep.files[0].reveal_url)">
-              <Icon name="folder-open" :size="12" /> 打开目录
+            <button class="btn xs" title="在 Windows 文件资源管理器中定位文件" @click.stop="native(ep.files[0].reveal_url)">
+              <Icon name="folder-open" :size="12" /> 打开位置
             </button>
           </template>
           <span class="muted" style="font-size: 12px;" v-if="ep.files.length">{{ ep.files.length }} 个文件</span>
@@ -453,8 +466,10 @@ onUnmounted(() => { mounted = false })
           <div v-for="f in ep.files" :key="f.id" class="file">
             <FileTags :file="f" :show-path="true" />
             <div class="file-ops">
-              <button class="btn xs" title="用默认播放器播放" @click="native(f.play_url)"><Icon name="play" :size="12" /> 播放</button>
-              <button class="btn xs" title="在资源管理器中打开" @click="native(f.reveal_url)"><Icon name="folder-open" :size="12" /> 打开目录</button>
+              <button class="btn xs primary" title="使用 Windows 默认播放器（如 PotPlayer）" @click="native(f.play_url)"><Icon name="play" :size="12" /> 本机播放</button>
+              <button class="btn xs" title="在 Windows 文件资源管理器中定位文件" @click="native(f.reveal_url)"><Icon name="folder-open" :size="12" /> 打开位置</button>
+              <button class="btn xs" title="浏览器兼容备用播放" @click="webPlay(f)"><Icon name="external" :size="12" /> 网页备用</button>
+              <button class="btn xs" title="网页内浏览媒体目录" @click="browseFile(f)"><Icon name="folder" :size="12" /> 网页管理</button>
               <button class="btn xs" :disabled="fileBusy === f.id" @click="reprobeFile(f)"><Icon name="refresh" :size="12" /> 重探测</button>
               <button class="btn xs" @click="startFileEdit(f, ep)"><Icon name="folder-in" :size="12" /> 归位/改类型</button>
               <button class="btn xs" :disabled="fileBusy === f.id" @click="unassignFile(f)">移出</button>
@@ -483,8 +498,10 @@ onUnmounted(() => { mounted = false })
         <div v-for="f in b.unmapped_files" :key="'u' + f.id" class="card file unmapped">
           <FileTags :file="f" :show-path="true" />
           <div class="file-ops">
-            <button class="btn xs" title="用默认播放器播放" @click="native(f.play_url)"><Icon name="play" :size="12" /> 播放</button>
-            <button class="btn xs" title="在资源管理器中打开" @click="native(f.reveal_url)"><Icon name="folder-open" :size="12" /> 打开目录</button>
+            <button class="btn xs primary" title="使用 Windows 默认播放器（如 PotPlayer）" @click="native(f.play_url)"><Icon name="play" :size="12" /> 本机播放</button>
+            <button class="btn xs" title="在 Windows 文件资源管理器中定位文件" @click="native(f.reveal_url)"><Icon name="folder-open" :size="12" /> 打开位置</button>
+            <button class="btn xs" title="浏览器兼容备用播放" @click="webPlay(f)"><Icon name="external" :size="12" /> 网页备用</button>
+            <button class="btn xs" title="网页内浏览媒体目录" @click="browseFile(f)"><Icon name="folder" :size="12" /> 网页管理</button>
             <button class="btn xs" :disabled="fileBusy === f.id" @click="reprobeFile(f)"><Icon name="refresh" :size="12" /> 重探测</button>
             <button class="btn xs" @click="startFileEdit(f)"><Icon name="folder-in" :size="12" /> 归位到集</button>
             <button class="btn xs danger" @click="delFile = f"><Icon name="trash" :size="12" /> 删除</button>
@@ -500,9 +517,9 @@ onUnmounted(() => { mounted = false })
         </div>
       </template>
 
-      <!-- BD 发行(导入按钮在每套发行行内,见 BdReleases)-->
+      <!-- BD 原盘(导入按钮在每套原盘行内,见 BdReleases)-->
       <template v-if="b.bd_releases && b.bd_releases.length">
-        <div class="page-title" style="margin-top: 22px;">BD 发行
+        <div class="page-title" style="margin-top: 22px;">BD 原盘
           <span class="muted" style="font-size: 12px; font-weight: 400;">
             (正片可导入替换 web;特典 / 扫描 / CD 点「打开目录」用本机应用浏览)
           </span>
@@ -523,6 +540,10 @@ onUnmounted(() => { mounted = false })
 
     <BdImportWizard v-if="importReleases" :releases="importReleases"
                     @close="importReleases = null" @done="onImported" />
+
+    <MediaPlayerModal :file="playerFile" @close="playerFile = null" />
+    <FileBrowserModal :open="browserOpen" :initial-path="browserPath"
+                      @close="browserOpen = false" />
 
     <!-- 删除文件确认 -->
     <div v-if="delFile" class="modal-mask" @click.self="delFile = null">

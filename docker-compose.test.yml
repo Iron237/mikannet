@@ -1,0 +1,40 @@
+# 完全隔离的本机验收栈：数据库、代码卷、媒体目录均不复用生产/NAS。
+# 启动：docker compose -p mikannet-local-test -f docker-compose.test.yml up -d --build
+services:
+  mikannet:
+    build:
+      context: .
+      dockerfile: docker/app.Dockerfile
+    container_name: mikannet-local-test
+    cap_add:
+      - SYS_ADMIN
+      - DAC_READ_SEARCH
+    security_opt:
+      - apparmor:unconfined
+    ports:
+      - "${LOCAL_TEST_PORT:-9000}:8008"
+    environment:
+      MIKANNET_DEV_RESEED: "1"
+      MIKANNET_DATA_DIR: /config
+      MIKANNET_CODE_DIR: /code
+      MIKANNET_DOWNLOAD_ROOT_LOCAL: /downloads
+      MIKANNET_DOWNLOAD_ROOT: /downloads
+      MIKANNET_STORAGE_MODE: local
+      MIKANNET_SETUP_DONE: "true"
+      MIKANNET_QB_HOST: ${QB_HOST:-host.docker.internal}
+      MIKANNET_QB_PORT: "${QB_PORT:-19897}"
+      MIKANNET_QB_USERNAME: ${QB_USER:-admin}
+      MIKANNET_QB_PASSWORD: ${QB_PASS:-}
+      MIKANNET_PROXY_URL: ${PROXY_URL:-}
+    volumes:
+      - ./data/mikannet-local-test:/config
+      - local_test_code:/code
+      - ./data/mikannet-local-test-media:/downloads
+      - ./data/mikannet-local-test-import:/import
+      - ./data/mikannet-local-test-import:/import-nas
+      - ./data/mikannet-local-test-bd:/bd-owned
+    restart: unless-stopped
+
+volumes:
+  local_test_code:
+    name: mikannet-local-test-code

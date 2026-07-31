@@ -17,9 +17,9 @@ function goSettings() { closeNative(); router.push('/settings') }
       <template v-if="nativeState.kind === 'unconfigured'">
         <h3 style="margin-bottom: 10px;">原生播放未配置</h3>
         <p class="muted" style="font-size: 13px; line-height: 1.7;">
-          要在本机用默认播放器播放 / 在资源管理器打开,需先在 <strong>设置 → 播放</strong> 填写
-          <strong>文件夹路径</strong>(这台电脑看 NAS 的路径,如 <code>Z:\番剧\mikannet</code>),
-          再下载并双击运行协议处理器。
+          要用 Windows 默认播放器（如 PotPlayer）播放、或在文件资源管理器定位文件，需先在
+          <strong>设置 → 播放与文件</strong>填写这台电脑看到的<strong>番剧库文件夹路径</strong>
+          （如 <code>Z:\番剧\mikannet</code>）。部署脚本会自动安装处理器；若按钮仍无响应，再使用设置页修复包。
         </p>
         <div class="row" style="justify-content: flex-end; margin-top: 16px;">
           <button class="btn" @click="closeNative">知道了</button>

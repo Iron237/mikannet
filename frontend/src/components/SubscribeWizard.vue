@@ -24,7 +24,7 @@ const submitting = ref(false)
 const error = ref('')
 const previewStats = ref({ pass: -1, total: 0, error: '' })
 const overrides = ref({})   // guid → true(强制下)/false(强制排除)
-// 添加 BD 源:入库 → 选一套已扫描的 BD 发行绑定 → 正片导入向导
+// 添加 BD 源:入库 → 选一套已扫描的 BD 原盘绑定 → 正片导入向导
 const router = useRouter()
 const bdStep = ref(false)
 const bdBusy = ref(false)
@@ -159,14 +159,14 @@ onMounted(() => {
           </button>
         </div>
 
-        <!-- BD 源:选一套已扫描的 BD 发行绑定到这部番 → 进入正片导入向导 -->
+        <!-- BD 源:选一套已扫描的 BD 原盘绑定到这部番 → 进入正片导入向导 -->
         <template v-if="bdStep">
           <p v-if="bdError" style="color: var(--red); font-size: 12.5px; margin-bottom: 8px;">{{ bdError }}</p>
           <p class="muted" style="font-size: 12.5px; margin-bottom: 10px;">
-            选一套已扫描的 BD 发行绑定到《{{ picked.title }}》,随后进入正片导入向导(BD 视频按集号设为正片、替换 web)。
+            选一套已扫描的 BD 原盘绑定到《{{ picked.title }}》,随后进入正片导入向导(BD 视频按集号设为正片、替换 web)。
           </p>
           <div v-if="!bdReleases.length" class="muted" style="padding: 14px 4px; font-size: 13px;">
-            还没有可用的 BD 发行 — 先去「BD 收藏」页点「扫描 BD」识别下载根里的 BDRip,再回来添加。
+            还没有可用的 BD 原盘 — 先去「BD 收藏」页点「扫描 BD」识别下载根里的 BDRip,再回来添加。
             <div style="margin-top: 10px;"><button class="btn sm" @click="goScanBd"><Icon name="disc" :size="13" /> 去 BD 收藏扫描</button></div>
           </div>
           <div v-else class="group-list">
@@ -253,7 +253,7 @@ onMounted(() => {
                      @stats="previewStats = $event" />
       </template>
 
-      <!-- 正片导入向导(绑定 BD 发行后弹出,叠在本向导之上)-->
+      <!-- 正片导入向导(绑定 BD 原盘后弹出,叠在本向导之上)-->
       <BdImportWizard v-if="bdImportRel" :releases="bdImportRel" @close="bdImportRel = null" @done="onBdDone" />
     </div>
   </div>

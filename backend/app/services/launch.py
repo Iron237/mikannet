@@ -8,9 +8,10 @@
 from __future__ import annotations
 
 import base64
+import ntpath
 import secrets
 import threading
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from sqlalchemy import select
 
@@ -95,9 +96,28 @@ def configured() -> bool:
     return bool(settings.media_host_root or settings.bd_owned_host_root)
 
 
+def path_allowed(host_path: str) -> bool:
+    """按当前设置动态校验 Windows 路径；协议处理器安装后路径变更无需重装。"""
+    try:
+        candidate = ntpath.normcase(ntpath.abspath(host_path))
+    except (TypeError, ValueError):
+        return False
+    for raw_root in (settings.media_host_root, settings.bd_owned_host_root,
+                     settings.data_host_root):
+        if not raw_root:
+            continue
+        try:
+            root = ntpath.normcase(ntpath.abspath(raw_root))
+            if ntpath.commonpath([root, candidate]) == root:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
 # ---- 协议处理器安装包(自包含 .bat,双击即装)--------------------------------
 
-def _handler_js() -> str:
+def _handler_js(origin: str | None = None) -> str:
     """生成本机协议处理器(JScript,经 wscript 无窗口运行 → 无控制台闪)。
 
     令牌/白名单根/PowerDVD 路径以 JSON 字面量嵌入(json.dumps 把反斜杠转义、中文转 \\uXXXX,
@@ -106,33 +126,67 @@ def _handler_js() -> str:
     import json
     roots = [r for r in (settings.media_host_root, settings.bd_owned_host_root,
                          settings.data_host_root) if r]
+    safe_origin = origin if origin and _ORIGIN_RE.match(origin) else ""
     js = r'''var TOKEN = __TOKEN__;
 var ROOTS = __ROOTS__;
 var POWERDVD = __POWERDVD__;
+var ORIGIN = __ORIGIN__;
 var uri = WScript.Arguments.length ? WScript.Arguments(0) : "";
 var m = /^mikannet:\/\/([a-zA-Z]+)\/?\?(.+)$/.exec(uri);
 if (!m) { WScript.Quit(1); }
 var action = m[1].toLowerCase();
-var parts = m[2].split("&"), path = "", token = "";
+var parts = m[2].split("&"), path = "", token = "", requestId = "";
 for (var i = 0; i < parts.length; i++) {
   var eq = parts[i].indexOf("=");
   if (eq < 0) { continue; }
   var k = parts[i].substring(0, eq), v = decodeURIComponent(parts[i].substring(eq + 1));
-  if (k === "path") { path = v; } else if (k === "token") { token = v; }
+  if (k === "path") { path = v; }
+  else if (k === "token") { token = v; }
+  else if (k === "request_id") { requestId = v; }
 }
-if (token !== TOKEN || !path) { WScript.Quit(2); }
+if (token !== TOKEN) { WScript.Quit(2); }
 var fso = new ActiveXObject("Scripting.FileSystemObject");
+var sh = new ActiveXObject("Shell.Application");
+var wsh = new ActiveXObject("WScript.Shell");
+function http(method, url) {
+  var req = new ActiveXObject("WinHttp.WinHttpRequest.5.1");
+  req.Open(method, url, false);
+  req.SetTimeouts(3000, 3000, 5000, 5000);
+  req.Send();
+  return req;
+}
+if (action === "pick") {
+  if (!ORIGIN || !requestId) { WScript.Quit(5); }
+  var chosen = sh.BrowseForFolder(0, "\u9009\u62e9 Mikannet \u6587\u4ef6\u5939", 0x41, 0);
+  if (!chosen) { WScript.Quit(0); }
+  var chosenPath = chosen.Self.Path;
+  try {
+    var callback = ORIGIN + "/api/launch/selection?token=" + encodeURIComponent(TOKEN)
+      + "&request_id=" + encodeURIComponent(requestId)
+      + "&path=" + encodeURIComponent(chosenPath);
+    var posted = http("POST", callback);
+    if (posted.Status < 200 || posted.Status >= 300) { WScript.Quit(6); }
+  } catch (e) { WScript.Quit(6); }
+  WScript.Quit(0);
+}
+if (!path) { WScript.Quit(2); }
 // resolve ".." before the whitelist test, else "root\..\elsewhere" passes the prefix
 // check yet Windows opens the escaped path (whitelist bypass / path traversal).
 try { path = fso.GetAbsolutePathName(path); } catch (e) { WScript.Quit(4); }
 var pl = path.toLowerCase(), ok = false;
-for (var j = 0; j < ROOTS.length; j++) {
-  var r = ROOTS[j].toLowerCase().replace(/[\\]+$/, "");
-  if (pl === r || pl.indexOf(r + "\\") === 0) { ok = true; break; }   // exact or boundary match
+if (ORIGIN) {
+  try {
+    var checked = http("GET", ORIGIN + "/api/launch/validate?token="
+      + encodeURIComponent(TOKEN) + "&path=" + encodeURIComponent(path));
+    ok = checked.Status >= 200 && checked.Status < 300;
+  } catch (e) { ok = false; }
+} else {
+  for (var j = 0; j < ROOTS.length; j++) {
+    var r = ROOTS[j].toLowerCase().replace(/[\\]+$/, "");
+    if (pl === r || pl.indexOf(r + "\\") === 0) { ok = true; break; }
+  }
 }
 if (!ok) { WScript.Quit(3); }
-var sh = new ActiveXObject("Shell.Application");
-var wsh = new ActiveXObject("WScript.Shell");
 function findPowerDVD() {
   var bases = [wsh.ExpandEnvironmentStrings("%ProgramFiles%") + "\\CyberLink",
                wsh.ExpandEnvironmentStrings("%ProgramFiles(x86)%") + "\\CyberLink"];
@@ -166,7 +220,8 @@ if (action === "play") {
 '''
     return (js.replace("__TOKEN__", json.dumps(get_token()))
               .replace("__ROOTS__", json.dumps(roots))
-              .replace("__POWERDVD__", json.dumps(settings.powerdvd_path or "")))
+              .replace("__POWERDVD__", json.dumps(settings.powerdvd_path or ""))
+              .replace("__ORIGIN__", json.dumps(safe_origin)))
 
 
 _ORIGIN_RE = __import__("re").compile(r"^https?://[A-Za-z0-9.\-]+(?::\d+)?$")
@@ -181,24 +236,53 @@ def _policy_lines(origin: str | None) -> tuple[str, str]:
     import json
     if not origin or not _ORIGIN_RE.match(origin):
         return "", ('echo If the browser asks to open Mikannet, allow it.\r\n')
-    # JSON 列表策略:reg /d 内嵌引号用 \" 转义(reg.exe 的 argv 解析按字面引号还原)
-    js = json.dumps([{"protocol": "mikannet", "allowed_origins": [origin]}],
-                    separators=(",", ":")).replace('"', '\\"')
+    # 部署脚本只知道一个入口；把两个等价本机地址一起放行，用户切换
+    # localhost / 127.0.0.1 后也不会重新看到外部协议确认框。
+    origins = [origin]
+    parsed = urlsplit(origin)
+    if parsed.hostname in {"localhost", "127.0.0.1"}:
+        alias_host = "127.0.0.1" if parsed.hostname == "localhost" else "localhost"
+        alias = f"{parsed.scheme}://{alias_host}"
+        if parsed.port:
+            alias += f":{parsed.port}"
+        origins.append(alias)
+    # JSON 不能可靠地直接放进 reg.exe /d 参数，CMD 会吞掉其中的双引号。
+    # 生成纯 ASCII .reg 再导入，复用 handler.js 已验证过的 certutil 解码路径。
+    js = json.dumps([{"protocol": "mikannet", "allowed_origins": origins}],
+                    separators=(",", ":"))
+    reg_value = js.replace("\\", "\\\\").replace('"', '\\"')
+    reg_file = (
+        "Windows Registry Editor Version 5.00\r\n\r\n"
+        "[HKEY_CURRENT_USER\\Software\\Policies\\Google\\Chrome]\r\n"
+        f'"AutoLaunchProtocolsFromOrigins"="{reg_value}"\r\n\r\n'
+        "[HKEY_CURRENT_USER\\Software\\Policies\\Microsoft\\Edge]\r\n"
+        f'"AutoLaunchProtocolsFromOrigins"="{reg_value}"\r\n'
+    )
+    policy_b64 = base64.b64encode(reg_file.encode("ascii")).decode("ascii")
     lines = (
-        'reg add "HKCU\\Software\\Policies\\Google\\Chrome" /v AutoLaunchProtocolsFromOrigins '
-        f'/t REG_SZ /d "{js}" /f >nul 2>&1\r\n'
-        'reg add "HKCU\\Software\\Policies\\Microsoft\\Edge" /v AutoLaunchProtocolsFromOrigins '
-        f'/t REG_SZ /d "{js}" /f >nul 2>&1\r\n')
-    note = (f'echo Auto-launch whitelisted for {origin} (Chrome / Edge).\r\n'
-            'echo Restart your browser once, then play / open works with no popup.\r\n')
+        f'set "PB64={policy_b64}"\r\n'
+        '> "%DIR%\\policy.b64" echo %PB64%\r\n'
+        'certutil -decode -f "%DIR%\\policy.b64" "%DIR%\\policy.reg" >nul\r\n'
+        'reg import "%DIR%\\policy.reg" >nul 2>&1\r\n'
+        'if errorlevel 1 (set "MK_POLICY_OK=0") else (set "MK_POLICY_OK=1")\r\n'
+        'del "%DIR%\\policy.b64" "%DIR%\\policy.reg" >nul 2>&1\r\n')
+    note = (
+        'if "%MK_POLICY_OK%"=="1" (\r\n'
+        f'  echo Auto-launch whitelisted for {origin} (Chrome / Edge).\r\n'
+        '  echo Restart your browser once, then native buttons work with no popup.\r\n'
+        ') else (\r\n'
+        '  echo Browser policy is protected and was not changed.\r\n'
+        '  echo Web playback/file management needs no prompt; native buttons may ask once.\r\n'
+        ')\r\n'
+    )
     return lines, note
 
 
-def installer_bat(origin: str | None = None) -> str:
+def installer_bat(origin: str | None = None, quiet: bool = False) -> str:
     """生成自安装 .bat:写入 JScript 处理器(%LOCALAPPDATA%\\mikannet\\handler.js)+ 注册
     mikannet:// → wscript(无窗口闪)+(给定 origin 时)写浏览器免询问策略,根治每次播放弹窗。
     全程不用 PowerShell:certutil 解 base64,reg 写注册表。"""
-    b64 = base64.b64encode(_handler_js().encode("ascii")).decode("ascii")   # 纯 ASCII
+    b64 = base64.b64encode(_handler_js(origin).encode("ascii")).decode("ascii")
     cmd = 'wscript.exe \\"%DIR%\\handler.js\\" \\"%%1\\"'
     policy, note = _policy_lines(origin)
     return (
@@ -221,5 +305,5 @@ def installer_bat(origin: str | None = None) -> str:
         "echo   %DIR%\\handler.js\r\n"
         + note +
         "echo.\r\n"
-        "pause\r\n"
+        + ("" if quiet else "pause\r\n")
     )

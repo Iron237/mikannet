@@ -32,7 +32,7 @@ const bdLabel = computed(() => {
   if (c.bd_status === 'complete') return `BD 完整 ${c.bd.length}/${c.total}`
   if (c.bd_status === 'partial') return `BD 部分覆盖 ${c.bd.length}/${c.total || '?'}`
   if (c.bd_status === 'active') return `BD 资源已生效`
-  if (c.bd_status === 'release_only') return `仅检测到 ${c.bd_release_count} 套 BD 发行`
+  if (c.bd_status === 'release_only') return `仅检测到 ${c.bd_release_count} 套 BD 原盘`
   return '无 BD 正片'
 })
 

@@ -55,6 +55,23 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
+set "MK_PORT=9000"
+for /f "usebackq tokens=1,* delims==" %%A in (".env") do if /i "%%A"=="HOST_PORT" set "MK_PORT=%%B"
+set "MK_HANDLER=%TEMP%\mikannet-handler-install.bat"
+echo Installing Windows browser / Explorer integration...
+for /l %%I in (1,1,30) do (
+  curl.exe -fsS --max-time 4 "http://127.0.0.1:%MK_PORT%/api/launch/handler.bat?origin=http://localhost:%MK_PORT%&quiet=true" -o "%MK_HANDLER%" 2>nul
+  if not errorlevel 1 goto handler_ready
+  timeout /t 2 /nobreak >nul
+)
+echo [!] Windows integration was not installed automatically. The WebUI remains usable;
+echo     retry from Settings - Playback and files after the service is ready.
+goto handler_done
+:handler_ready
+call "%MK_HANDLER%" >nul
+del "%MK_HANDLER%" >nul 2>&1
+echo [OK] Windows integration installed for this user.
+:handler_done
 echo.
 echo [OK] Mikannet started.  WebUI:  http://localhost:9000
 echo      Logs:  deploy.bat logs

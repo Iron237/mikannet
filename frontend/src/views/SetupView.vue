@@ -9,7 +9,11 @@ const busy = ref(false)
 const msg = ref('')
 
 // 存储
-const st = ref({ mode: 'smb', smb_host_path: '', smb_username: '', smb_password: '', smb_vers: '3.0' })
+const st = ref({
+  mode: 'smb', local_host_path: '',
+  smb_host_path: '', smb_username: '', smb_password: '', smb_vers: '3.0',
+  nfs_host_path: '', nfs_options: 'vers=4,soft,timeo=30,retrans=2',
+})
 const stTest = ref(null)       // { ok, error?, sample?, writable? }
 // 应用配置(复用 /api/config)
 const cfg = ref({
@@ -67,9 +71,12 @@ onMounted(async () => {
     for (const k of Object.keys(cfg.value)) if (c[k]) cfg.value[k] = c[k].secret ? '' : c[k].value
     const s = await api.get('/api/setup/storage')
     if (s.mode) st.value.mode = s.mode
+    st.value.local_host_path = s.local_host_path || ''
     st.value.smb_host_path = s.smb_host_path || ''
     st.value.smb_username = s.smb_username || ''
     st.value.smb_vers = s.smb_vers || '3.0'
+    st.value.nfs_host_path = s.nfs_host_path || ''
+    st.value.nfs_options = s.nfs_options || 'vers=4,soft,timeo=30,retrans=2'
   } catch (e) { msg.value = '读取现有配置失败:' + e.message }
 })
 
@@ -168,6 +175,7 @@ async function finish() {
         <p class="muted">番剧文件存在哪?App 会读取它,用于识别/探测/管理(qB 下载路径在下一步单独配)。</p>
         <div class="row seg">
           <label :class="{ on: st.mode === 'smb' }"><input type="radio" value="smb" v-model="st.mode" /> NAS / SMB 共享</label>
+          <label :class="{ on: st.mode === 'nfs' }"><input type="radio" value="nfs" v-model="st.mode" /> NAS / NFS</label>
           <label :class="{ on: st.mode === 'local' }"><input type="radio" value="local" v-model="st.mode" /> 本地目录</label>
         </div>
         <template v-if="st.mode === 'smb'">
@@ -178,7 +186,14 @@ async function finish() {
           </div>
           <label class="fld" style="max-width:160px;"><span>SMB 版本</span><input class="input" v-model="st.smb_vers" placeholder="3.0" /></label>
         </template>
-        <p v-else class="muted">将使用默认的下载目录 <code>/downloads</code>。</p>
+        <template v-else-if="st.mode === 'nfs'">
+          <label class="fld"><span>NFS 导出地址</span><input class="input" v-model="st.nfs_host_path" placeholder="nas:/volume1/anime/mikannet" /></label>
+          <label class="fld"><span>挂载选项</span><input class="input" v-model="st.nfs_options" /></label>
+        </template>
+        <template v-else>
+          <label class="fld"><span>Windows / 宿主机目录</span><input class="input" v-model="st.local_host_path" placeholder="D:\Anime\Mikannet" /></label>
+          <p class="muted">Docker 会把该目录映射为 <code>/downloads</code>；实际绑定由部署配置提供。</p>
+        </template>
         <div class="row" style="gap:10px;">
           <button class="btn" :disabled="busy" @click="testStorage"><Icon name="check" :size="13" /> 测试连接</button>
           <span v-if="stTest" :class="stTest.ok ? 'ok' : 'err'" style="font-size:12.5px;">
@@ -233,16 +248,16 @@ async function finish() {
         <label class="fld"><span>蜜柑 Cookie</span><textarea class="input" rows="2" v-model="cfg.mikan_cookie" placeholder="可留空"></textarea></label>
       </div>
 
-      <!-- 4 原生播放(可跳) -->
+      <!-- 4 本机播放(建议配置,可跳) -->
       <div v-else-if="step === 4" class="body">
-        <h3>原生播放(可跳过)</h3>
-        <p class="muted">想用本机默认播放器播放、在资源管理器打开、PowerDVD 放蓝光?填这台电脑看 NAS 的<strong>文件夹路径</strong>,
-          再下载协议处理器在本机双击装一次。不需要可跳过,以后在设置页随时配。</p>
+        <h3>本机播放与文件定位（建议配置）</h3>
+        <p class="muted">详情页默认调用 Windows 默认播放器（可设为 PotPlayer）和文件资源管理器。
+          Windows 部署脚本通常已自动安装集成；这里只需填写这台电脑实际看到的媒体路径。</p>
         <label class="fld"><span>番剧库文件夹路径(如 Z:\番剧\mikannet)</span><input class="input" v-model="cfg.media_host_root" placeholder="Z:\番剧\mikannet" /></label>
         <label class="fld"><span>已购原盘文件夹路径(可选,如 Z:\BD\已购BD翻录)</span><input class="input" v-model="cfg.bd_owned_host_root" placeholder="可留空" /></label>
         <div class="row" style="gap:10px;">
-          <button class="btn" :disabled="busy || !cfg.media_host_root" @click="downloadHandler">保存并下载协议处理器(.bat)</button>
-          <span class="muted" style="font-size:12px;">下载后在这台 Windows 双击运行一次</span>
+          <button class="btn" :disabled="busy || !cfg.media_host_root" @click="downloadHandler">下载 Windows 集成修复包</button>
+          <span class="muted" style="font-size:12px;">仅在自动安装失效或另一台电脑需要本机调用时使用</span>
         </div>
       </div>
 

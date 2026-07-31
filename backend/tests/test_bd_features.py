@@ -52,11 +52,20 @@ def test_handler_js_ascii_and_reveal_opens_dir(monkeypatch):
     from app.services import launch
     monkeypatch.setattr(settings, "media_host_root", "Z:\\番剧\\mikannet")
     monkeypatch.setattr(settings, "launch_token", "tok")
-    js = launch._handler_js()
+    js = launch._handler_js("http://localhost:9000")
     js.encode("ascii")                      # 非 ASCII 会在此抛 UnicodeEncodeError
     assert "FolderExists(path)" in js       # 目录:直接打开
     assert 'explorer.exe "' in js           # 直接打开分支
-    launch.installer_bat("http://localhost:9000").encode("ascii")  # 整包也必须可 ASCII 编码
+    assert "BrowseForFolder" in js          # 设置页可唤起 Windows 文件夹选择器
+    assert "/api/launch/validate" in js     # 路径白名单动态校验,改路径不用重装
+    bat = launch.installer_bat("http://localhost:9000")
+    bat.encode("ascii")                    # 整包也必须可 ASCII 编码
+    import base64
+    import re
+    policy_b64 = re.search(r'set "PB64=([^"]+)"', bat).group(1)
+    policy_reg = base64.b64decode(policy_b64).decode("ascii")
+    assert "http://127.0.0.1:9000" in policy_reg  # 本机等价入口一并免询问
+    assert "Browser policy is protected" in bat  # 不把拒绝写策略误报为成功
 
 
 # ---- 生命周期 ----------------------------------------------------------------

@@ -1,9 +1,10 @@
 """番剧库与详情(虚拟库视图,ADR-0001:全部由数据库渲染)。"""
 import logging
 import time
+from collections import defaultdict
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -57,15 +58,143 @@ def _file_out(f) -> dict:
         "exists": exists,
         "play_url": launch.media_launch("play", f.relative_path) if exists else None,
         "reveal_url": launch.media_launch("reveal", f.relative_path) if exists else None,
+        "stream_url": f"/api/files/{f.id}/stream" if exists else None,
+        "compatible_stream_url": f"/api/files/{f.id}/stream?compatible=true" if exists else None,
     }
 
 
 @router.get("")
-def library(db: Session = Depends(get_db)):
+def library(db: Session = Depends(get_db), verify_files: bool = True):
+    """番剧库封面墙。
+
+    列表所需的文件、剧集、种子与 BD 原盘统计一次性批量读取，避免每部番剧重复发起
+    8 次左右 SQL 查询。verify_files=False 供前端首屏快速展示数据库快照；首屏完成后
+    再异步做实盘核对，详情页和播放入口仍始终验证真实文件。
+    """
     rows = db.execute(select(Bangumi).order_by(Bangumi.created_at.desc())).scalars().all()
+
+    file_rows = db.execute(
+        select(
+            Subscription.bangumi_id.label("bangumi_id"),
+            Episode.id.label("episode_id"),
+            Episode.number.label("episode_number"),
+            Episode.type.label("episode_type"),
+            VideoFile.source.label("source"),
+            VideoFile.is_active.label("is_active"),
+            VideoFile.relative_path.label("relative_path"),
+            Torrent.is_preview.label("is_preview"),
+        )
+        .select_from(VideoFile)
+        .join(Torrent, VideoFile.torrent_id == Torrent.id)
+        .join(Subscription, Torrent.subscription_id == Subscription.id)
+        .outerjoin(Episode, VideoFile.episode_id == Episode.id)
+    ).all()
+    files_by_bangumi: dict[int, list[dict]] = defaultdict(list)
+    exists_by_path: dict[str, bool] = {}
+    for row in file_rows:
+        path = row.relative_path
+        if path not in exists_by_path:
+            exists_by_path[path] = _file_exists(path) if verify_files else True
+        files_by_bangumi[row.bangumi_id].append({
+            "episode_id": row.episode_id,
+            "episode_number": row.episode_number,
+            "episode_type": row.episode_type,
+            "source": row.source or "未知",
+            "is_active": bool(row.is_active),
+            "exists": exists_by_path[path],
+            "is_preview": bool(row.is_preview),
+        })
+
+    torrent_rows = db.execute(
+        select(Subscription.bangumi_id, Torrent.parsed_json,
+               Subscription.episode_offset)
+        .join(Torrent, Torrent.subscription_id == Subscription.id)
+        .where(Torrent.is_preview.is_(False))
+    ).all()
+    torrents_by_bangumi: dict[int, list[tuple[dict, int]]] = defaultdict(list)
+    for bangumi_id, parsed_json, episode_offset in torrent_rows:
+        torrents_by_bangumi[bangumi_id].append(
+            (parsed_json or {}, episode_offset or 0))
+
+    release_counts = dict(db.execute(
+        select(BdRelease.bangumi_id, func.count(BdRelease.id))
+        .where(BdRelease.bangumi_id.is_not(None))
+        .group_by(BdRelease.bangumi_id)
+    ).all())
+
     out = []
     for b in rows:
-        coverage = _resource_coverage(db, b, verify_files=True)
+        files = files_by_bangumi.get(b.id, [])
+        active_files = [f for f in files if f["is_active"] and f["exists"]]
+        regular_files = [
+            f for f in files
+            if f["episode_type"] == EpisodeType.REGULAR
+            and f["episode_number"] is not None
+        ]
+        official_regular = [f for f in regular_files if not f["is_preview"]]
+
+        source_rank = {"BD": 0, "Web": 1}
+        active_source: dict[float, str] = {}
+        for f in official_regular:
+            if not f["is_active"] or not f["exists"]:
+                continue
+            number = float(f["episode_number"])
+            source = f["source"]
+            if (number not in active_source
+                    or source_rank.get(source, 9)
+                    < source_rank.get(active_source[number], 9)):
+                active_source[number] = source
+
+        expected = (
+            [float(n) for n in range(b.ep_start or 1,
+                                     (b.ep_start or 1) + b.eps_total)]
+            if b.kind == Kind.TV and b.eps_total else []
+        )
+        bd_numbers = [n for n, source in active_source.items() if source == "BD"]
+        web_numbers = [n for n, source in active_source.items() if source == "Web"]
+        release_count = int(release_counts.get(b.id, 0))
+        bd_active_files = sum(1 for f in active_files if f["source"] == "BD")
+        if b.kind == Kind.TV:
+            if not bd_numbers:
+                bd_status = "release_only" if release_count else "none"
+            elif expected and all(active_source.get(n) == "BD" for n in expected):
+                bd_status = "complete"
+            else:
+                bd_status = "partial"
+        elif not bd_active_files:
+            bd_status = "release_only" if release_count else "none"
+        else:
+            bd_status = "active"
+
+        downloaded_ids = {
+            f["episode_id"] for f in regular_files
+            if f["episode_id"] is not None and f["is_active"] and f["exists"]
+        }
+        eps_downloaded = len(downloaded_ids)
+        if b.eps_total:
+            eps_downloaded = min(eps_downloaded, b.eps_total)
+
+        eps_aired = None
+        if b.kind == Kind.TV and b.eps_total:
+            start = b.ep_start or 1
+            seen = 0
+            for parsed_json, episode_offset in torrents_by_bangumi.get(b.id, []):
+                for episode in parsed_json.get("episodes") or []:
+                    try:
+                        seen = max(
+                            seen,
+                            int(float(episode)) - episode_offset - (start - 1))
+                    except (TypeError, ValueError):
+                        continue
+            if seen == 0:
+                seen = _weekly_aired(b.air_date)
+            official_downloaded = len({
+                f["episode_id"] for f in official_regular
+                if f["episode_id"] is not None and f["is_active"] and f["exists"]
+            })
+            seen = max(seen, official_downloaded)
+            eps_aired = min(seen, b.eps_total) if seen > 0 else None
+
         out.append({
             "id": b.id, "title": b.title, "year": b.year, "season": b.season_str,
             "studio": b.studio, "score": b.score, "airing_status": b.airing_status.value,
@@ -76,18 +205,19 @@ def library(db: Session = Depends(get_db)):
             "backdrop": f"/data/{b.backdrop_path}" if b.backdrop_path else None,
             "eps_total": b.eps_total,
             # 影片/OVA 没有"正片集"概念,用是否有入库文件表达"已入库"。
-            "has_resource": _has_any_active_file(db, b.id, verify_files=True),
-            "eps_downloaded": _eps_done(db, b, verify_files=True),
-            "eps_aired": _eps_aired(db, b, verify_files=True),
-            "has_bd": coverage["bd_status"] != "none",
-            "has_web": _has_active_file_source(db, b.id, "Web", verify_files=True),
+            "has_resource": bool(active_files),
+            "eps_downloaded": eps_downloaded,
+            "eps_aired": eps_aired,
+            "has_bd": bd_status != "none",
+            "has_web": any(f["source"] == "Web" for f in active_files),
             "bd_owned": b.bd_owned,
             # 兼容旧前端;新前端使用 bd_status + 精确覆盖数。
-            "bd_rip": bool(coverage["bd"] or coverage["bd_active_files"]),
-            "bd_status": coverage["bd_status"],
-            "bd_active_eps": len(coverage["bd"]),
-            "web_active_eps": len(coverage["web"]),
-            "bd_release_count": coverage["bd_release_count"],
+            "bd_rip": bool(bd_numbers or bd_active_files),
+            "bd_status": bd_status,
+            "bd_active_eps": len(bd_numbers),
+            "web_active_eps": len(web_numbers),
+            "bd_release_count": release_count,
+            "files_verified": verify_files,
         })
     return out
 
@@ -350,7 +480,7 @@ def _upcoming_this_week(db: Session, b: Bangumi) -> dict | None:
 
 @router.get("/resource-issues")
 def resource_issues(verify_files: bool = True, db: Session = Depends(get_db)):
-    """全局待处理中心：把资源覆盖、订阅健康、失败任务与物理文件漂移归到同一入口。"""
+    """全局消息中心：按需核对资源覆盖、订阅健康、失败任务与物理文件漂移。"""
     from datetime import datetime, timezone
 
     groups = [
@@ -358,17 +488,17 @@ def resource_issues(verify_files: bool = True, db: Session = Depends(get_db)):
         {"key": "failed_tasks", "label": "下载任务失败", "severity": "error", "items": []},
         {"key": "missing_episodes", "label": "已播但缺集", "severity": "warning", "items": []},
         {"key": "subscription_errors", "label": "订阅源异常", "severity": "warning", "items": []},
-        {"key": "bd_release_only", "label": "BD 尚未覆盖正片", "severity": "warning", "items": []},
+        {"key": "bd_release_only", "label": "BD原盘尚未覆盖正片", "severity": "warning", "items": []},
         {"key": "cleanup_blocked", "label": "合集阻止清理", "severity": "info", "items": []},
         {"key": "auto_never_scanned", "label": "自动策略尚未运行", "severity": "info", "items": []},
-        {"key": "unbound_bd", "label": "BD 发行未绑定", "severity": "warning", "items": []},
+        {"key": "unbound_bd", "label": "BD原盘未绑定", "severity": "warning", "items": []},
     ]
     by_key = {g["key"]: g for g in groups}
 
     def add(key: str, b: Bangumi | None, detail: str, **extra) -> None:
         by_key[key]["items"].append({
             "bangumi_id": b.id if b else None,
-            "title": b.title if b else extra.pop("title", "未绑定发行"),
+            "title": b.title if b else extra.pop("title", "未绑定原盘"),
             "path": f"/bangumi/{b.id}" if b else "/bd",
             "detail": detail,
             **extra,
@@ -409,7 +539,7 @@ def resource_issues(verify_files: bool = True, db: Session = Depends(get_db)):
 
         if coverage["bd_status"] == "release_only":
             add("bd_release_only", b,
-                f"检测到 {coverage['bd_release_count']} 套发行，但没有生效 BD 正片",
+                f"检测到 {coverage['bd_release_count']} 套 BD 原盘，但没有生效 BD 正片",
                 count=coverage["bd_release_count"])
         if coverage["cleanup_blocked_torrents"]:
             add("cleanup_blocked", b,
@@ -461,7 +591,7 @@ def resource_issues(verify_files: bool = True, db: Session = Depends(get_db)):
 
     for release in db.execute(select(BdRelease).where(
             BdRelease.bangumi_id.is_(None))).scalars().all():
-        add("unbound_bd", None, "扫描到发行，但尚未关联番剧",
+        add("unbound_bd", None, "扫描到 BD 原盘，但尚未关联番剧",
             release_id=release.id, title=release.title)
 
     groups = [g for g in groups if g["items"]]

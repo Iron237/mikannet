@@ -2,6 +2,8 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api, fmtSize } from '../api'
 import Icon from '../components/Icon.vue'
+import FileBrowserModal from '../components/FileBrowserModal.vue'
+import { launch as launchNative } from '../native'
 
 const health = ref(null)
 const cfg = ref({})            // key -> { value, group, type, secret }
@@ -44,8 +46,23 @@ const LABELS = {
   data_host_root: 'data 目录路径(用于「打开 log 目录」,如 C:\\mikannet\\data\\mikannet)',
   powerdvd_path: 'PowerDVD.exe 路径(留空 → 自动探测常见安装位)',
 }
-const GROUP_ORDER = ['常规', '自动补全与升级', '下载器', '代理', '搜索源', '整理', '播放',
-  '坏种清理', 'bgm.tv 联动', 'AniDB', 'LLM']
+const sections = [
+  { id: 'common', name: '常用与存储', icon: 'database', desc: '状态、下载目录和下载器' },
+  { id: 'automation', name: '订阅与自动化', icon: 'rss', desc: '轮询、补齐、整理和坏种' },
+  { id: 'playback', name: '播放与文件', icon: 'play', desc: '本机播放器、资源管理器和网页备用' },
+  { id: 'services', name: '网络与元数据', icon: 'link', desc: '代理、搜索源、元数据和通知' },
+  { id: 'maintenance', name: '维护', icon: 'settings', desc: '更新、备份和迁移' },
+]
+const activeSection = ref('common')
+const GROUP_ORDER = ['常规', '下载器', '自动补全与升级', '整理', '坏种清理',
+  '播放', '代理', '搜索源', 'bgm.tv 联动', 'AniDB', 'LLM']
+const SECTION_GROUPS = {
+  common: ['常规', '下载器'],
+  automation: ['自动补全与升级', '整理', '坏种清理'],
+  playback: ['播放'],
+  services: ['代理', '搜索源', 'bgm.tv 联动', 'AniDB', 'LLM'],
+  maintenance: [],
+}
 
 const channelMeta = {
   telegram: { name: 'Telegram Bot', fields: [['bot_token', 'Bot Token'], ['chat_id', 'Chat ID']] },
@@ -60,7 +77,9 @@ const groups = computed(() => {
   for (const [key, o] of Object.entries(cfg.value)) {
     (m[o.group] ??= []).push({ key, ...o })
   }
-  return GROUP_ORDER.filter(g => m[g]).map(g => ({ group: g, items: m[g] }))
+  const allowed = SECTION_GROUPS[activeSection.value] || []
+  return GROUP_ORDER.filter(g => m[g] && allowed.includes(g))
+    .map(g => ({ group: g, items: m[g] }))
 })
 
 async function load() {
@@ -197,18 +216,81 @@ async function downloadHandler() {
 }
 
 // ---- 存储(NAS / SMB,可在此重配;复用首次向导的端点)----
-const stor = ref({ mode: 'smb', smb_host_path: '', smb_username: '', smb_password: '', smb_vers: '3.0' })
+const stor = ref({
+  mode: 'smb',
+  local_host_path: '',
+  smb_host_path: '',
+  smb_username: '',
+  smb_password: '',
+  smb_vers: '3.0',
+  nfs_host_path: '',
+  nfs_options: 'vers=4,soft,timeo=30,retrans=2',
+})
 const storState = ref(null)
 const storMsg = ref('')
 const storBusy = ref(false)
+const fileBrowserOpen = ref(false)
+let pickerTimer = null
+
+function applyNasPreset(vendor) {
+  const presets = {
+    synology: { mode: 'smb', path: '//NAS/共享文件夹/Anime', msg: '群晖 DSM：控制面板 → 文件服务 → SMB；也可切 NFS 填 NAS:/volume1/Anime。' },
+    qnap: { mode: 'smb', path: '//QNAP/Multimedia/Anime', msg: 'QNAP：控制台 → 网络和文件服务 → Win/Mac/NFS；NFS 常用 QNAP:/share/Anime。' },
+    truenas: { mode: 'nfs', path: 'truenas:/mnt/tank/Anime', msg: 'TrueNAS：推荐 NFSv4；也可创建 SMB Share 后使用 //truenas/Anime。' },
+    unraid: { mode: 'smb', path: '//tower/media/Anime', msg: 'Unraid：共享名通常位于 //tower/<share>；NFS 可用 tower:/mnt/user/media。' },
+    windows: { mode: 'smb', path: '//电脑名/共享名/Anime', msg: 'Windows 共享：文件夹属性 → 共享；请使用电脑名或局域网 IP。' },
+  }
+  const p = presets[vendor]
+  stor.value.mode = p.mode
+  if (p.mode === 'smb') stor.value.smb_host_path = p.path
+  else stor.value.nfs_host_path = p.path
+  storMsg.value = p.msg
+}
+
+async function pickWindowsFolder(target = 'local_host_path') {
+  clearTimeout(pickerTimer)
+  const requestId = (crypto.randomUUID?.() || `${Date.now()}${Math.random()}`).replace(/-/g, '')
+  storMsg.value = '正在打开 Windows 文件夹选择器…'
+  try {
+    const r = await api.get(`/api/launch/picker?request_id=${encodeURIComponent(requestId)}`)
+    launchNative(r.url)
+  } catch (e) {
+    storMsg.value = `无法启动选择器：${e.message}。可直接粘贴 Windows 路径。`
+    return
+  }
+  let attempts = 0
+  const poll = async () => {
+    attempts++
+    try {
+      const r = await api.get(`/api/launch/selection/${encodeURIComponent(requestId)}`)
+      if (r.ready && r.path) {
+        if (target === 'local_host_path') stor.value.local_host_path = r.path
+        else if (cfg.value[target]) cfg.value[target].value = r.path
+        storMsg.value = `已选择：${r.path}`
+        return
+      }
+    } catch { /* 继续等待 */ }
+    if (attempts < 80) pickerTimer = setTimeout(poll, 500)
+    else storMsg.value = '未收到选择结果；Windows 集成未安装时可直接粘贴路径。'
+  }
+  pickerTimer = setTimeout(poll, 500)
+}
+
+function isWindowsPathKey(key) {
+  return ['media_host_root', 'bd_owned_host_root', 'data_host_root'].includes(key)
+}
+
 async function loadStorage() {
   try {
     const s = await api.get('/api/setup/storage')
     storState.value = s
     stor.value.mode = s.mode || 'smb'
+    stor.value.local_host_path = s.local_host_path || ''
     stor.value.smb_host_path = s.smb_host_path || ''
     stor.value.smb_username = s.smb_username || ''
     stor.value.smb_vers = s.smb_vers || '3.0'
+    stor.value.nfs_host_path = s.nfs_host_path || ''
+    stor.value.nfs_options = s.nfs_options || 'vers=4,soft,timeo=30,retrans=2'
   } catch { /* ignore */ }
 }
 async function testStorage() {
@@ -224,11 +306,14 @@ async function saveStorage() {
   storBusy.value = true; storMsg.value = '保存并连接中…'
   try {
     await api.post('/api/setup/storage', stor.value)
+    if (stor.value.mode === 'local' && stor.value.local_host_path) {
+      await api.put('/api/config', { media_host_root: stor.value.local_host_path })
+    }
     storMsg.value = '已保存并连接'
     await loadStorage()
   } catch (e) { storMsg.value = '失败:' + e.message } finally { storBusy.value = false }
 }
-// SMB 断线留下僵尸挂载导致「未连接」时,按现有配置一键重挂(不改配置)
+// 网络存储断线留下僵尸挂载导致「未连接」时,按现有配置一键重挂(不改配置)
 async function remountStorage() {
   storBusy.value = true; storMsg.value = '重新挂载中…'
   try {
@@ -274,7 +359,10 @@ async function pollRefresh() {
   refreshMeta.value = await api.get('/api/bangumi/refresh-metadata-all/status')
   if (refreshMeta.value.running) refreshTimer = setTimeout(pollRefresh, 1500)
 }
-onUnmounted(() => clearTimeout(refreshTimer))
+onUnmounted(() => {
+  clearTimeout(refreshTimer)
+  clearTimeout(pickerTimer)
+})
 
 onMounted(() => { load(); loadStorage(); loadVersion() })
 </script>
@@ -287,7 +375,16 @@ onMounted(() => { load(); loadStorage(); loadVersion() })
       <button class="btn sm" @click="load"><Icon name="refresh" :size="13" /> 重试</button>
     </p>
 
-    <div class="card" style="margin-bottom: 16px;">
+    <nav class="settings-nav" aria-label="设置分类">
+      <button v-for="section in sections" :key="section.id" class="settings-tab"
+              :class="{ on: activeSection === section.id }"
+              @click="activeSection = section.id">
+        <Icon :name="section.icon" :size="16" />
+        <span><strong>{{ section.name }}</strong><small>{{ section.desc }}</small></span>
+      </button>
+    </nav>
+
+    <div v-if="activeSection === 'common'" class="card" style="margin-bottom: 16px;">
       <div class="row health-row">
         <h3 style="margin: 0;">系统状态</h3>
         <span class="tag" :class="health?.status === 'ok' ? 'green' : 'red'" v-if="health">
@@ -300,7 +397,7 @@ onMounted(() => { load(); loadStorage(); loadVersion() })
     </div>
 
     <!-- 自更新:检查更新 + 一键更新 -->
-    <div class="card" style="margin-bottom: 16px;">
+    <div v-if="activeSection === 'maintenance'" class="card" style="margin-bottom: 16px;">
       <div class="row update-head" style="margin-bottom: 10px;">
         <h3 style="margin: 0; font-size: 15px;">更新</h3>
         <span class="tag">当前 v{{ ver.version || '—' }}</span>
@@ -339,8 +436,8 @@ onMounted(() => { load(); loadStorage(); loadVersion() })
       </div>
     </div>
 
-    <!-- 存储(NAS / SMB;App 在容器内挂载到 /downloads) -->
-    <div class="card" style="margin-bottom: 16px;">
+    <!-- 存储：本地绑定 / SMB / NFS -->
+    <div v-if="activeSection === 'common'" class="card storage-card" style="margin-bottom: 16px;">
       <div class="row" style="margin-bottom: 10px;">
         <h3 style="margin: 0; font-size: 15px;">存储</h3>
         <span v-if="storState" class="tag" :class="storState.mounted ? 'green' : 'red'">
@@ -350,30 +447,63 @@ onMounted(() => { load(); loadStorage(); loadVersion() })
         <div class="spacer" />
         <span class="muted" style="font-size: 12px;">{{ storMsg }}</span>
       </div>
-      <div class="row" style="gap: 10px; margin-bottom: 10px;">
-        <label class="row" style="gap: 5px; cursor: pointer;"><input type="radio" value="smb" v-model="stor.mode" /> NAS / SMB</label>
-        <label class="row" style="gap: 5px; cursor: pointer;"><input type="radio" value="local" v-model="stor.mode" /> 本地目录</label>
+      <div class="storage-modes">
+        <label :class="{ on: stor.mode === 'local' }"><input type="radio" value="local" v-model="stor.mode" />
+          <Icon name="folder" :size="15" /> Windows / 本地目录</label>
+        <label :class="{ on: stor.mode === 'smb' }"><input type="radio" value="smb" v-model="stor.mode" />
+          <Icon name="database" :size="15" /> SMB / CIFS</label>
+        <label :class="{ on: stor.mode === 'nfs' }"><input type="radio" value="nfs" v-model="stor.mode" />
+          <Icon name="database" :size="15" /> NFS v3/v4</label>
       </div>
-      <div v-if="stor.mode === 'smb'" class="cfg-grid">
+      <div class="nas-presets">
+        <span class="muted">快速示例</span>
+        <button class="preset" @click="applyNasPreset('synology')">群晖 Synology</button>
+        <button class="preset" @click="applyNasPreset('qnap')">QNAP</button>
+        <button class="preset" @click="applyNasPreset('truenas')">TrueNAS</button>
+        <button class="preset" @click="applyNasPreset('unraid')">Unraid</button>
+        <button class="preset" @click="applyNasPreset('windows')">Windows 共享</button>
+      </div>
+      <div v-if="stor.mode === 'local'" class="cfg-grid">
+        <label class="cfg-field full">
+          <span>Windows / 宿主机媒体目录</span>
+          <div class="path-input">
+            <input class="input" v-model="stor.local_host_path" placeholder="D:\Anime\Mikannet 或 Z:\番剧\mikannet" />
+            <button class="btn sm" type="button" @click="pickWindowsFolder('local_host_path')">
+              <Icon name="folder-open" :size="13" /> 浏览
+            </button>
+          </div>
+          <small>Docker 中固定映射为 <code>/downloads</code>；更换宿主目录后需按部署配置重建容器。</small>
+        </label>
+      </div>
+      <div v-else-if="stor.mode === 'smb'" class="cfg-grid">
         <label class="cfg-field"><span>共享地址(//主机/共享)</span><input class="input" v-model="stor.smb_host_path" placeholder="//192.168.1.100/anime/mikannet" /></label>
         <label class="cfg-field"><span>SMB 版本</span><input class="input" v-model="stor.smb_vers" placeholder="3.0" /></label>
         <label class="cfg-field"><span>用户名</span><input class="input" v-model="stor.smb_username" /></label>
         <label class="cfg-field"><span>密码(留空=不改)</span><input class="input" type="password" v-model="stor.smb_password" placeholder="留空保留原密码" /></label>
       </div>
-      <p v-else class="muted" style="font-size: 12.5px;">使用默认下载目录 <code>/downloads</code>。</p>
+      <div v-else class="cfg-grid">
+        <label class="cfg-field"><span>NFS 导出地址</span><input class="input" v-model="stor.nfs_host_path" placeholder="nas:/volume1/anime/mikannet" /></label>
+        <label class="cfg-field"><span>NFS 挂载选项</span><input class="input" v-model="stor.nfs_options" placeholder="vers=4,soft,timeo=30,retrans=2" /></label>
+      </div>
       <div class="row" style="gap: 10px; margin-top: 10px;">
         <button class="btn sm" :disabled="storBusy" @click="testStorage">测试连接</button>
         <button class="btn primary sm" :disabled="storBusy" @click="saveStorage">保存并连接</button>
-        <button v-if="stor.mode === 'smb'" class="btn sm" :disabled="storBusy" @click="remountStorage"
-                title="断线后留下僵尸挂载导致「未连接」时,按现有配置重挂(不改配置)">
+        <button v-if="stor.mode === 'smb' || stor.mode === 'nfs'" class="btn sm" :disabled="storBusy" @click="remountStorage"
+                 title="断线后留下僵尸挂载导致「未连接」时,按现有配置重挂(不改配置)">
           <Icon name="refresh" :size="13" /> 重新挂载
         </button>
-        <span class="muted" style="font-size: 12px;">连接 NAS 所需的容器权限,发行版镜像已自带</span>
+        <button class="btn sm" @click="fileBrowserOpen = true">
+          <Icon name="folder-open" :size="13" /> 浏览当前媒体库
+        </button>
       </div>
+      <p class="storage-note">
+        应用只访问容器内 <code>{{ storState?.download_root_local || '/downloads' }}</code>。
+        Windows 路径用于部署绑定和本机定位；网页不能绕过 Docker 直接读取任意磁盘。
+      </p>
     </div>
 
     <!-- 通用配置(DB 覆盖 env,改完即时生效) -->
-    <div class="row" style="margin: 8px 0 12px;">
+    <div v-if="groups.length" class="row" style="margin: 8px 0 12px;">
       <h3 style="margin: 0; font-size: 15px;">配置</h3>
       <span class="muted" style="font-size: 12px;">改完点保存即时生效,无需重启</span>
       <div class="spacer" />
@@ -392,6 +522,14 @@ onMounted(() => { load(); loadStorage(); loadVersion() })
             <option value="bitcomet">BitComet</option>
           </select>
           <input v-else-if="it.type === 'int'" type="number" class="input" v-model.number="it.value" />
+          <div v-else-if="isWindowsPathKey(it.key)" class="path-input">
+            <input class="input" v-model="it.value"
+                   :type="it.secret ? 'password' : 'text'"
+                   :placeholder="it.secret ? '已设置(留空不改)' : ''" />
+            <button class="btn sm" type="button" @click="pickWindowsFolder(it.key)">
+              <Icon name="folder-open" :size="13" /> 浏览
+            </button>
+          </div>
           <input v-else class="input" v-model="it.value"
                  :type="it.secret ? 'password' : 'text'"
                  :placeholder="it.secret ? '已设置(留空不改)' : ''" />
@@ -399,28 +537,37 @@ onMounted(() => { load(); loadStorage(); loadVersion() })
       </div>
     </div>
 
-    <!-- 原生播放:协议处理器 -->
-    <div class="card" style="margin-bottom: 12px;">
-      <h4 style="margin: 0 0 8px; color: var(--accent);">原生播放 / 协议处理器</h4>
+    <!-- 本机播放:协议处理器 -->
+    <div v-if="activeSection === 'playback'" class="card" style="margin-bottom: 12px;">
+      <h4 style="margin: 0 0 8px; color: var(--accent);">本机播放与文件定位（默认）</h4>
       <p class="muted" style="font-size: 12.5px; line-height: 1.7;">
-        详情页的「播放 / 打开目录」「PowerDVD」按钮通过自定义协议
-        <code>mikannet://</code> 在你本机拉起默认播放器 / 资源管理器 / PowerDVD。
-        处理器是 Windows 自带的 JScript(经 <code>wscript</code> 运行,<strong>无窗口闪、无需 PowerShell/Python</strong>)。
-        用法:先在上方<strong>「播放」</strong>填好这些文件夹路径,下载下面的安装包<strong>在该 Windows
-        电脑上双击运行</strong>一次(certutil 解码 + 注册协议,无常驻进程、无需管理员)。
-        首次点击时浏览器会问一次「打开 Mikannet?」,勾<strong>「始终允许」</strong>后即免提示。
-        路径变更后重新下载安装即可。仅在装了处理器的本机有效,手机/其他设备无效。
+        详情页“本机播放”会交给 Windows 默认播放器；把视频文件默认应用设为 PotPlayer 后即可直接使用。
+        “打开位置”会调用文件资源管理器并选中对应文件。请先在上方填写这台电脑实际看到的媒体路径。
       </p>
       <div class="row" style="margin-top: 10px;">
         <button class="btn primary sm" @click="downloadHandler">
-          保存配置并下载协议处理器(.bat)
+          保存配置并下载 Windows 集成修复包
         </button>
         <span class="muted" style="font-size: 12px;">{{ cfgSaved }}</span>
+      </div>
+      <p class="muted" style="font-size: 12.5px; line-height: 1.7;">
+        Windows 的 <code>deploy.bat</code> 会自动安装 <code>mikannet://</code> 处理器，无常驻进程。
+        上面的按钮仅用于自动安装失效、路径变化或给另一台电脑补装。
+      </p>
+      <h4 style="margin: 18px 0 8px; color: var(--accent);">网页备用工具</h4>
+      <p class="muted" style="font-size: 12.5px; line-height: 1.7;">
+        在手机、未安装本机集成的电脑或桌面播放器不可用时，可使用网页播放器和网页文件管理。
+        网页播放支持原画 Range 串流及 H.264/AAC 兼容转码。
+      </p>
+      <div class="row" style="margin-top: 10px;">
+        <button class="btn sm" @click="fileBrowserOpen = true">
+          <Icon name="folder-open" :size="13" /> 打开网页备用文件管理
+        </button>
       </div>
     </div>
 
     <!-- 数据备份 / 迁移 -->
-    <div class="card" style="margin-bottom: 12px;">
+    <div v-if="activeSection === 'maintenance'" class="card" style="margin-bottom: 12px;">
       <h4 style="margin: 0 0 8px; color: var(--accent);">数据备份 / 迁移</h4>
       <p class="muted" style="font-size: 12.5px; line-height: 1.7;">
         导出<strong>番剧库 / 订阅 / 剧集 / 下载记录 / 本地文件路径 / BD</strong> 为一个 JSON 备份;
@@ -452,8 +599,8 @@ onMounted(() => { load(); loadStorage(); loadVersion() })
     </div>
 
     <!-- 推送通知 -->
-    <h3 style="margin: 20px 0 10px; font-size: 15px;">推送通知</h3>
-    <div v-for="ch in channels" :key="ch.channel" class="card" style="margin-bottom: 12px;">
+    <h3 v-if="activeSection === 'services'" style="margin: 20px 0 10px; font-size: 15px;">推送通知</h3>
+    <div v-for="ch in (activeSection === 'services' ? channels : [])" :key="ch.channel" class="card" style="margin-bottom: 12px;">
       <div class="row" style="margin-bottom: 12px;">
         <strong>{{ channelMeta[ch.channel]?.name ?? ch.channel }}</strong>
         <label class="row" style="cursor: pointer; gap: 6px;">
@@ -483,10 +630,38 @@ onMounted(() => { load(); loadStorage(); loadVersion() })
         </label>
       </div>
     </div>
+
+    <FileBrowserModal :open="fileBrowserOpen" @close="fileBrowserOpen = false" />
   </div>
 </template>
 
 <style scoped>
+.settings-nav { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 0 0 16px; }
+.settings-tab { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 10px 11px;
+  color: var(--text-dim); background: var(--card); border: 1px solid var(--border);
+  border-radius: 9px; cursor: pointer; text-align: left; }
+.settings-tab span { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.settings-tab strong { color: var(--text); font-size: 12.5px; white-space: nowrap; }
+.settings-tab small { font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-tab:hover { border-color: var(--accent); }
+.settings-tab.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--card)); }
+.settings-tab.on, .settings-tab.on strong { color: var(--accent); }
+.storage-modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
+.storage-modes label { display: flex; justify-content: center; align-items: center; gap: 6px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 8px; padding: 9px; font-size: 12.5px; }
+.storage-modes label.on { color: var(--accent); border-color: var(--accent); background: rgba(246,166,35,.07); }
+.storage-modes input { display: none; }
+.nas-presets { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.nas-presets .muted { font-size: 11.5px; margin-right: 2px; }
+.preset { border: 1px solid var(--border); color: var(--text-dim); background: transparent;
+  border-radius: 20px; padding: 3px 8px; font-size: 11px; cursor: pointer; }
+.preset:hover { color: var(--accent); border-color: var(--accent); }
+.cfg-field.full { grid-column: 1 / -1; }
+.cfg-field small { font-size: 11px; line-height: 1.5; }
+.path-input { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.path-input .input { min-width: 0; flex: 1; }
+.path-input .btn { flex: none; }
+.storage-note { margin: 10px 0 0; color: var(--text-dim); font-size: 11.5px; line-height: 1.6; }
 .changelog { white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.6;
   background: var(--bg-soft, rgba(127,127,127,.08)); border-radius: 6px; padding: 8px 10px;
   max-height: 220px; overflow: auto; margin: 0; }
@@ -502,6 +677,9 @@ onMounted(() => { load(); loadStorage(); loadVersion() })
   margin: -8px 0 14px; font-size: 12.5px;
 }
 @media (max-width: 768px) {
+  .settings-nav { grid-template-columns: 1fr 1fr; }
+  .settings-tab:last-child { grid-column: 1 / -1; }
+  .storage-modes { grid-template-columns: 1fr; }
   .cfg-grid, .cred-grid { grid-template-columns: 1fr; }
   /* 系统状态:标题独占一行,状态标签/按钮换行,不再把「系统状态」挤成竖排 */
   .health-row { flex-wrap: wrap; }

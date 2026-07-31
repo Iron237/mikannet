@@ -55,11 +55,25 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
+set "MK_HANDLER=%TEMP%\mikannet-handler-install.bat"
+echo Installing Windows browser / Explorer integration...
+for /l %%I in (1,1,30) do (
+  curl.exe -fsS --max-time 4 "http://127.0.0.1:8008/api/launch/handler.bat?origin=http://localhost:8008&quiet=true" -o "%MK_HANDLER%" 2>nul
+  if not errorlevel 1 goto handler_ready
+  timeout /t 2 /nobreak >nul
+)
+echo [!] Windows integration was not installed automatically. Retry from Settings later.
+goto handler_done
+:handler_ready
+call "%MK_HANDLER%" >nul
+del "%MK_HANDLER%" >nul 2>&1
+echo [OK] Windows integration installed for this user.
+:handler_done
 echo.
 echo [OK] Mikannet started.
 echo.
 echo   Open  http://localhost:8008  in your browser.
-echo   First time: a SETUP WIZARD walks you through storage (NAS/SMB or local),
+echo   First time: a SETUP WIZARD walks you through storage (local/SMB/NFS),
 echo   downloader, proxy and metadata - all in the web UI, no text files to edit.
 echo.
 echo      Logs:  deploy-win.bat logs

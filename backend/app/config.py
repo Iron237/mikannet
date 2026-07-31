@@ -80,12 +80,16 @@ class Settings(BaseSettings):
     download_root_local: Path = Path("/downloads")
 
     # 存储(首次向导配置;App 在容器内把 NAS/SMB 自挂载到 download_root_local)
-    # storage_mode: "" = compose 托管(旧/dev,App 不挂);"smb" = App 用 mount() 挂载;"local" = 容器内本地路径
+    # storage_mode: "" = compose 托管(旧/dev,App 不挂);"smb"/"nfs" = App 自挂载;
+    # "local" = Docker/compose 已把宿主目录绑定到 /downloads。
     storage_mode: str = ""
+    local_host_path: str = ""     # Windows/Linux 宿主路径(说明/原生映射;容器仍只访问 /downloads)
     smb_host_path: str = ""       # //ip/share
     smb_username: str = ""
     smb_password: str = ""
     smb_vers: str = "3.0"
+    nfs_host_path: str = ""       # host:/export/path
+    nfs_options: str = "vers=4,soft,timeo=30,retrans=2"
     setup_done: bool = False      # 首次配置向导是否完成
 
     # 本地导入源:主机路径前缀 → 容器挂载点(把用户粘贴的 Win/NAS 路径翻译成容器内可见路径)

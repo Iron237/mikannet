@@ -1,7 +1,7 @@
 """资源策略 P0/P1:覆盖语义、内部来源边界、原子换源与自动获取门控。"""
 import pytest
 from fastapi import BackgroundTasks, HTTPException
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from app.api import bangumi as bangumi_api
@@ -99,6 +99,38 @@ def test_library_returns_precise_bd_badge_fields(db, monkeypatch):
     assert row["bd_status"] == "partial"
     assert row["bd_active_eps"] == 1
     assert row["bd_rip"] is True
+
+
+def test_library_query_count_does_not_scale_with_bangumi_count(db, monkeypatch):
+    """封面墙必须批量取数；不能随番剧数量增加成百上千次 SQLite 查询。"""
+    monkeypatch.setattr(bangumi_api, "_file_exists", lambda _path: True)
+    for index in range(12):
+        b = Bangumi(mikan_bangumi_id=1000 + index, title=f"番{index}", eps_total=1)
+        db.add(b)
+        db.flush()
+        sub = _sub(db, b, group=f"g{index}")
+        ep = _ep(db, b, 1)
+        torrent = _torrent(db, sub, f"bulk-{index}")
+        db.add(VideoFile(
+            torrent_id=torrent.id, episode_id=ep.id,
+            relative_path=f"bulk/{index}.mkv", source="Web", is_active=True))
+    db.flush()
+
+    statements = 0
+
+    def count_query(*_args):
+        nonlocal statements
+        statements += 1
+
+    engine = db.get_bind()
+    event.listen(engine, "before_cursor_execute", count_query)
+    try:
+        rows = bangumi_api.library(db)
+    finally:
+        event.remove(engine, "before_cursor_execute", count_query)
+
+    assert len(rows) == 12
+    assert statements <= 5
 
 
 def test_user_can_select_fallback_and_restore_automatic_choice(db):
