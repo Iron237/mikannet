@@ -1,7 +1,7 @@
 """放送进度:_eps_aired(已播/已发布集数)+ _weekly_aired 回归(内存 SQLite)。
 
 覆盖:RSS 最大集号(含 SKIPPED 留痕)、首播日+周更兜底、**已下载下限**(杜绝已播<已下载)、
-封顶 eps_total、非 TV/无总集数 → None。
+封顶 eps_total、总集数未知时按已同步章节放送日/已发布资源判断。
 """
 from datetime import date, timedelta
 
@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.api.bangumi import _eps_aired, _weekly_aired, detail
+from app.api.bangumi import _eps_aired, _weekly_aired, auto_status, detail, resource_issues
 from app.database import Base
 from app.models import (Bangumi, Episode, EpisodeType, Kind, Subscription, Torrent,
                         TorrentEpisode, TorrentStatus, VideoFile)
@@ -102,9 +102,62 @@ def test_aired_capped_to_total(db):
     assert _eps_aired(db, b) == 12
 
 
-def test_aired_none_for_non_tv_or_no_total(db):
+def test_aired_none_for_non_tv(db):
     assert _eps_aired(db, _bangumi(db, kind=Kind.MOVIE)) is None
-    assert _eps_aired(db, _bangumi(db, eps_total=None)) is None
+
+
+def test_aired_unknown_total_uses_synced_dates_and_published_resources(db):
+    """官方总集数未知时:过去的精确放送日算已播,未来集只有资源已发布才算。"""
+    b = _bangumi(db, eps_total=None)
+    sub = _sub(db, b)
+    db.add_all([
+        Episode(bangumi_id=b.id, number=1, type=EpisodeType.REGULAR,
+                bgmtv_ep_id=1001, air_date=(date.today() - timedelta(days=1)).isoformat()),
+        Episode(bangumi_id=b.id, number=2, type=EpisodeType.REGULAR,
+                bgmtv_ep_id=1002, air_date=(date.today() + timedelta(days=1)).isoformat()),
+    ])
+    db.flush()
+
+    assert _eps_aired(db, b) == 1
+    _torrent(db, sub, [2], guid="published-future")
+    assert _eps_aired(db, b) == 2
+
+
+def test_detail_unknown_total_shows_synced_future_chapters(db):
+    """bgm.tv 已建章节必须展示；未来集是待放送，不把章节数冒充 eps_total。"""
+    b = _bangumi(db, eps_total=None)
+    db.add_all([
+        Episode(bangumi_id=b.id, number=1, type=EpisodeType.REGULAR,
+                bgmtv_ep_id=2001, title="已播章节",
+                air_date=(date.today() - timedelta(days=1)).isoformat()),
+        Episode(bangumi_id=b.id, number=2, type=EpisodeType.REGULAR,
+                bgmtv_ep_id=2002, title="未来章节",
+                air_date=(date.today() + timedelta(days=1)).isoformat()),
+    ])
+    db.flush()
+
+    result = detail(b.id, phase="official", db=db)
+    assert result["eps_total"] is None
+    assert [(ep["number"], ep["status"]) for ep in result["episodes"]] == [
+        (1.0, "missing"), (2.0, "scheduled")]
+    assert result["episodes"][1]["title"] == "未来章节"
+    assert detail(b.id, phase="preview", db=db)["episodes"] == []
+
+
+def test_unknown_total_missing_detection_uses_due_synced_chapters(db):
+    """总集数未知也要在自动状态和资源问题中心报告已过放送日的缺集。"""
+    b = _bangumi(db, eps_total=None)
+    db.add(Episode(bangumi_id=b.id, number=1, type=EpisodeType.REGULAR,
+                   bgmtv_ep_id=3001,
+                   air_date=(date.today() - timedelta(days=1)).isoformat()))
+    db.flush()
+
+    status = auto_status(b.id, db=db)
+    assert status["missing"] == [1]
+    issues = resource_issues(verify_files=False, db=db)
+    missing = next(group for group in issues["groups"] if group["key"] == "missing_episodes")
+    assert any(item["bangumi_id"] == b.id and item["episodes"] == [1]
+               for item in missing["items"])
 
 
 def test_detail_does_not_claim_archived_when_file_is_gone(db):

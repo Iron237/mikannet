@@ -55,7 +55,7 @@ async function onImported() {
 }
 const EP_TYPE_OPTS = [['regular', '正片'], ['special', '特别篇'], ['credits', 'OP/ED'], ['trailer', 'PV/预告'], ['other', '其他']]
 const epStatus = {
-  missing: ['未下载', ''], pending: ['等待中', 'blue'], downloading: ['下载中', 'accent'],
+  missing: ['未下载', ''], scheduled: ['待放送', 'blue'], pending: ['等待中', 'blue'], downloading: ['下载中', 'accent'],
   completed: ['待入库', 'blue'], archived: ['已入库', 'green'],
   download_error: ['错误', 'red'], submit_failed: ['失败', 'red'],
 }

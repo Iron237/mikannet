@@ -256,9 +256,8 @@ def _resource_coverage(db: Session, b: Bangumi, include_cleanup: bool = False,
         elif exists:
             fallback.setdefault(num, set()).add(src)
 
-    start = b.ep_start or 1
-    expected = ([float(n) for n in range(start, start + b.eps_total)]
-                if b.kind == Kind.TV and b.eps_total else [])
+    expected = [float(n) for n in _expected_episode_numbers(
+        db, b, verify_files=verify_files)]
     missing = [n for n in expected if n not in active]
     bd = sorted(n for n, src in active.items() if src == "BD")
     web = sorted(n for n, src in active.items() if src == "Web")
@@ -285,7 +284,7 @@ def _resource_coverage(db: Session, b: Bangumi, include_cleanup: bool = False,
         bd_status = "active"
 
     episodes = []
-    numbers = expected or sorted(set(active) | set(fallback))
+    numbers = sorted(set(expected) | set(active) | set(fallback))
     for n in numbers:
         episodes.append({
             "number": int(n) if float(n).is_integer() else n,
@@ -307,7 +306,8 @@ def _resource_coverage(db: Session, b: Bangumi, include_cleanup: bool = False,
                 cleanup_blocked += 1
 
     return {
-        "total": len(expected) or None,
+        # 官方总集数未知时 expected 仅表示「目前已播范围」，不能冒充整季总数。
+        "total": b.eps_total if b.kind == Kind.TV else (len(expected) or None),
         "bd": [int(n) if n.is_integer() else n for n in bd],
         "web": [int(n) if n.is_integer() else n for n in web],
         "unknown": [int(n) if n.is_integer() else n for n in unknown],
@@ -381,10 +381,12 @@ def _eps_aired(db: Session, b: Bangumi, verify_files: bool = False) -> int | Non
     """已播/已发布集数(真实更新情况):取该番**所有种子**(含 SKIPPED 留痕)`parsed_json`
     解析出的最大正片集号 = 真实「种子已出到第几集」;没见过种子时按首播日 + 周更推算。封顶到总集数。
 
-    仅 TV 且有总集数才有「已播集」概念;算不出(无种子且无首播日)→ None(前端退回只显已下载)。
+    TV 总集数未知时仍可判断:已发布资源最大集号 + 已下载下限 + bgm.tv 精确章节
+    放送日(严格早于今天；当天仍显示待放送，避免日间提前报缺)。有官方总集数时才封顶。
+    算不出(无资源、无章节日期且无首播日)→ None(前端退回只显已下载)。
     SKIPPED 种子不建 torrent_episode 映射,故必须读 parsed_json 而非 Episode 表。
     """
-    if not b.eps_total or b.kind != Kind.TV:
+    if b.kind != Kind.TV:
         return None
     start = b.ep_start or 1
     seen = 0   # 已播「第几集」(数量口径,1..eps_total)
@@ -400,11 +402,44 @@ def _eps_aired(db: Session, b: Bangumi, verify_files: bool = False) -> int | Non
                 seen = max(seen, int(float(e)) - (offset or 0) - (start - 1))
             except (TypeError, ValueError):
                 continue
-    if seen == 0:
+    # 精确章节日期优先于「首播日 + 周更」外推。日本深夜番常把周四 24:30
+    # 记作周四日期，故只把早于今天的章节判为已播；当天若资源已发布，上面的种子
+    # 最大集号会即时纳入。
+    from datetime import date
+    dated_rows = db.execute(select(Episode.number, Episode.air_date).where(
+        Episode.bangumi_id == b.id, Episode.type == EpisodeType.REGULAR,
+        Episode.number.is_not(None), Episode.air_date.is_not(None))).all()
+    today = date.today()
+    for number, air_date in dated_rows:
+        try:
+            aired_on = date.fromisoformat(air_date[:10].replace("/", "-"))
+            if aired_on < today:
+                seen = max(seen, int(float(number)) - (start - 1))
+        except (TypeError, ValueError):
+            continue
+    if seen == 0 and not dated_rows:
         seen = _weekly_aired(b.air_date)
     # 已下载的正式集必然已播 → 下限(只用正式流数,先行集齐不代表官方播过)
     seen = max(seen, _eps_done(db, b, official_only=True, verify_files=verify_files))
-    return min(seen, b.eps_total) if seen > 0 else None
+    if seen <= 0:
+        return None
+    return min(seen, b.eps_total) if b.eps_total else seen
+
+
+def _expected_episode_numbers(db: Session, b: Bangumi,
+                              verify_files: bool = False) -> list[int]:
+    """资源覆盖/缺集检测使用的正片编号。
+
+    有官方总集数时返回整季区间；未知时只返回当前可证明已播/已发布的区间。
+    已同步但尚未放送的未来章节只在详情页展示，不提前进入缺集列表。
+    """
+    if b.kind != Kind.TV:
+        return []
+    start = b.ep_start or 1
+    if b.eps_total:
+        return list(range(start, start + b.eps_total))
+    aired = _eps_aired(db, b, verify_files=verify_files)
+    return list(range(start, start + aired)) if aired else []
 
 
 def _has_source(db: Session, bangumi_id: int, source: str) -> bool:
@@ -689,6 +724,8 @@ def _has_phase(db: Session, bangumi_id: int, is_preview: bool) -> bool:
 
 @router.get("/{bangumi_id}")
 def detail(bangumi_id: int, phase: str | None = None, db: Session = Depends(get_db)):
+    from datetime import date
+
     b = db.get(Bangumi, bangumi_id)
     if not b:
         raise HTTPException(404)
@@ -720,8 +757,12 @@ def detail(bangumi_id: int, phase: str | None = None, db: Session = Depends(get_
                    Torrent.is_preview.is_(want_preview))
             .order_by(VideoFile.relative_path)).scalars().all()
         ep_files = [f for f in ep_files if _file_exists(f.relative_path)]
-        if current is None and not ep_files:
-            continue   # 这一集在当前阶段无任何内容 → 不列(正式阶段下面按总集数补缺占位)
+        synced_chapter = (
+            not want_preview and ep.type == EpisodeType.REGULAR
+            and ep.bgmtv_ep_id is not None
+        )
+        if current is None and not ep_files and not synced_chapter:
+            continue   # 非 bgm.tv 章节且当前阶段无任何内容 → 不列
         # 历史任务可能仍是 ARCHIVED,但文件记录已被删除/迁移扫描清掉。详情状态必须以实际
         # active 文件为准,否则会显示「已入库」却没有播放/打开目录按钮。
         archived_without_file = (
@@ -729,12 +770,23 @@ def detail(bangumi_id: int, phase: str | None = None, db: Session = Depends(get_
             and current.status == TorrentStatus.ARCHIVED
             and not ep_files
         )
+        empty_synced_status = "missing"
+        if synced_chapter and current is None and not ep_files:
+            # 无日期通常也是尚未排期的预建章节；有日期则当天仍视为待放送，避免
+            # 日本深夜番「周四 24:30」在周四白天被提前标成缺集。
+            empty_synced_status = "scheduled"
+            if ep.air_date:
+                try:
+                    if date.fromisoformat(ep.air_date[:10].replace("/", "-")) < date.today():
+                        empty_synced_status = "missing"
+                except ValueError:
+                    pass
         eps_out.append({
             "id": ep.id, "number": ep.number, "type": ep.type.value, "title": ep.title,
             "air_date": ep.air_date,   # 每集精确放送日(bgm.tv 章节同步)
             "status": "missing" if archived_without_file
                       else (current.status.value if current else
-                            ("archived" if ep_files else "missing")),
+                            ("archived" if ep_files else empty_synced_status)),
             "version": None if archived_without_file else (current.version if current else None),
             "torrent_id": None if archived_without_file else (current.id if current else None),
             "files": [_file_out(f) for f in ep_files],
@@ -750,7 +802,7 @@ def detail(bangumi_id: int, phase: str | None = None, db: Session = Depends(get_
         for n in range(_start, _start + b.eps_total):
             if float(n) not in known_numbers:
                 regular.append({"id": None, "number": float(n), "type": "regular", "title": None,
-                                "status": "missing", "version": None,
+                                "air_date": None, "status": "missing", "version": None,
                                 "torrent_id": None, "files": []})
         regular.sort(key=lambda e: (e["number"] is None, e["number"]))
         eps_out = regular + others
@@ -949,16 +1001,16 @@ def auto_status(bangumi_id: int, db: Session = Depends(get_db)):
                         .where(TorrentEpisode.torrent_id == t.id,
                                Episode.number.is_not(None))).scalars():
                     in_flight_eps.add(te)
-    # 缺集(bangumi 编号):区间内没有 active 正片文件的集
+    # 缺集(bangumi 编号):官方总集数未知时也按可证明已播/已发布的范围检查。
     missing: list = []
-    if b.eps_total and b.kind == Kind.TV:
+    expected = _expected_episode_numbers(db, b)
+    if expected:
         have = {n for n in db.execute(
             select(Episode.number).join(VideoFile, VideoFile.episode_id == Episode.id)
             .where(Episode.bangumi_id == b.id, Episode.type == EpisodeType.REGULAR,
                    VideoFile.is_active.is_(True), Episode.number.is_not(None))
             .distinct()).scalars()}
-        start = b.ep_start or 1
-        missing = [n for n in range(start, start + b.eps_total) if float(n) not in have]
+        missing = [n for n in expected if float(n) not in have]
     scanning = bool(auto_best.state.get("running")) and (
         auto_best.state.get("current") == b.title or auto_best.state.get("total", 0) > 1)
     next_run = None
