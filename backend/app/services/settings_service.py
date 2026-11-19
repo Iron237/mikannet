@@ -22,6 +22,7 @@ EDITABLE: dict[str, tuple[str, type, bool]] = {
     # 常规
     "poll_interval_min": ("常规", int, False),
     "tmdb_api_key": ("常规", str, True),
+    "danmaku_auto_download": ("弹幕", bool, False),
     "dandanplay_app_id": ("弹幕", str, False),
     "dandanplay_app_secret": ("弹幕", str, True),
     # 下载器

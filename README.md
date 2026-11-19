@@ -51,6 +51,8 @@ docker compose up -d --build
 
 在「设置 → 网络与元数据 → 弹幕」填写自有的弹弹play AppId 和 AppSecret。打开番剧详情，展开剧集，在对应文件旁点「下载弹幕」，核对番名与集名后可保存同名 XML 到视频旁，或下载到浏览器。节目匹配支持文件指纹和手动搜索，已有同名 XML 会保留。服务来自[弹弹play开放弹幕网络](https://www.dandanplay.com/)，凭据可在[开发者中心](https://dev.dandanplay.com/)申请。
 
+配置好弹弹play凭据后，新订阅单集首次入库及从详情页播放视频时会自动尝试匹配；唯一精确匹配且有弹幕时保存同名 XML。需要自行选集时可使用「下载弹幕」。可在弹幕设置中关闭自动下载。
+
 ## 网页一键自更新
 
 设置页「更新」区可检查并一键更新,全程自动(下载 → 校验 → 应用 → 重启 → 重连)。架构与权衡详见 **[docs/adr/0005-self-update-architecture.md](docs/adr/0005-self-update-architecture.md)**。两类更新:

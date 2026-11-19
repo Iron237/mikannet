@@ -8,7 +8,6 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -18,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.clients import dandanplay
-from app.services.file_publish import rename_new
+from app.services import danmaku
 from app.database import get_db
 from app.models import Episode, EpisodeType, Torrent, VideoFile
 
@@ -99,20 +98,14 @@ def save_danmaku(file_id: int, selection: DanmakuSelection, browser: bool = Fals
     if browser:
         return Response(data, media_type="application/xml", headers={
             "Content-Disposition": "attachment; filename*=UTF-8''" + quote(xml.name, safe="")})
-    staged = xml.parent / f".mikannet-danmaku-{uuid4().hex}.part"
-    try:
-        output = staged.open("xb")
-        try:
-            with output:
-                output.write(data)
-            rename_new(staged, xml)
-        finally:
-            staged.unlink(missing_ok=True)
-    except FileExistsError as exc:
-        raise HTTPException(409, "同名 XML 已存在，请重新打开弹幕窗口查看") from exc
-    except OSError as exc:
-        raise HTTPException(409, "媒体目录写入失败，可选择下载到浏览器") from exc
+    danmaku.publish(xml, data)
     return {"count": count, "existing": _existing_xml(video)}
+
+
+@router.post("/{file_id}/danmaku/auto")
+def auto_danmaku(file_id: int, db: Session = Depends(get_db)):
+    vf, video = _video_file(file_id, db)
+    return danmaku.fetch_available(video, vf.original_name)
 
 
 @router.get("/unassigned")

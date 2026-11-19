@@ -15,6 +15,7 @@ const loadError = ref('')
 
 const LABELS = {
   poll_interval_min: 'RSS 轮询间隔(分钟)',
+  danmaku_auto_download: '自动下载精确匹配的单集弹幕',
   dandanplay_app_id: '弹弹play AppId', dandanplay_app_secret: '弹弹play AppSecret',
   tmdb_api_key: 'TMDB API Key',
   downloader: '下载器后端',

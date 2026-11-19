@@ -110,6 +110,7 @@ def process_torrent(db: Session, torrent_id: int) -> None:
     t = db.get(Torrent, torrent_id)
     if t is None or t.status not in (TorrentStatus.COMPLETED, TorrentStatus.ARCHIVED):
         return
+    first_archive = t.status == TorrentStatus.COMPLETED
     try:
         dl_files = downloader.files(t.info_hash)
     except Exception as e:  # noqa: BLE001
@@ -237,6 +238,19 @@ def process_torrent(db: Session, torrent_id: int) -> None:
     except Exception:  # noqa: BLE001 — 生命周期失败不影响后处理结果
         db.rollback()
         log.exception("后处理生命周期处理失败 #%s", t.id)
+
+    if first_archive and settings.danmaku_auto_download and not t.is_batch and not t.is_preview:
+        from app.clients import dandanplay
+        from app.services.danmaku import fetch_available
+        if dandanplay.configured() and t.subscription and t.subscription.mikan_subgroup_id not in ("local", "auto"):
+            active = [f for f in t.files if f.is_active and f.episode_id]
+            if len(active) == 1:
+                file = active[0]
+                try:
+                    result = fetch_available(settings.download_root_local / file.relative_path, file.original_name)
+                    log.info("单集自动弹幕 #%s: %s", file.id, result["status"])
+                except Exception:
+                    log.exception("单集自动弹幕失败 #%s", file.id)
 
 
 def _worker() -> None:

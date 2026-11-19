@@ -124,3 +124,21 @@ def test_empty_comments_and_missing_credentials(provider, monkeypatch):
     assert err.value.status_code == 404
     monkeypatch.setattr(settings, "dandanplay_app_secret", "")
     assert not dandanplay.match(Path("never-opened.mkv"), None)["configured"]
+
+
+def test_auto_fetch_requires_exact_match_and_keeps_existing_xml(provider, monkeypatch, tmp_path):
+    from app.services.danmaku import fetch_available
+    monkeypatch.setattr(settings, "download_root_local", tmp_path)
+    video = tmp_path / "S02E01.mkv"
+    video.touch()
+    choice = {"episode_id": 123, "shift": 0.0}
+    result = {"choices": [choice], "exact": False}
+    monkeypatch.setattr(dandanplay, "match", lambda *args: result)
+    monkeypatch.setattr(dandanplay, "download", lambda *args: (b"<i/>", 1))
+    assert fetch_available(video, None)["status"] == "needs_selection"
+    assert not video.with_suffix(".xml").exists()
+    result["exact"] = True
+    assert fetch_available(video, None) == {"status": "saved", "count": 1}
+    assert fetch_available(video, None)["status"] == "existing"
+    monkeypatch.setattr(settings, "danmaku_auto_download", False)
+    assert fetch_available(video, None)["status"] == "disabled"

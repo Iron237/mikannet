@@ -109,6 +109,7 @@ class Settings(BaseSettings):
     auto_dl_interval_min: int = 360      # 定期智能扫描间隔(分钟);0=关闭定期,仅手动
 
     # 元数据
+    danmaku_auto_download: bool = True
     dandanplay_app_id: str = ""
     dandanplay_app_secret: str = ""
     tmdb_api_key: str = ""

@@ -154,7 +154,25 @@ async function reprobeFile(f) {
 // 默认交互走 Windows：播放交给系统默认播放器，定位交给资源管理器。
 // url 为空时弹出路径配置引导；网页播放器/文件管理只作为备用。
 function native(url) { requestNative(url) }
-function webPlay(file) { if (file?.stream_url) playerFile.value = file }
+async function prepareDanmaku(file) {
+  try {
+    const result = await api.post(`/api/files/${file.id}/danmaku/auto`)
+    const messages = { needs_selection: '弹幕需要手动选集，可点击「下载弹幕」。',
+      unconfigured: '自动弹幕需要先在设置中填写弹弹play凭据。', empty: '这集暂无可用弹幕。' }
+    if (result.status === 'saved') opMsg.value = `已自动保存 ${result.count} 条弹幕。`
+    else if (messages[result.status]) opMsg.value = messages[result.status]
+  } catch (e) { opMsg.value = '自动弹幕：' + e.message }
+}
+function nativePlay(file) {
+  native(file.play_url)
+  if (file.play_url) prepareDanmaku(file)
+}
+function webPlay(file) {
+  if (file?.stream_url) {
+    playerFile.value = file
+    prepareDanmaku(file)
+  }
+}
 function browseFile(file) {
   const parts = (file?.path || '').split('/')
   parts.pop()
@@ -454,7 +472,7 @@ onUnmounted(() => { mounted = false })
             <Icon name="refresh" :size="12" /> {{ ep.status === 'completed' ? '重试入库' : '重试下载' }}
           </button>
           <template v-if="ep.files.length">
-            <button class="btn xs primary" title="使用 Windows 默认播放器（如 PotPlayer）" @click.stop="native(ep.files[0].play_url)">
+            <button class="btn xs primary" title="使用 Windows 默认播放器（如 PotPlayer）" @click.stop="nativePlay(ep.files[0])">
               <Icon name="play" :size="12" /> 本机播放
             </button>
             <button class="btn xs" title="在 Windows 文件资源管理器中定位文件" @click.stop="native(ep.files[0].reveal_url)">
@@ -468,7 +486,7 @@ onUnmounted(() => { mounted = false })
           <div v-for="f in ep.files" :key="f.id" class="file">
             <FileTags :file="f" :show-path="true" />
             <div class="file-ops">
-              <button class="btn xs primary" title="使用 Windows 默认播放器（如 PotPlayer）" @click="native(f.play_url)"><Icon name="play" :size="12" /> 本机播放</button>
+              <button class="btn xs primary" title="使用 Windows 默认播放器（如 PotPlayer）" @click="nativePlay(f)"><Icon name="play" :size="12" /> 本机播放</button>
               <button class="btn xs" title="在 Windows 文件资源管理器中定位文件" @click="native(f.reveal_url)"><Icon name="folder-open" :size="12" /> 打开位置</button>
               <button type="button" class="btn xs" :disabled="f.exists === false" @click="danmaku = { file: f, number: ep.type === 'regular' ? ep.number : null }">下载弹幕</button>
               <button class="btn xs" title="浏览器兼容备用播放" @click="webPlay(f)"><Icon name="external" :size="12" /> 网页备用</button>
@@ -501,7 +519,7 @@ onUnmounted(() => { mounted = false })
         <div v-for="f in b.unmapped_files" :key="'u' + f.id" class="card file unmapped">
           <FileTags :file="f" :show-path="true" />
           <div class="file-ops">
-            <button class="btn xs primary" title="使用 Windows 默认播放器（如 PotPlayer）" @click="native(f.play_url)"><Icon name="play" :size="12" /> 本机播放</button>
+            <button class="btn xs primary" title="使用 Windows 默认播放器（如 PotPlayer）" @click="nativePlay(f)"><Icon name="play" :size="12" /> 本机播放</button>
             <button class="btn xs" title="在 Windows 文件资源管理器中定位文件" @click="native(f.reveal_url)"><Icon name="folder-open" :size="12" /> 打开位置</button>
             <button type="button" class="btn xs" :disabled="f.exists === false" @click="danmaku = { file: f, number: null }">下载弹幕</button>
             <button class="btn xs" title="浏览器兼容备用播放" @click="webPlay(f)"><Icon name="external" :size="12" /> 网页备用</button>
