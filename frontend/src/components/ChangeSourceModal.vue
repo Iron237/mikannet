@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../api'
+import GroupRecommendation from './GroupRecommendation.vue'
 import Icon from './Icon.vue'
 import RulePreview from './RulePreview.vue'
 
@@ -17,7 +18,7 @@ const saving = ref(false)
 const error = ref('')
 const preview = ref({ pass: -1, total: 0, error: '' })
 const groups = computed(() =>
-  (detail.value?.subgroups || []).filter(g => String(g.subgroup_id) !== String(props.sub.mikan_subgroup_id)))
+  (detail.value?.subgroups || []).filter(g => !g.subscribed && String(g.subgroup_id) !== String(props.sub.mikan_subgroup_id)))
 
 async function load() {
   try {
@@ -60,12 +61,14 @@ onMounted(load)
       <p v-if="error" class="err"><Icon name="alert" :size="13" /> {{ error }}</p>
       <div v-if="loading" class="muted body">正在加载可用字幕组…</div>
       <template v-else>
-        <div class="group-grid">
+        <p v-if="!groups.length" class="muted body">没有其他可切换的未订阅字幕组。</p>
+        <div v-else class="group-grid">
           <button v-for="g in groups" :key="g.subgroup_id" class="group"
                   :class="{ on: selected?.subgroup_id === g.subgroup_id }"
                   @click="selected = g; preview = { pass: -1, total: 0, error: '' }">
             <span class="row"><strong>{{ g.name }}</strong><span class="spacer" />
               <span class="tag">{{ g.torrent_count }} 个源</span></span>
+            <GroupRecommendation :result="g.recommendation" />
             <span class="caps">
               <span v-for="r in g.caps?.resolutions || []" :key="'r'+r" class="tag blue">{{ r }}</span>
               <span v-for="l in g.caps?.subtitle_langs || []" :key="'l'+l" class="tag green">{{ l }}</span>

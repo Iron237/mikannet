@@ -109,6 +109,8 @@ class Settings(BaseSettings):
     auto_dl_interval_min: int = 360      # 定期智能扫描间隔(分钟);0=关闭定期,仅手动
 
     # 元数据
+    dandanplay_app_id: str = ""
+    dandanplay_app_secret: str = ""
     tmdb_api_key: str = ""
 
     # 文件整理(qB 原地重命名成 Jellyfin 结构)+ NFO/封面落盘(改 ADR-0001)

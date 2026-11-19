@@ -22,6 +22,8 @@ EDITABLE: dict[str, tuple[str, type, bool]] = {
     # 常规
     "poll_interval_min": ("常规", int, False),
     "tmdb_api_key": ("常规", str, True),
+    "dandanplay_app_id": ("弹幕", str, False),
+    "dandanplay_app_secret": ("弹幕", str, True),
     # 下载器
     "downloader": ("下载器", str, False),
     "qb_host": ("下载器", str, False),

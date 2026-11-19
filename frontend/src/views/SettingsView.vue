@@ -15,6 +15,7 @@ const loadError = ref('')
 
 const LABELS = {
   poll_interval_min: 'RSS 轮询间隔(分钟)',
+  dandanplay_app_id: '弹弹play AppId', dandanplay_app_secret: '弹弹play AppSecret',
   tmdb_api_key: 'TMDB API Key',
   downloader: '下载器后端',
   qb_host: 'qB 地址', qb_port: 'qB 端口', qb_username: 'qB 用户名', qb_password: 'qB 密码',
@@ -55,12 +56,12 @@ const sections = [
 ]
 const activeSection = ref('common')
 const GROUP_ORDER = ['常规', '下载器', '自动补全与升级', '整理', '坏种清理',
-  '播放', '代理', '搜索源', 'bgm.tv 联动', 'AniDB', 'LLM']
+  '播放', '代理', '搜索源', 'bgm.tv 联动', 'AniDB', 'LLM', '弹幕']
 const SECTION_GROUPS = {
   common: ['常规', '下载器'],
   automation: ['自动补全与升级', '整理', '坏种清理'],
   playback: ['播放'],
-  services: ['代理', '搜索源', 'bgm.tv 联动', 'AniDB', 'LLM'],
+  services: ['代理', '搜索源', 'bgm.tv 联动', 'AniDB', 'LLM', '弹幕'],
   maintenance: [],
 }
 
@@ -575,6 +576,7 @@ onMounted(() => { load(); loadStorage(); loadVersion() })
     </div>
     <div v-for="g in groups" :key="g.group" class="card" style="margin-bottom: 12px;">
       <h4 style="margin: 0 0 12px; color: var(--accent);">{{ g.group }}</h4>
+      <p v-if="g.group === '弹幕'" class="muted">单集匹配与下载由弹弹play开放弹幕网络提供。<a href="https://dev.dandanplay.com/" target="_blank" rel="noopener noreferrer">申请应用凭据</a></p>
       <div class="cfg-grid">
         <label v-for="it in g.items" :key="it.key" class="cfg-field"
                :class="{ toggle: it.type === 'bool' }">

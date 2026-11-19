@@ -45,6 +45,12 @@ docker compose up -d --build
 2. 修改 `docker-compose.yml` 的 `downloads` 卷:删掉 CIFS `driver_opts`,改为 NAS 本地路径绑定
 3. NAS 上 `docker compose up -d`,启动对账会自动校正任务状态
 
+## 字幕组推荐与单集弹幕
+
+订阅向导及更换订阅源时会按当前目标分辨率和字幕语言比较各组。追更推荐比较近 28 天的正片单集更新数和最近更新日期。补番推荐优先考虑符合偏好的正片覆盖集数，再比较单集发布覆盖、偏好的 BD 版本及最近发布日期。相同集数的修订与多种封装只计一次。偏好在「设置 → 订阅与自动化」调整。
+
+在「设置 → 网络与元数据 → 弹幕」填写自有的弹弹play AppId 和 AppSecret。打开番剧详情，展开剧集，在对应文件旁点「下载弹幕」，核对番名与集名后可保存同名 XML 到视频旁，或下载到浏览器。节目匹配支持文件指纹和手动搜索，已有同名 XML 会保留。服务来自[弹弹play开放弹幕网络](https://www.dandanplay.com/)，凭据可在[开发者中心](https://dev.dandanplay.com/)申请。
+
 ## 网页一键自更新
 
 设置页「更新」区可检查并一键更新,全程自动(下载 → 校验 → 应用 → 重启 → 重连)。架构与权衡详见 **[docs/adr/0005-self-update-architecture.md](docs/adr/0005-self-update-architecture.md)**。两类更新:

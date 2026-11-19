@@ -8,13 +8,17 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse, Response, StreamingResponse
+from pydantic import BaseModel, Field, FiniteFloat
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.clients import dandanplay
+from app.services.file_publish import rename_new
 from app.database import get_db
 from app.models import Episode, EpisodeType, Torrent, VideoFile
 
@@ -45,6 +49,70 @@ def _video_file(file_id: int, db: Session) -> tuple[VideoFile, Path]:
     if not path.is_file():
         raise HTTPException(404, "物理文件不存在")
     return vf, path
+
+
+def _existing_xml(video: Path) -> str | None:
+    xml = video.with_suffix(".xml")
+    if xml.is_symlink() or (xml.exists() and not xml.is_file()):
+        raise HTTPException(409, "同名 XML 路径不是普通文件")
+    if xml.is_file():
+        rel = xml.relative_to(settings.download_root_local.resolve()).as_posix()
+        return f"/api/files/content?download=true&path={quote(rel, safe='')}"
+    return None
+
+
+@router.get("/{file_id}/danmaku/matches")
+def danmaku_matches(file_id: int, db: Session = Depends(get_db)):
+    vf, video = _video_file(file_id, db)
+    existing = _existing_xml(video)
+    if existing:
+        return {"existing": existing, "configured": dandanplay.configured(), "choices": [], "exact": False}
+    try:
+        return {"existing": None, **dandanplay.match(video, vf.original_name)}
+    except OSError as exc:
+        raise HTTPException(409, "无法读取视频以匹配弹幕") from exc
+
+
+@router.get("/{file_id}/danmaku/search")
+def danmaku_search(file_id: int, anime: str = Query(min_length=2, max_length=160),
+                   episode: str = Query("", pattern=r"^(?:[CSO]?[1-9][0-9]{0,4})?$"),
+                   db: Session = Depends(get_db)):
+    _video_file(file_id, db)
+    if len(anime.strip()) < 2:
+        raise HTTPException(400, "番名至少需要两个字符")
+    return {"choices": dandanplay.search(anime.strip(), episode)}
+
+
+class DanmakuSelection(BaseModel):
+    episode_id: int = Field(gt=0, le=2**63-1)
+    shift: FiniteFloat = 0
+
+
+@router.post("/{file_id}/danmaku")
+def save_danmaku(file_id: int, selection: DanmakuSelection, browser: bool = False,
+                 db: Session = Depends(get_db)):
+    _, video = _video_file(file_id, db)
+    xml = video.with_suffix(".xml")
+    if not browser and _existing_xml(video):
+        raise HTTPException(409, "同名 XML 已存在，请重新打开弹幕窗口查看")
+    data, count = dandanplay.download(selection.episode_id, selection.shift)
+    if browser:
+        return Response(data, media_type="application/xml", headers={
+            "Content-Disposition": "attachment; filename*=UTF-8''" + quote(xml.name, safe="")})
+    staged = xml.parent / f".mikannet-danmaku-{uuid4().hex}.part"
+    try:
+        output = staged.open("xb")
+        try:
+            with output:
+                output.write(data)
+            rename_new(staged, xml)
+        finally:
+            staged.unlink(missing_ok=True)
+    except FileExistsError as exc:
+        raise HTTPException(409, "同名 XML 已存在，请重新打开弹幕窗口查看") from exc
+    except OSError as exc:
+        raise HTTPException(409, "媒体目录写入失败，可选择下载到浏览器") from exc
+    return {"count": count, "existing": _existing_xml(video)}
 
 
 @router.get("/unassigned")

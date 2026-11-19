@@ -36,6 +36,7 @@ DATA_MODELS = [Bangumi, AutoScanLog, Subscription, Episode, Torrent, TorrentEpis
 # 设置迁移:导出 EDITABLE 的「生效值」(含 .env 配的,如 tmdb_api_key 也能带走),
 # 但排除「本机/连接相关、由首次向导各机自配」的项,避免导入把新机的配置覆盖回旧机的。
 _SETTING_DENYLIST = {
+    "dandanplay_app_secret", "dandanplay_app_id",
     "qb_host", "qb_port", "qb_username", "qb_password", "download_root", "proxy_url",
     "bitcomet_host", "bitcomet_port", "bitcomet_username", "bitcomet_password",
     "bitcomet_download_root",

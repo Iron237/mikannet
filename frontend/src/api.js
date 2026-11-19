@@ -1,4 +1,4 @@
-async function request(method, url, body, signal) {
+async function request(method, url, body, signal, blob = false) {
   const opts = { method, headers: {}, signal }
   if (body !== undefined) {
     opts.headers['Content-Type'] = 'application/json'
@@ -11,12 +11,13 @@ async function request(method, url, body, signal) {
     throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail))
   }
   if (res.status === 204) return null
-  return res.json()
+  return blob ? res.blob() : res.json()
 }
 
 export const api = {
   get: (url, signal) => request('GET', url, undefined, signal),
   post: (url, body) => request('POST', url, body),
+  postBlob: (url, body) => request('POST', url, body, undefined, true),
   put: (url, body) => request('PUT', url, body),
   patch: (url, body) => request('PATCH', url, body),
   delete: (url) => request('DELETE', url),

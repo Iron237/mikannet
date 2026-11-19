@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, fmtSize } from '../api'
 import RulePreview from './RulePreview.vue'
+import GroupRecommendation from './GroupRecommendation.vue'
 import Icon from './Icon.vue'
 import Chips from './Chips.vue'
 import BdImportWizard from './BdImportWizard.vue'
@@ -197,6 +198,7 @@ onMounted(() => {
               <span v-if="g.subscribed" class="tag">{{ g.subscription_enabled ? '已订阅' : '已订阅 · 已停用' }}</span>
             </div>
             <!-- 能力摘要:该组发布过的分辨率/字幕语言/片源/有无合集 -->
+            <GroupRecommendation :result="g.recommendation" />
             <div v-if="g.caps" class="caps">
               <span v-for="r in g.caps.resolutions" :key="'r' + r" class="tag blue">{{ r }}</span>
               <span v-for="l in g.caps.subtitle_langs" :key="'l' + l" class="tag green">{{ l }}</span>

@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.clients.mikan import mikan_client
 from app.config import settings
+from app.services.subgroup_recommendation import matches_language, publication_order
 from app.database import db_session
 from app.models import (AutoScanLog, Bangumi, Episode, EpisodeType, Subscription, Torrent,
                         TorrentEpisode, TorrentStatus, VideoFile)
@@ -47,17 +48,6 @@ def normalize_mode(value: str | None) -> str:
 
 def _source_rank(source: str | None) -> int:
     return _SOURCE_RANK.get(source, 2)
-
-
-def _has_pref_sub(title: str) -> bool:
-    """严格字幕:标题须含偏好语言。简中=含简体(简体/简日/简繁/简繁日);繁中=含繁体。"""
-    want = (settings.auto_dl_sub_lang or "简中").strip()
-    tags = detect_subtitle_tags(title)
-    if "简" in want:
-        return any("简" in t for t in tags)
-    if "繁" in want:
-        return any("繁" in t for t in tags)
-    return True
 
 
 _SIZE_RE = re.compile(r"([\d.]+)\s*(TB|GB|MB|KB)", re.I)
@@ -89,17 +79,6 @@ def _quality_score(title: str) -> int:
     return score
 
 
-_PUB_RE = re.compile(r"(\d{4})[/\-年.](\d{1,2})[/\-月.](\d{1,2})")
-
-
-def _pub_ord(published: str | None) -> int:
-    """发布时间 → 可排序整数(YYYYMMDD)。蜜柑不给做种数,用发布越新≈种子越活作可用性代理。"""
-    m = _PUB_RE.search(published or "")
-    if not m:
-        return 0
-    return int(m.group(1)) * 10000 + int(m.group(2)) * 100 + int(m.group(3))
-
-
 def _candidate(subgroup_id: str, subgroup_name: str | None, st) -> dict | None:
     """字幕组种子 → 候选(严格过滤:分辨率必须等于目标 + 含偏好字幕);不合格返回 None。"""
     if not st.torrent_url:
@@ -112,7 +91,7 @@ def _candidate(subgroup_id: str, subgroup_name: str | None, st) -> dict | None:
         return None
     if p.resolution != (settings.auto_dl_resolution or "1080p"):
         return None
-    if not _has_pref_sub(st.title):
+    if not matches_language(detect_subtitle_tags(st.title), settings.auto_dl_sub_lang or "简中"):
         return None
     # 番剧页给的是相对链接(/Download/...torrent)→ 存成绝对 URL
     url = st.torrent_url
@@ -124,7 +103,7 @@ def _candidate(subgroup_id: str, subgroup_name: str | None, st) -> dict | None:
         "episodes": [int(e) for e in p.episodes if float(e).is_integer()],
         "is_batch": p.is_batch, "source": p.source, "version": p.version,
         "quality": _quality_score(st.title), "size": _size_bytes(getattr(st, "size", None)),
-        "pub": _pub_ord(getattr(st, "published", None)),
+        "pub": publication_order(getattr(st, "published", None)),
     }
 
 

@@ -11,6 +11,7 @@ import SubscribeWizard from '../components/SubscribeWizard.vue'
 import EditSubscriptionModal from '../components/EditSubscriptionModal.vue'
 import ChangeSourceModal from '../components/ChangeSourceModal.vue'
 import ResourceStrategyCard from '../components/ResourceStrategyCard.vue'
+import DanmakuDialog from '../components/DanmakuDialog.vue'
 import MediaPlayerModal from '../components/MediaPlayerModal.vue'
 import FileBrowserModal from '../components/FileBrowserModal.vue'
 
@@ -41,6 +42,7 @@ const editForm = ref({ type: 'regular', number: '' })
 const delFile = ref(null)        // 待删文件
 const delFileDisk = ref(false)
 const playerFile = ref(null)
+const danmaku = ref(null)
 const browserOpen = ref(false)
 const browserPath = ref('')
 
@@ -468,6 +470,7 @@ onUnmounted(() => { mounted = false })
             <div class="file-ops">
               <button class="btn xs primary" title="使用 Windows 默认播放器（如 PotPlayer）" @click="native(f.play_url)"><Icon name="play" :size="12" /> 本机播放</button>
               <button class="btn xs" title="在 Windows 文件资源管理器中定位文件" @click="native(f.reveal_url)"><Icon name="folder-open" :size="12" /> 打开位置</button>
+              <button type="button" class="btn xs" :disabled="f.exists === false" @click="danmaku = { file: f, number: ep.type === 'regular' ? ep.number : null }">下载弹幕</button>
               <button class="btn xs" title="浏览器兼容备用播放" @click="webPlay(f)"><Icon name="external" :size="12" /> 网页备用</button>
               <button class="btn xs" title="网页内浏览媒体目录" @click="browseFile(f)"><Icon name="folder" :size="12" /> 网页管理</button>
               <button class="btn xs" :disabled="fileBusy === f.id" @click="reprobeFile(f)"><Icon name="refresh" :size="12" /> 重探测</button>
@@ -500,6 +503,7 @@ onUnmounted(() => { mounted = false })
           <div class="file-ops">
             <button class="btn xs primary" title="使用 Windows 默认播放器（如 PotPlayer）" @click="native(f.play_url)"><Icon name="play" :size="12" /> 本机播放</button>
             <button class="btn xs" title="在 Windows 文件资源管理器中定位文件" @click="native(f.reveal_url)"><Icon name="folder-open" :size="12" /> 打开位置</button>
+            <button type="button" class="btn xs" :disabled="f.exists === false" @click="danmaku = { file: f, number: null }">下载弹幕</button>
             <button class="btn xs" title="浏览器兼容备用播放" @click="webPlay(f)"><Icon name="external" :size="12" /> 网页备用</button>
             <button class="btn xs" title="网页内浏览媒体目录" @click="browseFile(f)"><Icon name="folder" :size="12" /> 网页管理</button>
             <button class="btn xs" :disabled="fileBusy === f.id" @click="reprobeFile(f)"><Icon name="refresh" :size="12" /> 重探测</button>
@@ -541,6 +545,8 @@ onUnmounted(() => { mounted = false })
     <BdImportWizard v-if="importReleases" :releases="importReleases"
                     @close="importReleases = null" @done="onImported" />
 
+    <DanmakuDialog v-if="danmaku && b" :file="danmaku.file" :title="b.title" :number="danmaku.number"
+                   @close="danmaku = null" />
     <MediaPlayerModal :file="playerFile" @close="playerFile = null" />
     <FileBrowserModal :open="browserOpen" :initial-path="browserPath"
                       @close="browserOpen = false" />

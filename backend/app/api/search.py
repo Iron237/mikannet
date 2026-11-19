@@ -14,6 +14,7 @@ from app.clients.mikan import mikan_client
 from app.config import settings
 from app.database import get_db
 from app.models import Bangumi
+from app.services.subgroup_recommendation import summarize_groups
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/search", tags=["search"])
@@ -48,26 +49,6 @@ def _chips(title: str, group_hint: str | None) -> dict:
         "ep_type": p.ep_type,               # regular/special/credits/trailer/other
         "subtitle_tags": detect_subtitle_tags(title),
     }
-
-
-def _group_caps(titles: list[str]) -> dict:
-    """字幕组能力摘要:聚合该组全部发布的分辨率/字幕语言/片源/有无合集(向导第 2 步 chips)。"""
-    from app.parsers.title_parser import detect_subtitle_tags, parse
-    resolutions, langs, sources = {}, {}, {}
-    has_batch = False
-    for t in titles:
-        p = parse(t)
-        if p.resolution:
-            resolutions[p.resolution] = resolutions.get(p.resolution, 0) + 1
-        if p.source:
-            sources[p.source] = sources.get(p.source, 0) + 1
-        for lang in detect_subtitle_tags(t):
-            langs[lang] = langs.get(lang, 0) + 1
-        has_batch = has_batch or p.is_batch
-    # 按出现频次降序,保留标签
-    pick = lambda d: [k for k, _ in sorted(d.items(), key=lambda kv: -kv[1])]   # noqa: E731
-    return {"resolutions": pick(resolutions), "subtitle_langs": pick(langs),
-            "sources": pick(sources), "has_batch": has_batch}
 
 
 def _torrent_dict(t) -> dict:
@@ -145,11 +126,11 @@ def bangumi_detail(mikan_bangumi_id: int, db: Session = Depends(get_db)):
             "subscription_enabled": (subscriptions[g.subgroup_id].enabled
                                      if g.subgroup_id in subscriptions else None),
             "torrent_count": len(g.torrents),
-            "caps": _group_caps([t.title for t in g.torrents]),
+            "caps": caps, "recommendation": recommendation,
             "recent_titles": [t.title for t in g.torrents[:5]],   # 兼容旧前端
             "recent": [{"title": t.title, "chips": _chips(t.title, g.name)}
                        for t in g.torrents[:5]],
-        } for g in d.subgroups],
+        } for g, caps, recommendation in summarize_groups(d.subgroups)],
     }
 
 
