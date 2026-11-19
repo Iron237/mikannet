@@ -1,12 +1,13 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { api, fmtSize, fmtSpeed } from '../api'
 import { useTasksStore } from '../stores/tasks'
 import Icon from '../components/Icon.vue'
 
 const store = useTasksStore()
 const delConfirm = ref(null)      // { ids: [...] } 待确认删除(单条或批量)
-const deleteFiles = ref(false)
+const attentionOnly = ref(false)
+onMounted(() => store.refresh())
 const selected = ref(new Set())
 const busy = ref(false)
 const opMsg = ref('')
@@ -18,20 +19,25 @@ const statusLabel = {
   skipped: ['已跳过', ''],
 }
 
+const visibleActive = computed(() => attentionOnly.value
+  ? store.needsAttention.filter(t => t.status === 'completed') : store.active)
+const visibleHistory = computed(() => attentionOnly.value
+  ? store.needsAttention.filter(t => t.status !== 'completed') : store.history)
+
 // 进行中任务按番剧与季分组
 const groups = computed(() => {
   const m = new Map()
-  for (const t of store.active) {
+  for (const t of visibleActive.value) {
     const key = (t.bangumi_title || '未分组') + ' · 第 ' + (t.season_number ?? 1) + ' 季'
     if (!m.has(key)) m.set(key, [])
     m.get(key).push(t)
   }
   return [...m.entries()].map(([title, items]) => ({ title, items }))
 })
-const allIds = computed(() => [...store.active, ...store.history].map(t => t.id))
+const allIds = computed(() => [...visibleActive.value, ...visibleHistory.value].map(t => t.id))
 const allSelected = computed(() => allIds.value.length > 0 && selected.value.size === allIds.value.length)
 const selectedTasks = computed(() =>
-  [...store.active, ...store.history].filter(t => selected.value.has(t.id)))
+  [...visibleActive.value, ...visibleHistory.value].filter(t => selected.value.has(t.id)))
 const canPause = computed(() =>
   selectedTasks.value.some(t => t.status === 'downloading' && !t.paused))
 const canRecover = computed(() =>
@@ -44,6 +50,11 @@ function toggle(id) {
 }
 function selectAll() { selected.value = new Set(allIds.value) }
 function clearSel() { selected.value = new Set() }
+
+watch(allIds, ids => {
+  const visible = new Set(ids)
+  for (const id of selected.value) if (!visible.has(id)) selected.value.delete(id)
+})
 
 function fmtEta(s) {
   if (s == null || s < 0 || s >= 8640000) return '∞'
@@ -60,29 +71,34 @@ async function act(task, action) {
   opMsg.value = ''
   try {
     await api.post(`/api/tasks/${task.id}/${action}`)
-    await store.load()
+    await store.refresh()
   } catch (e) { opMsg.value = e.message }
 }
 
 async function batchAct(action) {
-  if (action === 'delete') { delConfirm.value = { ids: [...selected.value] }; return }
+  if (action === 'delete') { askDelete([...selected.value]); return }
   opMsg.value = ''
   busy.value = true
   try {
     const r = await api.post('/api/tasks/batch', { ids: [...selected.value], action })
-    if (r.failed?.length) opMsg.value = `${r.failed.length} 项不适用于本次操作,已跳过`
-    clearSel()
-    await store.load()
+    selected.value = new Set(r.failed)
+    if (r.failed.length) opMsg.value = `已处理 ${r.done.length} 项，另有 ${r.failed.length} 项未成功，已保留选择。`
+    await store.refresh()
   } catch (e) { opMsg.value = e.message }
   finally { busy.value = false }
 }
-function askDelete(t) { delConfirm.value = { ids: [t.id] } }   // 单条删除
+function askDelete(ids) { delConfirm.value = { ids, deleteFiles: false } }
+function closeDelete() { if (!busy.value) delConfirm.value = null }
 async function doDelete() {
   busy.value = true
   opMsg.value = ''
   try {
-    await api.post('/api/tasks/batch', { ids: delConfirm.value.ids, action: 'delete', delete_files: deleteFiles.value })
-    delConfirm.value = null; deleteFiles.value = false; clearSel(); await store.load()
+    const { ids, deleteFiles } = delConfirm.value
+    const r = await api.post('/api/tasks/batch', { ids, action: 'delete', delete_files: deleteFiles })
+    delConfirm.value = null
+    selected.value = new Set(r.failed)
+    if (r.failed.length) opMsg.value = `已删除 ${r.done.length} 项，另有 ${r.failed.length} 项删除失败，已保留选择。`
+    await store.refresh()
   } catch (e) { opMsg.value = e.message }
   finally { busy.value = false }
 }
@@ -92,8 +108,15 @@ async function doDelete() {
   <div class="page">
     <div class="row" style="margin-bottom: 10px;">
       <div class="page-title" style="margin: 0;">下载任务</div>
+      <button type="button" class="btn sm" :class="{ primary: attentionOnly }"
+              :aria-pressed="attentionOnly" @click="attentionOnly = !attentionOnly">
+        需处理 {{ store.needsAttention.length }}
+      </button>
       <div class="spacer" />
-      <button class="btn sm" @click="allSelected ? clearSel() : selectAll()">
+      <button type="button" class="btn sm" :disabled="store.loading" @click="store.refresh()">
+        <Icon name="refresh" :size="13" /> 重新同步
+      </button>
+      <button class="btn sm" :disabled="!allIds.length" @click="allSelected ? clearSel() : selectAll()">
         {{ allSelected ? '取消全选' : '全选' }}
       </button>
       <button class="btn sm" :disabled="!selected.size" @click="clearSel">清空选择</button>
@@ -111,9 +134,17 @@ async function doDelete() {
       <button class="btn sm danger" :disabled="busy" @click="batchAct('delete')"><Icon name="trash" :size="13" /> 删除</button>
     </div>
 
-    <p v-if="opMsg" class="op-msg">{{ opMsg }}</p>
+    <div role="status" class="sync-status">
+      <p v-if="store.syncError">任务同步失败 · {{ store.syncError }}<span v-if="store.lastSync"> · 上次同步 {{ new Date(store.lastSync).toLocaleTimeString() }}</span></p>
+      <p v-else-if="!store.lastSync">正在读取下载任务…</p>
+      <p v-else-if="!store.wsConnected">实时连接已断开，正在重连。上次同步 {{ new Date(store.lastSync).toLocaleTimeString() }}</p>
+      <p v-else-if="store.liveAvailable === false">下载跟踪暂不可用，当前显示已保存的任务。</p>
+    </div>
 
-    <div v-if="!store.active.length" class="muted" style="margin: 10px 0 24px;">没有进行中的任务</div>
+    <p v-if="opMsg" role="status" class="op-msg">{{ opMsg }}</p>
+
+    <p v-if="attentionOnly && store.lastSync && !store.syncError && !allIds.length" class="muted">暂无需处理的任务</p>
+    <div v-if="!attentionOnly && store.lastSync && !store.syncError && !store.active.length" class="muted" style="margin: 10px 0 24px;">没有进行中的任务</div>
 
     <div v-for="g in groups" :key="g.title" class="grp">
       <h3 class="grp-title">{{ g.title }} <span class="muted">({{ g.items.length }})</span></h3>
@@ -128,7 +159,7 @@ async function doDelete() {
           <tbody>
             <tr v-for="t in g.items" :key="t.id" :class="{ sel: isSel(t.id) }">
               <td><input type="checkbox" class="ck" :checked="isSel(t.id)" @change="toggle(t.id)" /></td>
-              <td class="name-col" :title="t.title_raw">{{ t.title_raw }}</td>
+              <td class="name-col" :title="t.title_raw">{{ t.title_raw }}<div v-if="t.error_message" class="task-error">{{ t.error_message }}</div></td>
               <td class="prog">
                 <div class="bar"><div class="fill" :style="{ width: (t.progress * 100).toFixed(0) + '%' }" /></div>
                 <span>{{ (t.progress * 100).toFixed(0) }}%</span>
@@ -154,7 +185,7 @@ async function doDelete() {
                         title="重新执行媒体探测与入库" aria-label="重试入库" @click="act(t, 'postprocess')">
                   <Icon name="refresh" :size="14" />
                 </button>
-                <button class="icon-btn" title="删除任务" aria-label="删除任务" @click="askDelete(t)">
+                <button class="icon-btn" title="删除任务" aria-label="删除任务" @click="askDelete([t.id])">
                   <Icon name="trash" :size="14" />
                 </button>
               </td>
@@ -164,27 +195,27 @@ async function doDelete() {
       </div>
     </div>
 
-    <h3 class="section">历史</h3>
-    <div v-if="!store.history.length" class="muted">暂无历史记录</div>
-    <div v-for="t in store.history" :key="t.id" class="card hist" :class="{ sel: isSel(t.id) }">
+    <h3 v-if="visibleHistory.length || (!attentionOnly && store.lastSync && !store.syncError)" class="section">{{ attentionOnly ? '失败任务' : '历史' }}</h3>
+    <div v-if="!attentionOnly && store.lastSync && !store.syncError && !store.history.length" class="muted">暂无历史记录</div>
+    <div v-for="t in visibleHistory" :key="t.id" class="card hist" :class="{ sel: isSel(t.id) }">
       <input type="checkbox" class="ck" :checked="isSel(t.id)" @change="toggle(t.id)" />
       <span class="tag" :class="statusText(t)[1]">{{ statusText(t)[0] }}</span>
       <div class="hist-title muted" :title="t.title_raw">{{ t.title_raw }}</div>
       <div class="spacer" />
       <span class="muted" style="font-size: 12px;" v-if="t.error_message">{{ t.error_message }}</span>
       <button v-if="['download_error', 'submit_failed'].includes(t.status)" class="btn sm" @click="act(t, 'resume')"><Icon name="refresh" :size="13" /> 重试</button>
-      <button class="btn sm danger" @click="askDelete(t)"><Icon name="trash" :size="13" /> 删除</button>
+      <button class="btn sm danger" @click="askDelete([t.id])"><Icon name="trash" :size="13" /> 删除</button>
     </div>
 
-    <div v-if="delConfirm" class="modal-mask" @click.self="delConfirm = null">
+    <div v-if="delConfirm" class="modal-mask" @click.self="closeDelete">
       <div class="modal" style="width: 420px;">
         <h3 style="margin-bottom: 10px;">删除 {{ delConfirm.ids.length }} 个任务</h3>
         <p class="muted" style="font-size: 12.5px;">从下载器移除并从列表清除,之后不会自动重新下载。</p>
         <label class="row" style="margin: 16px 0; cursor: pointer;">
-          <input type="checkbox" v-model="deleteFiles" /> 同时删除已下载的文件(不可恢复)
+          <input type="checkbox" v-model="delConfirm.deleteFiles" :disabled="busy" /> 同时删除已下载的文件(不可恢复)
         </label>
         <div class="row" style="justify-content: flex-end;">
-          <button class="btn" @click="delConfirm = null">取消</button>
+          <button class="btn" :disabled="busy" @click="closeDelete">取消</button>
           <button class="btn danger" :disabled="busy" @click="doDelete">确认删除</button>
         </div>
       </div>
@@ -193,6 +224,10 @@ async function doDelete() {
 </template>
 
 <style scoped>
+.page > .row { flex-wrap: wrap; }
+.sync-status { color: var(--text-dim); font-size: 13px; }
+.sync-status:not(:empty) { margin: 12px 0; }
+.task-error { color: var(--red); font-size: 12px; white-space: normal; }
 .batch-bar { display: flex; align-items: center; gap: 8px; padding: 10px 16px; margin-bottom: 12px;
   position: sticky; top: 8px; z-index: 10; border-color: var(--accent-dim); }
 .grp { margin-bottom: 18px; }

@@ -88,8 +88,15 @@ def _torrent(db, sub, info_hash, ep, source, is_active, rel):
     return t
 
 
-def test_full_bd_finalize_deletes_web_keeps_bd(db, monkeypatch):
+def test_full_bd_finalize_deletes_web_keeps_bd(db, monkeypatch, tmp_path):
+    monkeypatch.setattr(lifecycle.settings, "download_root_local", tmp_path)
+    monkeypatch.setattr(lifecycle.settings, "storage_mode", "local")
+    (tmp_path / "bd").mkdir()
+    for number in (1, 2):
+        (tmp_path / "bd" / f"{number:02d}.mkv").touch()
     deleted = []
+    monkeypatch.setattr(lifecycle.downloader, "files",
+                        lambda h: [{"name": f"web/0{h[-1]}.mkv"}])
     monkeypatch.setattr(lifecycle.downloader, "delete",
                         lambda h, delete_files: deleted.append((h, delete_files)))
     monkeypatch.setattr(lifecycle, "_notify", lambda *a, **k: None)

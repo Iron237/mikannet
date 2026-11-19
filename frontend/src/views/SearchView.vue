@@ -20,6 +20,7 @@ const currentSeries = ref(null)     // 已选番剧(含封面)
 const torrents = ref([])
 const showRaw = ref(false)
 const wizardPreset = ref(null)
+const created = ref(null)
 const sourceOpen = ref(false)
 const route = useRoute()
 const router = useRouter()
@@ -64,7 +65,11 @@ function resetResults() {
 }
 
 function pickSource(id) {
-  source.value = id; sourceOpen.value = false; resetResults()
+  sourceOpen.value = false
+  if (source.value !== id) {
+    source.value = id
+    router.push({ path: '/search', query: { source: id, searchstr: keyword.value.trim() || undefined } })
+  }
 }
 
 // 用户动作只推路由;真正的拉取在 applyRoute(URL = 单一真相源,前进/后退自动还原)。
@@ -81,38 +86,34 @@ function backToSeries() {
   router.push({ path: '/search', query: { source: source.value, searchstr: keyword.value } })
 }
 
-async function runSearch(kw, src) {
-  loading.value = true; error.value = ''; resetResults()
-  try {
-    const data = await api.get(
-      `/api/search/multi?source=${src}&keyword=${encodeURIComponent(kw)}`)
-    series.value = data.series || []
-    torrents.value = data.torrents || []
-  } catch (e) { error.value = e.message }
-  loading.value = false
-}
-async function runPickSeries(bid) {
-  loading.value = true; error.value = ''
-  series.value = []; currentSeries.value = null; torrents.value = []; clearFacets()
-  try {
-    const data = await api.get(`/api/search/multi?source=mikan&bangumi_id=${bid}`)
-    currentSeries.value = data.current_series
-    torrents.value = data.torrents || []
-  } catch (e) { error.value = e.message }
-  loading.value = false
-}
-async function applyRoute() {
+watch(() => route.fullPath, async (_, previous, onCleanup) => {
+  if (route.name !== 'search') return
+  const controller = new AbortController()
+  onCleanup(() => controller.abort())
   const q = route.query
   const kw = (q.searchstr || '').toString()
   const src = (q.source || 'mikan').toString()
   const bid = q.bangumi ? Number(q.bangumi) : null
   source.value = src
   keyword.value = kw
-  if (!kw) { resetResults(); return }
-  if (bid) await runPickSeries(bid)
-  else await runSearch(kw, src)
-}
-watch(() => route.fullPath, applyRoute)
+  resetResults()
+  created.value = null
+  error.value = ''
+  loading.value = !!(bid || kw)
+  if (!loading.value) return
+  const params = bid ? { source: 'mikan', bangumi_id: bid } : { source: src, keyword: kw }
+  try {
+    const data = await api.get(`/api/search/multi?${new URLSearchParams(params)}`, controller.signal)
+    if (controller.signal.aborted) return
+    series.value = data.series || []
+    currentSeries.value = data.current_series || null
+    torrents.value = data.torrents || []
+  } catch (e) {
+    if (!controller.signal.aborted) error.value = e.message
+  } finally {
+    if (!controller.signal.aborted) loading.value = false
+  }
+}, { immediate: true })
 
 async function copyLink(t) {
   const link = t.magnet || t.torrent_url || t.page_url
@@ -120,13 +121,18 @@ async function copyLink(t) {
 }
 
 function closeMenu() { sourceOpen.value = false }
-onMounted(() => { document.addEventListener('click', closeMenu); applyRoute() })
+onMounted(() => document.addEventListener('click', closeMenu))
 onUnmounted(() => document.removeEventListener('click', closeMenu))
 </script>
 
 <template>
   <div class="page">
     <div class="page-title"><Icon name="search" :size="19" /> 搜索</div>
+    <div role="status">
+      <p v-if="created">已订阅《{{ created.bangumi_title }}》 · {{ created.subgroup_name }}
+        <RouterLink to="/subscriptions">查看订阅</RouterLink>
+      </p>
+    </div>
 
     <!-- 搜索栏 + 源选择 -->
     <div class="search-bar">
@@ -158,7 +164,7 @@ onUnmounted(() => document.removeEventListener('click', closeMenu))
     </div>
 
     <!-- 结果区:左海报(mikan)+ 右 chips 墙 -->
-    <div v-if="torrents.length" class="results">
+    <div v-if="currentSeries || torrents.length" class="results">
       <aside v-if="currentSeries" class="poster-col">
         <img v-if="currentSeries.cover" :src="currentSeries.cover" :alt="currentSeries.title" />
         <div class="poster-title">{{ currentSeries.title }}</div>
@@ -213,14 +219,15 @@ onUnmounted(() => document.removeEventListener('click', closeMenu))
       </div>
     </div>
 
-    <div v-if="!loading && !series.length && !torrents.length && keyword" class="empty muted">
+    <div v-if="!loading && !currentSeries && !series.length && !torrents.length && keyword" class="empty muted">
       没有结果 — 换个关键词或来源试试
     </div>
     <div v-if="!keyword && !torrents.length && !series.length" class="empty muted">
       选择来源(Mikan / Nyaa / 动漫花园),输入关键词开始搜索
     </div>
 
-    <SubscribeWizard v-if="wizardPreset" :preset="wizardPreset" @close="wizardPreset = null" />
+    <SubscribeWizard v-if="wizardPreset" :preset="wizardPreset"
+                     @created="created = $event" @close="wizardPreset = null" />
   </div>
 </template>
 

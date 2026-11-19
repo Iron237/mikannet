@@ -33,6 +33,7 @@ class SubscriptionOut(BaseModel):
     episode_offset: int = 0
     last_poll_ok: bool = True
     last_poll_error: str | None = None
+    last_poll_summary: dict | None = None
     exclude_batch: bool
     backfill: bool
     save_path: str

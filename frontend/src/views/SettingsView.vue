@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { api, fmtSize } from '../api'
 import Icon from '../components/Icon.vue'
 import FileBrowserModal from '../components/FileBrowserModal.vue'
@@ -175,6 +175,7 @@ async function applyUpdate() {
   updApplying.value = true; updMsg.value = '正在启动更新…'; updStatus.value = null
   try {
     const r = await api.post('/api/system/update/apply')
+    updCheck.value.latest = r.version
     updMsg.value = r.type === 'full' ? '完整更新中(换镜像)…' : '更新中…'
     updTimer = setTimeout(pollUpdateStatus, 1000)
   } catch (e) { updApplying.value = false; updMsg.value = '更新失败:' + e.message }
@@ -205,6 +206,14 @@ function waitForRestart() {
         // 系统状态卡的版本来自 /health,更新后一并刷新,别停在旧值。
         updCheck.value = { type: 'none', current: v.version, latest: v.version }
         try { health.value = await api.get('/api/system/health') } catch { /* 保留旧值 */ }
+        return
+      }
+      const status = await api.get('/api/system/update/status')
+      if (status.phase === 'error' || status.phase === 'idle') {
+        updStatus.value = status
+        updApplying.value = false
+        updMsg.value = status.phase === 'error' ? '更新失败：' + status.error
+          : `应用已重新上线，仍运行 ${v.version}，请检查更新日志。`
         return
       }
     } catch { /* 仍在重启,继续等 */ }
@@ -332,25 +341,66 @@ async function remountStorage() {
 // ---- 数据备份 / 迁移 ----
 const backupSettings = ref(false)
 const importFile = ref(null)
+const fileInput = ref(null)
+const restoreDialog = ref(null)
+const restorePreview = ref(null)
+const restoreBusy = ref('')
+let reviewedBackup = null
+const tableLabels = {
+  bangumi: '番剧', subscription: '订阅', episode: '剧集', torrent: '下载记录',
+  torrent_episode: '下载与剧集关联', video_file: '视频文件记录', bd_release: 'BD 发行',
+  bd_extra: 'BD 特典', auto_scan_log: '扫描历史', notification_config: '通知配置',
+}
 const backupMsg = ref('')
 function exportData() {
   window.location.href = '/api/backup/export' + (backupSettings.value ? '?include_settings=1' : '')
 }
-function onImportFile(e) { importFile.value = e.target.files[0] || null; backupMsg.value = '' }
-async function importData() {
-  if (!importFile.value) return
+function clearReview() {
+  reviewedBackup = null
+  restorePreview.value = null
+}
+function onImportFile(e) {
+  clearReview()
+  importFile.value = e.target.files[0] || null
+  backupMsg.value = ''
+}
+async function previewImport() {
+  const file = importFile.value
+  if (!file || restoreBusy.value) return
+  clearReview()
+  restoreBusy.value = 'preview'
+  backupMsg.value = '正在校验备份…'
   let data
-  try { data = JSON.parse(await importFile.value.text()) }
-  catch { backupMsg.value = '文件解析失败(不是有效 JSON 备份)'; return }
-  // 是否含设置由备份文件本身决定(导出时勾了才有),导入自动还原,无需再勾选
-  const hasSettings = !!data.settings || !!(data.tables && data.tables.notification_config)
-  const extra = hasSettings ? ',并还原设置/通知(API key/cookie/偏好,不含本机连接与路径)' : ''
-  if (!window.confirm(`导入会用备份覆盖当前的番剧库 / 订阅 / 剧集 / 下载记录 / 文件路径${extra}。确定继续?`)) return
-  backupMsg.value = '导入中…'
+  try {
+    data = JSON.parse(await file.text())
+    const preview = await api.post('/api/backup/preview', data)
+    backupMsg.value = ''
+    if (file !== importFile.value || !restoreDialog.value) return
+    reviewedBackup = data
+    restorePreview.value = preview
+    restoreBusy.value = ''
+    await nextTick()
+    restoreDialog.value?.showModal()
+  } catch (e) {
+    backupMsg.value = e instanceof SyntaxError ? '文件不是有效的 JSON 备份' : e.message
+  } finally { restoreBusy.value = '' }
+}
+async function importData() {
+  if (!reviewedBackup || restoreBusy.value) return
+  const data = reviewedBackup
+  restoreBusy.value = 'import'
+  restoreDialog.value.close()
+  backupMsg.value = '正在恢复…'
   try {
     const r = await api.post('/api/backup/import', data)
-    backupMsg.value = `导入完成:共写入 ${r.total} 条${r.settings_applied ? `(含设置 ${r.settings_applied} 项)` : ''}。封面没显示就点下方「重新拉取封面/元数据」。`
-  } catch (e) { backupMsg.value = '导入失败:' + e.message }
+    window.dispatchEvent(new CustomEvent('mikannet:backup-restored'))
+    window.dispatchEvent(new CustomEvent('mikannet:issues-stale'))
+    backupMsg.value = `恢复完成，共写入 ${r.total} 条记录。`
+    importFile.value = null
+    if (fileInput.value) fileInput.value.value = ''
+    if (r.settings_applied || r.imported.notification_config !== undefined) await load()
+  } catch (e) { backupMsg.value = '恢复失败：' + e.message }
+  finally { restoreBusy.value = '' }
 }
 
 // 迁移后封面/banner 没带过来 → 重新从 bgm.tv/Mikan/TMDB 拉(只补缺失的图)
@@ -592,13 +642,35 @@ onMounted(() => { load(); loadStorage(); loadVersion() })
       </label>
       <div class="row" style="gap: 10px; flex-wrap: wrap; align-items: center;">
         <button class="btn sm" @click="exportData"><Icon name="download" :size="13" /> 导出备份</button>
-        <input type="file" accept=".json,application/json" @change="onImportFile"
+        <input ref="fileInput" type="file" accept=".json,application/json" aria-label="选择恢复备份"
+               :disabled="!!restoreBusy" @change="onImportFile"
                style="font-size: 12px; max-width: 220px;" />
-        <button class="btn sm danger" :disabled="!importFile" @click="importData">
-          <Icon name="folder-in" :size="13" /> 导入(覆盖当前数据)
+        <button class="btn sm" :disabled="!importFile || !!restoreBusy" @click="previewImport">
+          <Icon name="folder-in" :size="13" /> 预览恢复
         </button>
-        <span class="muted" style="font-size: 12px;">{{ backupMsg }}</span>
+        <span role="status" class="muted" style="font-size: 12px;">{{ backupMsg }}</span>
       </div>
+      <dialog ref="restoreDialog" class="restore-dialog" aria-labelledby="restore-title" @close="clearReview">
+        <template v-if="restorePreview">
+          <h3 id="restore-title">恢复备份</h3>
+          <p class="muted">{{ importFile?.name }} · 格式 v{{ restorePreview.version }}</p>
+          <table>
+            <caption>确认后，下列表中的记录将由备份整表替换。</caption>
+            <thead><tr><th scope="col">数据</th><th scope="col">当前</th><th scope="col">恢复后</th></tr></thead>
+            <tbody>
+              <tr v-for="(count, name) in restorePreview.incoming" :key="name">
+                <th scope="row">{{ tableLabels[name] || name }}</th>
+                <td>{{ restorePreview.current[name] }}</td><td>{{ count }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-if="restorePreview.settings_count">同时合并 {{ restorePreview.settings_count }} 项设置。</p>
+          <form method="dialog" class="row restore-actions">
+            <button class="btn sm" autofocus>取消</button>
+            <button type="button" class="btn sm danger" @click="importData">确认覆盖并恢复</button>
+          </form>
+        </template>
+      </dialog>
       <div class="row" style="gap: 10px; margin-top: 10px; align-items: center; flex-wrap: wrap;">
         <button class="btn sm" :disabled="refreshMeta?.running" @click="refetchCovers">
           <Icon name="refresh" :size="13" /> 重新拉取封面 / 元数据
@@ -649,6 +721,16 @@ onMounted(() => { load(); loadStorage(); loadVersion() })
 </template>
 
 <style scoped>
+.restore-dialog { margin: auto; max-height: 85vh; width: min(440px, 94vw); padding: 20px;
+  color: var(--text); background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; }
+.restore-dialog:modal { overscroll-behavior: contain; }
+.restore-dialog::backdrop { background: rgb(0 0 0 / 65%); overflow: hidden; overscroll-behavior: contain; }
+.restore-dialog p, .restore-dialog caption { margin: 8px 0; font-size: 13px; overflow-wrap: anywhere; }
+.restore-dialog table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.restore-dialog caption, .restore-dialog th:first-child { text-align: left; }
+.restore-dialog th, .restore-dialog td { padding: 5px 6px; border-bottom: 1px solid var(--border); text-align: right; }
+.restore-dialog tbody th { font-weight: 400; }
+.restore-actions { margin-top: 14px; justify-content: flex-end; gap: 8px; }
 .settings-nav { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 0 0 16px; }
 .settings-tab { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 10px 11px;
   color: var(--text-dim); background: var(--card); border: 1px solid var(--border);

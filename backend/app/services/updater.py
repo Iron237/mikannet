@@ -15,6 +15,7 @@ import signal
 import tarfile
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from app._version import BASE_REV, VERSION
@@ -26,6 +27,7 @@ log = logging.getLogger(__name__)
 
 # --- 进度状态(前端轮询 /update/status)---------------------------------------------------
 _status_lock = threading.Lock()
+_apply_lock = threading.Lock()
 _status: dict = {"phase": "idle", "message": "", "version": "", "type": "",
                  "progress": 0, "error": ""}
 
@@ -160,8 +162,9 @@ def _point_current(version: str) -> None:
 
 def _write_pending(prev: str | None, new: str) -> None:
     import json
-    (settings.code_dir / "pending.json").write_text(
-        json.dumps({"prev": prev, "new": new, "attempts": 0}), "utf-8")
+    tmp = settings.code_dir / ".pending.tmp"
+    tmp.write_text(json.dumps({"prev": prev, "new": new, "attempts": 0}), "utf-8")
+    tmp.replace(settings.code_dir / "pending.json")
 
 
 def _safe_extract(data: bytes, dest: Path) -> None:
@@ -198,22 +201,36 @@ def _download(url: str) -> bytes:
 
 
 def _quiesce() -> None:
-    """停调度 / 后处理,置 updating 标记(挡新写)。"""
+    from app import scheduler
     update_gate.set_updating(True)
+    scheduler.pause_for_update()
+
+
+def _resume_after_failure() -> None:
+    from app import scheduler
     try:
-        from app import scheduler
-        scheduler.stop()
-    except Exception as e:  # noqa: BLE001
-        log.warning("停调度失败: %s", e)
+        scheduler.resume_after_failed_update()
+    finally:
+        update_gate.set_updating(False)
+
+
+@contextmanager
+def _quiesced_update():
+    """成功后由新进程接管；交接失败则先恢复本进程，再向调用方报告错误。"""
+    try:
+        _quiesce()
+        yield
+    except Exception:
+        _resume_after_failure()
+        raise
 
 
 def _exit_soon(delay: float = 1.5) -> None:
     """让 HTTP 响应先回到前端,再向自身发 SIGTERM,交给 wrapper 重启拾起新 current。"""
-    def _kill():
-        time.sleep(delay)
-        log.info("自更新:向自身发 SIGTERM 触发重启")
-        os.kill(os.getpid(), signal.SIGTERM)
-    threading.Thread(target=_kill, daemon=True).start()
+    # apply_code 本身已在后台线程中。在同一线程发信号，失败时走同一条恢复路径。
+    time.sleep(delay)
+    log.info("自更新:向自身发 SIGTERM 触发重启")
+    os.kill(os.getpid(), signal.SIGTERM)
 
 
 # --- 应用:纯代码 ------------------------------------------------------------------------
@@ -255,12 +272,22 @@ def apply_code(manifest: dict) -> None:
         reason = update_gate.busy_reason()
         if reason:
             raise RuntimeError(f"{reason}(更新已在切换前中止,未产生影响,稍后重试即可)")
-        _write_pending(prev, version)
-        _point_current(version)            # 原子切换
-
-        _set_status(phase="restarting", message="重启应用", progress=100)
-        _quiesce()
-        _exit_soon()
+        with _quiesced_update():
+            _write_pending(prev, version)
+            switched = False
+            try:
+                _point_current(version)
+                switched = True
+                _set_status(phase="restarting", message="重启应用", progress=100)
+                _exit_soon()
+            except Exception:
+                if switched:
+                    if prev:
+                        _point_current(prev)
+                    else:
+                        (settings.code_dir / "current").unlink()
+                (settings.code_dir / "pending.json").unlink(missing_ok=True)
+                raise
     except Exception as e:  # noqa: BLE001
         _set_status(phase="error", error=str(e))
         log.exception("纯代码更新失败")
@@ -329,16 +356,11 @@ def _arm_full_update_watchdog(timeout: float = _FULL_UPDATE_TIMEOUT) -> None:
         time.sleep(timeout)
         if not update_gate.is_updating():
             return                       # 已被其他路径复位
-        update_gate.set_updating(False)
-        try:
-            from app import scheduler
-            scheduler.resume_after_failed_update()
-        except Exception as e:  # noqa: BLE001
-            log.warning("恢复调度失败: %s", e)
         _set_status(phase="error", error=(
             f"完整更新未生效:helper 在 {int(timeout)} 秒内没有重建容器"
             "(常见原因:镜像拉取失败 / GHCR 包不可见 / compose 目录配置不对)。"
             "已解除更新锁,应用恢复可用,可查看 Docker 日志后重试。"))
+        _resume_after_failure()
         log.error("完整更新 watchdog:helper 未在 %ss 内重建容器,已解除 updating 锁", timeout)
     threading.Thread(target=_watch, daemon=True).start()
 
@@ -364,21 +386,18 @@ def apply_full(manifest: dict) -> None:
     try:
         _set_status(phase="recreating", version=version, type="full",
                     message="拉新镜像并重建容器(完整更新)", progress=0, error="")
-        _quiesce()
         # 不写 pending:完整更新后由 wrapper「烤死版本 > 卷版本」重播种;
         # v1 完整更新失败走手动回滚(ADR 决策,镜像级自动回滚为后续)。
-        docker_api.run_compose_recreate(
-            host_compose_dir=settings.compose_host_dir,
-            project=settings.compose_project,
-            image_ref=image_ref,
-            compose_files=settings.compose_files,
-        )
-        _set_status(phase="restarting", message="helper 正在重建容器…", progress=100)
-        # helper 会重建本容器(杀死自己),无需自行退出;
-        # 但 helper 是脱管异步的 —— 静默失败时靠 watchdog 解锁自愈(否则写请求永久 503)
-        _arm_full_update_watchdog()
+        with _quiesced_update():
+            docker_api.run_compose_recreate(
+                host_compose_dir=settings.compose_host_dir,
+                project=settings.compose_project,
+                image_ref=image_ref,
+                compose_files=settings.compose_files,
+            )
+            _set_status(phase="restarting", message="helper 正在重建容器…", progress=100)
+            _arm_full_update_watchdog()
     except Exception as e:  # noqa: BLE001
-        update_gate.set_updating(False)
         _set_status(phase="error", error=str(e))
         log.exception("完整更新失败")
         raise
@@ -386,16 +405,35 @@ def apply_full(manifest: dict) -> None:
 
 def apply_latest() -> dict:
     """检查并按类型应用(在后台线程跑)。返回将要应用的类型/版本。"""
-    result, manifest, _release = _check_internal()
-    if result["type"] == "none" or not manifest:
-        raise RuntimeError("已是最新,无可用更新")
-    typ = result["type"]
-    if typ == "full":
-        readiness = full_update_readiness()
-        if not readiness["ready"]:
-            msg = _readiness_error(readiness)
-            _set_status(phase="error", error=msg)
-            raise RuntimeError(msg)
-    target = apply_code if typ == "code" else apply_full
-    threading.Thread(target=target, args=(manifest,), daemon=True).start()
+    if not _apply_lock.acquire(blocking=False):
+        raise RuntimeError("更新正在进行")
+    try:
+        if update_gate.is_updating():
+            raise RuntimeError("更新正在等待重启")
+        result, manifest, _release = _check_internal()
+        if result["type"] == "none" or not manifest:
+            raise RuntimeError("已是最新,无可用更新")
+        typ = result["type"]
+        if typ == "full":
+            readiness = full_update_readiness()
+            if not readiness["ready"]:
+                msg = _readiness_error(readiness)
+                _set_status(phase="error", error=msg)
+                raise RuntimeError(msg)
+        target = apply_code if typ == "code" else apply_full
+        _set_status(phase="starting", message="准备应用更新", version=result["latest"],
+                    type=typ, progress=0, error="")
+
+        def run():
+            try:
+                target(manifest)
+            except Exception as e:
+                _set_status(phase="error", error=str(e))
+            finally:
+                _apply_lock.release()
+
+        threading.Thread(target=run, daemon=True).start()
+    except Exception:
+        _apply_lock.release()
+        raise
     return {"type": typ, "version": result["latest"]}

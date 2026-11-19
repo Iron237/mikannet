@@ -113,36 +113,48 @@ def effective() -> dict:
     return out
 
 
-def update(changes: dict) -> dict:
-    """写入更改 → 灌进 settings → 持久化 Setting → 跑 apply 钩子。返回实际生效的项。"""
+def normalize_changes(changes: dict) -> dict:
     applied: dict = {}
+    for key, raw in changes.items():
+        if key not in EDITABLE:
+            continue
+        _group, typ, secret = EDITABLE[key]
+        if secret and (raw == SECRET_MASK or raw is None):
+            continue
+        try:
+            applied[key] = _coerce(typ, raw)
+        except (ValueError, TypeError, OverflowError):
+            log.warning("设置 %s 取值失败", key)
+    return applied
+
+
+def persist(db, changes: dict) -> None:
+    """调用方提供事务；同一份更改在提交成功后再激活。"""
+    for key, val in changes.items():
+        row = db.get(Setting, key)
+        if row is None:
+            db.add(Setting(key=key, value={"v": val}))
+        else:
+            row.value = {"v": val}
+    if "download_root" in changes:
+        from app.services.download_paths import rebase_subscription_paths
+        n = rebase_subscription_paths(db, settings.download_root, changes["download_root"])
+        if n:
+            log.info("下载根设置变更：已同步 %s 个订阅保存路径", n)
+
+
+def activate(changes: dict) -> None:
     previous_download_root = settings.download_root
+    for key, val in changes.items():
+        setattr(settings, key, val)
+    _apply(changes, previous_download_root)
+
+
+def update(changes: dict) -> dict:
+    applied = normalize_changes(changes)
     with db_session() as db:
-        for key, raw in changes.items():
-            if key not in EDITABLE:
-                continue
-            _group, typ, secret = EDITABLE[key]
-            if secret and (raw == SECRET_MASK or raw is None):
-                continue   # 密钥未改(仍是打码占位)→ 跳过,保留原值
-            try:
-                val = _coerce(typ, raw)
-            except Exception as e:  # noqa: BLE001
-                log.warning("设置 %s 取值失败: %s", key, e)
-                continue
-            setattr(settings, key, val)
-            applied[key] = val
-            row = db.get(Setting, key)
-            if row is None:
-                db.add(Setting(key=key, value={"v": val}))
-            else:
-                row.value = {"v": val}
-        if "download_root" in applied:
-            from app.services.download_paths import rebase_subscription_paths
-            n = rebase_subscription_paths(
-                db, previous_download_root, applied["download_root"])
-            if n:
-                log.info("下载根设置变更：已同步 %s 个订阅保存路径", n)
-    _apply(applied, previous_download_root)
+        persist(db, applied)
+    activate(applied)
     return applied
 
 

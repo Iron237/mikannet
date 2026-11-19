@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { api } from './api'
 import { useTasksStore } from './stores/tasks'
@@ -32,9 +32,17 @@ async function dailyUpdateCheck() {
 }
 
 onMounted(() => {
-  tasksStore.load()
-  tasksStore.connect()
+  tasksStore.start()
+  window.addEventListener('mikannet:backup-restored', onBackupRestored)
   dailyUpdateCheck()
+})
+function onBackupRestored() {
+  sessionStorage.removeItem('mikannet_library_cache_v1')
+  tasksStore.refresh()
+}
+onUnmounted(() => {
+  window.removeEventListener('mikannet:backup-restored', onBackupRestored)
+  tasksStore.stop()
 })
 </script>
 

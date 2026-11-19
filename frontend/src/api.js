@@ -1,5 +1,5 @@
-async function request(method, url, body) {
-  const opts = { method, headers: {} }
+async function request(method, url, body, signal) {
+  const opts = { method, headers: {}, signal }
   if (body !== undefined) {
     opts.headers['Content-Type'] = 'application/json'
     opts.body = JSON.stringify(body)
@@ -15,7 +15,7 @@ async function request(method, url, body) {
 }
 
 export const api = {
-  get: (url) => request('GET', url),
+  get: (url, signal) => request('GET', url, undefined, signal),
   post: (url, body) => request('POST', url, body),
   put: (url, body) => request('PUT', url, body),
   patch: (url, body) => request('PATCH', url, body),

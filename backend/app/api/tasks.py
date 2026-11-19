@@ -1,13 +1,15 @@
 """下载任务查询与控制(P1:查询+基本控制;P3 接 WebSocket 实时)。"""
+import json
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from pydantic import BaseModel, Field
+from sqlalchemy import func, or_, select, text
+from sqlalchemy.orm import Session, joinedload
 
 from app.clients.downloader import downloader
 from app.database import get_db
-from app.models import Torrent, TorrentStatus
+from app.models import Subscription, Torrent, TorrentStatus
 from app.schemas import TorrentOut
 
 log = logging.getLogger(__name__)
@@ -28,20 +30,27 @@ def _resubmit_in_background(task_id: int) -> None:
         log.warning("后台重新提交失败 task=%s", task_id, exc_info=True)
 
 
-@router.get("", response_model=list[TorrentOut])
-def list_tasks(status: TorrentStatus | None = None, db: Session = Depends(get_db)):
-    q = select(Torrent).order_by(Torrent.created_at.desc())
-    if status:
-        q = q.where(Torrent.status == status)   # 非法值由 FastAPI 校验为 422,不再 500
-    rows = db.execute(q).scalars().all()
+class TaskSyncRequest(BaseModel):
+    after_id: int | None = Field(default=None, ge=0)
+    # 上次仍在队列中的 ID。任务入库、跳过或被删除后，要补发其最终状态。
+    watching: list[int] = Field(default_factory=list)
 
-    # 合并 qB 实时快照
-    live: dict[str, dict] = {}
+
+def _task_query():
+    return (select(Torrent)
+            .options(joinedload(Torrent.subscription).joinedload(Subscription.bangumi))
+            .order_by(Torrent.created_at.desc(), Torrent.id.desc()))
+
+
+def _live_tasks():
     try:
-        live = {t.hash: t for t in downloader.list_tasks()}
+        return {t.hash: t for t in downloader.list_tasks()}
     except Exception:  # noqa: BLE001 — 下载器不可达时退化为 DB 快照
         log.warning("下载器不可达,返回 DB 快照")
+        return None
 
+
+def _serialize_tasks(rows, live):
     out = []
     for t in rows:
         lt = live.get(t.info_hash) if t.info_hash else None
@@ -64,6 +73,39 @@ def list_tasks(status: TorrentStatus | None = None, db: Session = Depends(get_db
             error_message=t.error_message, published_at=t.published_at,
             created_at=t.created_at))
     return out
+
+
+@router.get("", response_model=list[TorrentOut])
+def list_tasks(status: TorrentStatus | None = None, db: Session = Depends(get_db)):
+    q = _task_query()
+    if status:
+        q = q.where(Torrent.status == status)
+    return _serialize_tasks(db.scalars(q).all(), _live_tasks() or {})
+
+
+@router.post("/sync")
+def sync_tasks(request: TaskSyncRequest, db: Session = Depends(get_db)):
+    """首次读取可见历史；增量只核对队列、刚离开队列的任务和新建记录。"""
+    # 先取 ID 水位；过程中并发插入的行在下一轮仍可按 ID 补齐。
+    newest = db.scalar(select(func.max(Torrent.id))) or 0
+    full = request.after_id is None or request.after_id > newest
+    q = _task_query().where(Torrent.status != TorrentStatus.SKIPPED)
+    if not full:
+        queue = (TorrentStatus.PENDING, TorrentStatus.DOWNLOADING, TorrentStatus.COMPLETED,
+                 TorrentStatus.SUBMIT_FAILED, TorrentStatus.DOWNLOAD_ERROR)
+        # 一个 JSON 参数可容纳整批 ID，不受 SQLite 绑定参数个数限制。
+        watched = text("SELECT value FROM json_each(:watch_ids)").bindparams(
+            watch_ids=json.dumps(request.watching))
+        q = q.where(or_(Torrent.status.in_(queue), Torrent.id > request.after_id,
+                        Torrent.id.in_(watched)))
+    rows = db.scalars(q).all()
+    check_live = full and any(t.info_hash and t.status != TorrentStatus.ARCHIVED for t in rows)
+    live = _live_tasks() if check_live else None
+    present = {t.id for t in rows}
+    return {"cursor": newest, "full": full,
+            "live_available": (live is not None) if check_live else None,
+            "tasks": _serialize_tasks(rows, live or {}),
+            "removed": [] if full else sorted(set(request.watching) - present)}
 
 
 def _get_with_hash(db: Session, task_id: int) -> Torrent:

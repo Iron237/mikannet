@@ -1,23 +1,15 @@
 """订阅 CRUD(P1:直接传 Mikan ID;P2 升级为搜索向导)。"""
-import re
-
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.config import settings
 from app.database import db_session, get_db
 from app.models import Bangumi, Subscription, Torrent, TorrentEpisode, VideoFile
 from app.schemas import SubscriptionCreate, SubscriptionOut
+from app.services.download_paths import subscription_save_path
 
 router = APIRouter(prefix="/api/subscriptions", tags=["subscriptions"])
-
-_ILLEGAL_PATH = re.compile(r'[<>:"/\\|?*]')
-
-
-def _safe_dirname(name: str) -> str:
-    return _ILLEGAL_PATH.sub(" ", name).strip() or "未命名番剧"
-
 
 def _poll_in_background(subscription_id: int) -> None:
     from app.services.rss_engine import safe_poll
@@ -60,7 +52,7 @@ def create_subscription(payload: SubscriptionCreate, background: BackgroundTasks
         exclude_batch=payload.exclude_batch if payload.exclude_batch is not None
         else bangumi.airing_status.value == "airing",
         backfill=payload.backfill,
-        save_path=payload.save_path or f"{settings.download_root}/{_safe_dirname(bangumi.title)}",
+        save_path=payload.save_path or subscription_save_path(bangumi.title),
     )
     db.add(sub)
     db.commit()
@@ -75,7 +67,7 @@ def list_subscriptions(include_internal: bool = False, db: Session = Depends(get
 
     local/auto 是实现用容器,不是用户可编辑的订阅源;仅诊断时显式 include_internal=true。
     """
-    q = select(Subscription)
+    q = select(Subscription).options(joinedload(Subscription.bangumi))
     if not include_internal:
         q = q.where(Subscription.mikan_subgroup_id.notin_(("local", "auto")))
     subs = db.execute(q).scalars().all()
@@ -98,6 +90,10 @@ def update_subscription(sub_id: int, payload: dict, background: BackgroundTasks,
                "episode_offset"}
     for k, v in payload.items():
         if k in allowed:
+            if k == "backfill" and v != sub.backfill:
+                sub.follow_baseline_guids = None
+                sub.last_checked_at = None
+                sub.last_poll_summary = None
             setattr(sub, k, v)
     db.commit()
     background.add_task(_poll_in_background, sub.id)   # 规则变更立即重新评估
@@ -144,6 +140,8 @@ def replace_subscription_source(sub_id: int, payload: dict, background: Backgrou
         sub.pinned_guids = []
         sub.blocked_guids = []
         sub.last_checked_at = None
+        sub.follow_baseline_guids = None
+        sub.last_poll_summary = None
         sub.last_poll_ok = True
         sub.last_poll_error = None
         db.commit()
@@ -233,6 +231,6 @@ def _to_out(sub: Subscription, title: str) -> SubscriptionOut:
         bangumi_eps_total=sub.bangumi.eps_total,
         episode_offset=sub.episode_offset or 0,
         last_poll_ok=sub.last_poll_ok if sub.last_poll_ok is not None else True,
-        last_poll_error=sub.last_poll_error,
+        last_poll_error=sub.last_poll_error, last_poll_summary=sub.last_poll_summary,
         exclude_batch=sub.exclude_batch, backfill=sub.backfill, save_path=sub.save_path,
         enabled=sub.enabled, last_checked_at=sub.last_checked_at, source=_sub_source(sub))

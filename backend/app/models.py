@@ -137,6 +137,9 @@ class Subscription(Base):
     # RSS 健康:上次轮询结果
     last_poll_ok: Mapped[bool] = mapped_column(Boolean, default=True)
     last_poll_error: Mapped[str | None] = mapped_column(Text)
+    last_poll_summary: Mapped[dict | None] = mapped_column(JSON)
+    # 首轮 RSS 已存在的条目。空列表是已建立的空基线，NULL 表示尚未建立。
+    follow_baseline_guids: Mapped[list | None] = mapped_column(JSON)
     exclude_batch: Mapped[bool] = mapped_column(Boolean, default=True)   # 默认按连载状态推导
     backfill: Mapped[bool] = mapped_column(Boolean, default=True)        # 补齐 / 只追新
     save_path: Mapped[str] = mapped_column(String(512))                  # qB 视角容器内路径

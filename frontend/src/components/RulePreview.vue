@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { api, fmtSize } from '../api'
 import Icon from './Icon.vue'
 import Chips from './Chips.vue'
@@ -21,7 +21,6 @@ const loading = ref(false)
 const loadError = ref('')
 const health = ref({})        // torrent_url → {seeders, leechers} | {error}
 const healthLoading = ref(false)
-let timer = null
 
 function isChecked(it) {
   return props.overrides[it.guid] ?? it.pass
@@ -78,18 +77,19 @@ function fmtRange(nums) {
   return parts.join(', ')
 }
 
-async function load() {
-  loading.value = true
-  loadError.value = ''
+async function load(signal) {
   try {
     const p = new URLSearchParams({
       bangumi_id: props.bangumiId, subgroup_id: props.subgroupId,
       include: props.include, exclude: props.exclude,
       exclude_batch: props.excludeBatch === null ? false : props.excludeBatch,
     })
-    items.value = await api.get(`/api/search/preview?${p}`)
+    const result = await api.get(`/api/search/preview?${p}`, signal)
+    if (signal.aborted) return
+    items.value = result
     emitAll()
   } catch (e) {
+    if (signal.aborted) return
     items.value = []
     loadError.value = e.message
     emit('stats', { pass: -1, total: 0, error: e.message })
@@ -106,11 +106,17 @@ async function checkHealth() {
   healthLoading.value = false
 }
 
-watch(() => [props.include, props.exclude, props.excludeBatch], () => {
-  clearTimeout(timer)
-  timer = setTimeout(load, 450)
-})
-onMounted(load)
+const retryKey = ref(0)
+watch(() => [props.bangumiId, props.subgroupId, props.include, props.exclude, props.excludeBatch,
+  retryKey.value], (_, previous, onCleanup) => {
+  const controller = new AbortController()
+  items.value = []
+  loadError.value = ''
+  loading.value = true
+  emit('stats', { pass: -1, total: 0 })
+  const timer = setTimeout(() => load(controller.signal), previous ? 350 : 0)
+  onCleanup(() => { clearTimeout(timer); controller.abort() })
+}, { immediate: true })
 </script>
 
 <template>
@@ -131,6 +137,7 @@ onMounted(load)
 
     <p v-if="loadError" class="warn error">
       <Icon name="alert" :size="14" /> 源预览失败:{{ loadError }}。请重试后再保存。
+      <button class="btn sm" @click="retryKey++">重试</button>
     </p>
     <div v-if="epsTotal > 0 && !loading" class="coverage muted">
       完整度:覆盖 <b style="color: var(--green)">{{ fmtRange(coverage.covered) }}</b>

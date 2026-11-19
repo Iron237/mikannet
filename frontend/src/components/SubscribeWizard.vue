@@ -11,7 +11,7 @@ const props = defineProps({
   // 从番剧详情页打开时预设,直接跳到选字幕组
   preset: { type: Object, default: null },   // { mikan_bangumi_id, title }
 })
-const emit = defineEmits(['close'])
+const emit = defineEmits(['close', 'created'])
 
 const step = ref(1)
 const keyword = ref('')
@@ -61,6 +61,8 @@ async function pick(r) {
 
 function pickGroup(g) {
   group.value = g
+  overrides.value = {}
+  previewStats.value = { pass: -1, total: 0, error: '' }
   step.value = 3
 }
 
@@ -93,17 +95,18 @@ async function submit() {
   submitting.value = true
   error.value = ''
   try {
-    await api.post('/api/subscriptions', {
+    const created = await api.post('/api/subscriptions', {
       mikan_bangumi_id: picked.value.mikan_bangumi_id,
       mikan_subgroup_id: group.value.subgroup_id,
       subgroup_name: group.value.name,
       include_keywords: form.value.include_keywords.split(/[,,\s]+/).filter(Boolean),
       exclude_keywords: form.value.exclude_keywords.split(/[,,\s]+/).filter(Boolean),
-      pinned_guids: Object.keys(overrides.value).filter(g => overrides.value[g] === true),
-      blocked_guids: Object.keys(overrides.value).filter(g => overrides.value[g] === false),
+      pinned_guids: form.value.backfill ? Object.keys(overrides.value).filter(g => overrides.value[g] === true) : [],
+      blocked_guids: form.value.backfill ? Object.keys(overrides.value).filter(g => overrides.value[g] === false) : [],
       exclude_batch: form.value.exclude_batch,
       backfill: form.value.backfill,
     })
+    emit('created', created)
     emit('close')
   } catch (e) {
     error.value = e.message
@@ -185,11 +188,13 @@ onMounted(() => {
         <!-- 字幕组选择 -->
         <div v-else-if="!detail" class="muted">加载字幕组…</div>
         <div v-else class="group-list">
-          <div v-for="g in detail.subgroups" :key="g.subgroup_id" class="group-item"
-               @click="pickGroup(g)">
+          <p v-if="!detail.subgroups.length" class="muted">蜜柑还没有列出这部番剧的字幕组。</p>
+          <button v-for="g in detail.subgroups" :key="g.subgroup_id" class="group-item"
+                  type="button" :disabled="g.subscribed" @click="pickGroup(g)">
             <div class="row">
               <strong>{{ g.name }}</strong>
               <span class="tag">{{ g.torrent_count }} 个种子</span>
+              <span v-if="g.subscribed" class="tag">{{ g.subscription_enabled ? '已订阅' : '已订阅 · 已停用' }}</span>
             </div>
             <!-- 能力摘要:该组发布过的分辨率/字幕语言/片源/有无合集 -->
             <div v-if="g.caps" class="caps">
@@ -205,7 +210,7 @@ onMounted(() => {
                 <Chips :chips="t.chips" />
               </div>
             </div>
-          </div>
+          </button>
         </div>
       </template>
 
@@ -216,9 +221,8 @@ onMounted(() => {
           <strong>{{ picked.title }}</strong>
           <span class="tag accent">{{ group.name }}</span>
           <div class="spacer" />
-          <button class="btn primary" :disabled="submitting || previewStats.pass <= 0 || !!previewStats.error"
-                  :title="previewStats.error ? '源预览失败,暂不能创建'
-                    : previewStats.pass === 0 ? '当前规则不会下载任何内容' : ''"
+          <button class="btn primary" :disabled="submitting || (form.backfill && previewStats.pass <= 0)"
+                  :title="form.backfill && previewStats.pass === 0 ? '当前规则没有匹配历史条目' : ''"
                   @click="submit">
             {{ submitting ? '创建中…' : '创建订阅' }}
           </button>
@@ -244,7 +248,8 @@ onMounted(() => {
           </label>
         </div>
 
-        <RulePreview :bangumi-id="picked.mikan_bangumi_id" :subgroup-id="group.subgroup_id"
+        <p v-if="!form.backfill" class="muted">首次检查会记下源里已有的条目，之后只下载新出现且符合规则的条目。</p>
+        <RulePreview v-else :bangumi-id="picked.mikan_bangumi_id" :subgroup-id="group.subgroup_id"
                      :include="form.include_keywords" :exclude="form.exclude_keywords"
                      :exclude-batch="form.exclude_batch"
                      :eps-total="detail?.eps_total || 0"
@@ -281,6 +286,8 @@ onMounted(() => {
   cursor: pointer; transition: all .15s;
 }
 .group-item:hover { border-color: var(--accent); background: var(--bg-hover); }
+button.group-item { text-align: left; color: inherit; background: transparent; font: inherit; }
+button.group-item:disabled { cursor: default; opacity: .65; }
 .bd-rel-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .caps { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
 .recent-list { margin-top: 8px; display: flex; flex-direction: column; gap: 5px;

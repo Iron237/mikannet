@@ -12,6 +12,7 @@ from app.database import get_db
 from app.models import (AutoScanLog, Bangumi, BdRelease, Episode, EpisodeType, Kind,
                         Subscription, Torrent, TorrentEpisode, TorrentStatus, VideoFile)
 from app.services.local_import import LOCAL_SUBGROUP_ID
+from app.services.download_paths import media_file_exists
 
 router = APIRouter(prefix="/api/bangumi", tags=["bangumi"])
 log = logging.getLogger(__name__)
@@ -26,10 +27,7 @@ def _file_exists(relative_path: str) -> bool:
     cached = _FILE_EXIST_CACHE.get(key)
     if cached and now - cached[0] < _FILE_EXIST_TTL:
         return cached[1]
-    try:
-        exists = path.is_file()
-    except OSError:
-        exists = False
+    exists = media_file_exists(relative_path)
     if len(_FILE_EXIST_CACHE) > 10000:
         _FILE_EXIST_CACHE.clear()
     _FILE_EXIST_CACHE[key] = (now, exists)
@@ -1148,8 +1146,10 @@ def sync_resources(bangumi_id: int, db: Session = Depends(get_db)):
         Subscription.bangumi_id == b.id,
         Subscription.enabled.is_(True),
         Subscription.mikan_subgroup_id.notin_(("local", "auto")))).scalars().all()
-    rss_results = [safe_poll(db, sub) for sub in subs]
-    db.commit()
+    rss_results = []
+    for sub in subs:
+        rss_results.append(safe_poll(db, sub))
+        db.commit()
     auto_started = False
     auto_note = None
     if b.mikan_bangumi_id:

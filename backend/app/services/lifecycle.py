@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -17,32 +18,46 @@ from sqlalchemy.orm import Session
 from app.clients.downloader import downloader
 from app.config import settings
 from app.database import db_session
-from app.models import (AiringStatus, Bangumi, Episode, EpisodeType, Subscription,
-                        Torrent, TorrentEpisode, VideoFile)
+from app.models import (AiringStatus, Bangumi, Episode, EpisodeType, Kind, Subscription,
+                        Torrent, TorrentStatus, VideoFile)
+from app.services import storage
 from app.services.auto_best import AUTO_SUBGROUP_ID
+from app.services.download_paths import media_file_exists
 from app.services.local_import import LOCAL_SUBGROUP_ID
 
 log = logging.getLogger(__name__)
 
 
-def _active_bd_regular_eps(db: Session, bangumi_id: int) -> set[int]:
-    """该番剧「有 is_active BD 文件」的正片集号集合。"""
+def _complete_bd_files(db: Session, b: Bangumi) -> dict[int, set[Path]]:
+    """整季正式正片有可用 BD 时返回剧集 ID → 实盘路径，用于判定旧种是否可整包清理。"""
+    if b.kind != Kind.TV or not b.eps_total or b.eps_total < 1:
+        return {}
+    if settings.storage_mode in ("smb", "nfs") and not storage.is_mounted():
+        return {}
+    start = b.ep_start or 1
+    end = start + b.eps_total - 1
     rows = db.execute(
-        select(Episode.number)
+        select(Episode.id, Episode.number, VideoFile.relative_path)
         .join(VideoFile, VideoFile.episode_id == Episode.id)
-        .where(Episode.bangumi_id == bangumi_id, Episode.type == EpisodeType.REGULAR,
-               VideoFile.is_active.is_(True), VideoFile.source == "BD")).scalars().all()
-    return {int(n) for n in rows if n is not None}
+        .join(Torrent, Torrent.id == VideoFile.torrent_id)
+        .where(Episode.bangumi_id == b.id, Episode.type == EpisodeType.REGULAR,
+               Episode.number.between(start, end), Torrent.is_preview.is_(False),
+               VideoFile.is_active.is_(True), VideoFile.source == "BD"))
+    files: dict[int, set[Path]] = {}
+    root = settings.download_root_local.resolve()
+    for episode_id, number, path in rows:
+        if float(number).is_integer() and media_file_exists(path):
+            resolved = (root / path).resolve()
+            if resolved.is_relative_to(root):
+                files.setdefault(episode_id, set()).add(Path(path))
+    # (番剧、类型、集号)有唯一约束。范围内的 N 个不同整数即覆盖整季。
+    return files if len(files) == b.eps_total else {}
 
 
 def bd_complete(db: Session, b: Bangumi) -> bool:
     """全 BD 完成判据:eps_total 已知 且 正片每一集(bangumi 编号 ep_start..ep_start+N-1)
     都有 is_active 的 BD 文件。"""
-    if not b.eps_total:
-        return False
-    have = _active_bd_regular_eps(db, b.id)
-    start = b.ep_start or 1
-    return all(n in have for n in range(start, start + b.eps_total))
+    return bool(_complete_bd_files(db, b))
 
 
 def _real_subs(db: Session, bangumi_id: int) -> list[Subscription]:
@@ -52,15 +67,30 @@ def _real_subs(db: Session, bangumi_id: int) -> list[Subscription]:
         if s.mikan_subgroup_id not in (AUTO_SUBGROUP_ID, LOCAL_SUBGROUP_ID)]
 
 
+def _shared_file_paths(db: Session, root: Path) -> set[str]:
+    """旧库允许多个种子引用同一路径；解析别名后保护所有共用文件。"""
+    owner: dict[str, int] = {}
+    shared: set[str] = set()
+    for torrent_id, path in db.execute(select(VideoFile.torrent_id, VideoFile.relative_path)):
+        # Linux 容器的 SMB 共享也可能不区分大小写，宁可保留疑似同名文件。
+        key = str((root / path).resolve()).casefold()
+        if owner.setdefault(key, torrent_id) != torrent_id:
+            shared.add(key)
+    return shared
+
+
 def finalize_complete(db: Session, b: Bangumi) -> bool:
     """全 BD 完成 → 收尾(幂等):清 auto_best、停真订阅、删被 BD 顶替的 web 种子(任务+文件)。
 
-    删 web 判据:真下载的(有 info_hash)、其文件全非 active(已被 BD 顶替)、且不含 BD 源
-    (别误删 BD 自身)。合集种子整包都被顶替才会全非 active → 安全(避免破坏种子完整性)。
+    整包清理前对照下载器清单：每个视频都必须是已归档的正式备用 Web，
+    且各自有独立的正式 BD 实盘替代。下载器不可达时保留记录以供重试。
     返回是否执行了收尾动作(用于幂等:无动作即已收尾过)。
     """
-    if not bd_complete(db, b):
+    replacements = _complete_bd_files(db, b)
+    if not replacements:
         return False
+    root = settings.download_root_local.resolve()
+    shared_paths = None
     changed = False
     if b.auto_best:
         b.auto_best = False
@@ -70,27 +100,48 @@ def finalize_complete(db: Session, b: Bangumi) -> bool:
             s.enabled = False
             changed = True
     torrents = db.execute(select(Torrent).join(Subscription).where(
-        Subscription.bangumi_id == b.id, Torrent.info_hash.isnot(None))).scalars().all()
+        Subscription.bangumi_id == b.id, Torrent.info_hash.isnot(None),
+        Torrent.is_preview.is_(False), Torrent.status == TorrentStatus.ARCHIVED)).scalars().all()
+    removed = failures = 0
     for t in torrents:
         vfs = list(t.files)
-        if not vfs or any(f.is_active for f in vfs) or any(f.source == "BD" for f in vfs):
+        if not vfs or any(f.is_active or f.source != "Web" or f.episode_id not in replacements
+                          for f in vfs):
             continue
         try:
+            # 下载器可能已重命名、或持有数据库未登记的特典。只有文件清单一致才可整包删除。
+            web_paths = {Path(f.relative_path) for f in vfs}
+            listed = {Path(row["name"].replace("\\", "/")) for row in downloader.files(t.info_hash)}
+            if web_paths != listed:
+                continue
+            web_targets = {(root / path).resolve() for path in web_paths}
+            if any(not path.is_relative_to(root) for path in web_targets):
+                continue
+            if shared_paths is None:
+                shared_paths = _shared_file_paths(db, root)
+            if any(str(path).casefold() in shared_paths for path in web_targets):
+                continue
+            # 多个任务依次清理时挂载仍可能断开，每次删前重新核对此包依赖的替代文件。
+            if any(not any(media_file_exists(path) for path in replacements[ep_id])
+                   for ep_id in {f.episode_id for f in vfs}):
+                continue
             downloader.delete(t.info_hash, delete_files=True)
-        except Exception as e:  # noqa: BLE001 — 下载器里可能已不存在
+        except Exception as e:  # noqa: BLE001 — 保留映射，稍后重试整包清理
             log.warning("收尾删 web 种子 %s 失败: %s", t.info_hash, e)
+            failures += 1
+            continue
         for f in vfs:
             db.delete(f)
-        for te in db.execute(select(TorrentEpisode).where(
-                TorrentEpisode.torrent_id == t.id)).scalars():
-            db.delete(te)
-        db.flush()
-        db.delete(t)
+        db.delete(t)  # ORM 同步删除 torrent_episode 关联
+        removed += 1
         changed = True
     if changed:
         db.flush()
         log.info("BD 补全完成收尾:%s → 停扫/停订阅/删冗余 web", b.title)
-        _notify(b, "BD 补全完成", f"{b.title} 正片已全部替换为 BD,停止补全并清理 web 版本。")
+        message = f"{b.title} 正式正片已全部替换为 BD，已清理 {removed} 个 Web 种子。"
+        if failures:
+            message += f"另有 {failures} 个清理失败，将在下次核对时重试。"
+        _notify(b, "BD 补全完成", message)
     return changed
 
 

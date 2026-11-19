@@ -2,6 +2,7 @@
 import logging
 
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING
 
 from app.config import settings
 from app.database import db_session
@@ -134,14 +135,13 @@ def stop() -> None:
         scheduler.shutdown(wait=False)
 
 
-def resume_after_failed_update() -> None:
-    """完整更新 helper 静默失败(容器没被重建)时恢复调度。
+def pause_for_update() -> None:
+    if scheduler.state == STATE_RUNNING:
+        scheduler.pause()
 
-    _quiesce 已 shutdown;APScheduler 实例 shutdown 后不可复用 → 重建全局实例再照常 start
-    (start() 会重新注册全部任务)。幂等:仍在跑则不动。"""
-    global scheduler
-    if scheduler.running:
-        return
-    scheduler = BackgroundScheduler()
-    start()
-    log.info("完整更新未生效,调度器已恢复运行")
+
+def resume_after_failed_update() -> None:
+    """沿用现有调度器，保留 RSS、存储看门狗等任务的触发时间。"""
+    if scheduler.state == STATE_PAUSED:
+        scheduler.resume()
+        log.info("更新未生效，已恢复后台调度")

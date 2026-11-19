@@ -164,3 +164,23 @@ def test_library_reconcile_includes_qb_rows_with_missing_parent(
 
     assert library_scan._reconcile_removed(db) == 1
     assert db.query(VideoFile).count() == 0
+
+
+@pytest.mark.parametrize("folder,expected", [
+    ("/Downloads", "01.mkv"), ("/Downloads/show", "show/01.mkv"),
+    ("/Downloads-old", None), ("/elsewhere", None), ("", None),
+])
+def test_bitcomet_inventory_respects_download_root(monkeypatch, folder, expected):
+    from app.clients.bitcomet import BitCometClient
+
+    client = BitCometClient()
+    monkeypatch.setattr(settings, "bitcomet_download_root", "/Downloads")
+    monkeypatch.setattr(client, "_task_id_for", lambda _: "1")
+    replies = {"/api/task/summary/get": {"task_detail": {"save_folder": folder}},
+               "/api/task/files/get": {"files": [{"name": "01.mkv", "size": 9}]}}
+    monkeypatch.setattr(client, "_post", lambda path, _body: replies[path])
+    if expected is None:
+        with pytest.raises(RuntimeError):
+            client.files("hash")
+    else:
+        assert client.files("hash") == [{"name": expected, "size": 9}]

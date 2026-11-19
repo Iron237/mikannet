@@ -23,6 +23,7 @@ from app.database import db_session
 from app.models import (AutoScanLog, Bangumi, Episode, EpisodeType, Subscription, Torrent,
                         TorrentEpisode, TorrentStatus, VideoFile)
 from app.parsers.title_parser import detect_subtitle_tags, parse
+from app.services.download_paths import media_file_exists, subscription_save_path
 
 log = logging.getLogger(__name__)
 
@@ -46,13 +47,6 @@ def normalize_mode(value: str | None) -> str:
 
 def _source_rank(source: str | None) -> int:
     return _SOURCE_RANK.get(source, 2)
-
-
-def _file_exists(relative_path: str) -> bool:
-    try:
-        return (settings.download_root_local / relative_path).is_file()
-    except OSError:
-        return False
 
 
 def _has_pref_sub(title: str) -> bool:
@@ -144,7 +138,7 @@ def _current_ranks(db: Session, bangumi_id: int) -> dict[int, int]:
                VideoFile.is_active.is_(True))).all()
     out: dict[int, int] = {}
     for number, source, relative_path in rows:
-        if number is None or not _file_exists(relative_path):
+        if number is None or not media_file_exists(relative_path):
             continue
         ep = int(number)
         out[ep] = min(out.get(ep, 99), _source_rank(source))
@@ -152,8 +146,7 @@ def _current_ranks(db: Session, bangumi_id: int) -> dict[int, int]:
 
 
 def _auto_sub(db: Session, bangumi: Bangumi) -> Subscription:
-    from app.api.subscriptions import _safe_dirname
-    expected_path = f"{settings.download_root}/{_safe_dirname(bangumi.title)}"
+    expected_path = subscription_save_path(bangumi.title)
     sub = db.execute(select(Subscription).where(
         Subscription.bangumi_id == bangumi.id,
         Subscription.mikan_subgroup_id == AUTO_SUBGROUP_ID)).scalar_one_or_none()
@@ -183,7 +176,7 @@ def _submit_candidate(db: Session, sub: Subscription, c: dict) -> bool:
     if existing is not None:
         retry_missing_archive = (
             existing.status == TorrentStatus.ARCHIVED
-            and not any(f.is_active and _file_exists(f.relative_path) for f in existing.files)
+            and not any(f.is_active and media_file_exists(f.relative_path) for f in existing.files)
         )
         if existing.status != TorrentStatus.SUBMIT_FAILED and not retry_missing_archive:
             return False
@@ -258,7 +251,7 @@ def scan_bangumi(db: Session, bangumi: Bangumi, do_fill: bool = True,
     have = {
         torrent.guid for torrent in handled
         if not (torrent.status == TorrentStatus.ARCHIVED
-                and not any(f.is_active and _file_exists(f.relative_path)
+                and not any(f.is_active and media_file_exists(f.relative_path)
                             for f in torrent.files))
     }
     cands = [c for c in cands if c["guid"] not in have]

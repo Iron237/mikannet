@@ -246,3 +246,115 @@ def test_safe_extract_rejects_sibling_prefix_escape(tmp_path):
     with pytest.raises(RuntimeError, match="非法路径"):
         updater._safe_extract(blob, tmp_path / "extract")
     assert not (tmp_path / "extract-evil" / "payload.py").exists()
+
+
+@pytest.fixture
+def isolated_scheduler(monkeypatch):
+    from apscheduler.schedulers.background import BackgroundScheduler
+    from app import scheduler
+
+    # 私有调度器仅注册一个未来触发的测试任务，不运行项目中的任何后台操作。
+    isolated = BackgroundScheduler()
+    isolated.add_job(lambda: None, "interval", days=1, id="rss_poll")
+    isolated.start()
+    monkeypatch.setattr(scheduler, "scheduler", isolated)
+    monkeypatch.setattr(update_gate, "_updating", False)
+    monkeypatch.setattr(updater, "_status", updater.get_status())
+    try:
+        yield isolated
+    finally:
+        isolated.shutdown()
+
+
+def test_full_update_helper_start_failure_resumes_jobs(monkeypatch, isolated_scheduler):
+    from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING
+    from app.services import docker_api
+
+    due = isolated_scheduler.get_job("rss_poll").next_run_time
+    monkeypatch.setattr(updater, "full_update_readiness", lambda: {"ready": True})
+
+    def fail_helper(**kw):
+        assert isolated_scheduler.state == STATE_PAUSED
+        assert update_gate.is_updating()
+        raise RuntimeError("simulated helper failure")
+
+    monkeypatch.setattr(docker_api, "run_compose_recreate", fail_helper)
+    with pytest.raises(RuntimeError, match="simulated helper failure"):
+        updater.apply_full({"version": "1.0", "image_ref": "fixture"})
+    assert isolated_scheduler.state == STATE_RUNNING
+    assert isolated_scheduler.get_job("rss_poll").next_run_time == due
+    assert not update_gate.is_updating()
+    assert updater.get_status()["phase"] == "error"
+
+
+@pytest.mark.parametrize("failure", ["switch", "signal"])
+def test_code_update_failed_handoff_resumes_jobs(tmp_path, monkeypatch, isolated_scheduler, failure):
+    import hashlib
+    from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING
+
+    monkeypatch.setattr(updater.settings, "code_dir", tmp_path)
+    data = b"fixture"
+    monkeypatch.setattr(updater, "_download", lambda url: data)
+    monkeypatch.setattr(updater, "_current_version_name", lambda: "old")
+    switches = []
+
+    def stage(_data, target):
+        app = target / "backend" / "app"
+        app.mkdir(parents=True)
+        (app / "main.py").touch()
+
+    monkeypatch.setattr(updater, "_safe_extract", stage)
+
+    def switch(version):
+        assert isolated_scheduler.state == STATE_PAUSED
+        if failure == "switch":
+            raise OSError("simulated switch failure")
+        switches.append(version)
+
+    def signal_failure():
+        raise OSError("simulated signal failure")
+
+    monkeypatch.setattr(updater, "_point_current", switch)
+    monkeypatch.setattr(updater, "_exit_soon", signal_failure)
+    with pytest.raises(OSError, match=f"simulated {failure} failure"):
+        updater.apply_code({"version": "new", "code_package_url": "fixture",
+                            "code_sha256": hashlib.sha256(data).hexdigest()})
+    assert switches == (["new", "old"] if failure == "signal" else [])
+    assert not (tmp_path / "pending.json").exists()
+    assert isolated_scheduler.state == STATE_RUNNING
+    assert not update_gate.is_updating()
+    assert updater.get_status()["phase"] == "error"
+
+
+def test_full_update_watchdog_resumes_same_jobs(monkeypatch, isolated_scheduler):
+    from apscheduler.schedulers.base import STATE_RUNNING
+    from unittest.mock import Mock
+
+    threads = Mock()
+    monkeypatch.setattr(updater.threading, "Thread", threads)
+    updater._quiesce()
+    updater._arm_full_update_watchdog(timeout=0)
+    threads.call_args.kwargs["target"]()
+    assert isolated_scheduler.state == STATE_RUNNING
+    assert isolated_scheduler.get_job("rss_poll")
+    assert not update_gate.is_updating()
+    assert updater.get_status()["phase"] == "error"
+
+
+def test_duplicate_update_is_rejected_through_restart(monkeypatch):
+    from unittest.mock import Mock
+
+    threads = Mock()
+    monkeypatch.setattr(updater.threading, "Thread", threads)
+    result = {"type": "code", "latest": "1.0"}
+    monkeypatch.setattr(updater, "_check_internal", lambda: (result, {"version": "1.0"}, {}))
+    monkeypatch.setattr(updater, "apply_code", lambda _: update_gate.set_updating(True))
+    monkeypatch.setattr(update_gate, "_updating", False)
+    monkeypatch.setattr(updater, "_status", updater.get_status())
+    assert updater.apply_latest()["version"] == "1.0"
+    with pytest.raises(RuntimeError, match="进行"):
+        updater.apply_latest()
+    threads.call_args.kwargs["target"]()
+    with pytest.raises(RuntimeError, match="重启"):
+        updater.apply_latest()
+    assert threads.call_count == 1

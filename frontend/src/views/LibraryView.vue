@@ -10,6 +10,8 @@ function readCache() {
 }
 const cached = readCache()
 const items = ref(Array.isArray(cached?.items) ? cached.items : [])
+const verifiedCache = Array.isArray(cached?.items) && cached.verifiedAt > 0
+  && cached.items.every(item => item.files_verified === true)
 const filter = ref('all')      // all | airing | finished
 const srcFilter = ref('all')   // all | bd | bd_owned | bd_unowned | web
 const bdMenuOpen = ref(false)  // BD 片源下拉(已购/未购作为子菜单)
@@ -33,6 +35,7 @@ let autoTimer = null
 let verifyTimer = null
 let verifyIdle = null
 let mounted = true
+let loadSequence = 0
 
 const SEASON_ORDER = { '秋': 4, '夏': 3, '春': 2, '冬': 1 }
 // 有未下载的已播集(连载番=有新集 / 完结番=缺集)
@@ -88,27 +91,29 @@ function onCard(b, e) {
 }
 
 async function reload({ verifyFiles = true, background = false } = {}) {
+  const sequence = ++loadSequence
   if (!background) loadError.value = ''
   try {
-    items.value = await api.get(`/api/bangumi?verify_files=${verifyFiles}`)
-    const previous = readCache()
-    sessionStorage.setItem(CACHE_KEY, JSON.stringify({
-      items: items.value,
-      verifiedAt: verifyFiles ? Date.now() : (previous?.verifiedAt || 0),
-    }))
+    const result = await api.get(`/api/bangumi?verify_files=${verifyFiles}`)
+    if (!mounted || sequence !== loadSequence) return
+    items.value = result
+    loadError.value = ''
+    try {
+      sessionStorage.setItem(CACHE_KEY, JSON.stringify({
+        items: result, verifiedAt: verifyFiles ? Date.now() : 0,
+      }))
+    } catch { /* 会话存储不可写时仍展示本次结果。 */ }
   } catch (e) {
-    if (!background || !items.value.length) {
-      loadError.value = e.message
-      throw e
-    }
+    if (!mounted || sequence !== loadSequence) return
+    if (!background || !items.value.length) loadError.value = e.message
+    if (!background) throw e
+    return
   }
   const ids = new Set(items.value.map(b => b.id))
   selected.value = new Set([...selected.value].filter(id => ids.has(id)))
 }
 
 function scheduleVerifiedReload() {
-  const verifiedAt = Number(readCache()?.verifiedAt || 0)
-  if (Date.now() - verifiedAt < 60_000) return
   const run = () => {
     if (!mounted) return
     reload({ verifyFiles: true, background: true })
@@ -122,6 +127,14 @@ function scheduleVerifiedReload() {
 
 function notifyIssuesStale() {
   window.dispatchEvent(new CustomEvent('mikannet:issues-stale'))
+}
+
+function onBackupRestored() {
+  items.value = []
+  clearSel()
+  delConfirm.value = null
+  autoConfirm.value = null
+  reload({ verifyFiles: true, background: true })
 }
 
 async function doDelete() {
@@ -181,11 +194,13 @@ async function pollScan() {
 }
 
 onMounted(async () => {
+  window.addEventListener('mikannet:backup-restored', onBackupRestored)
   try {
-    // 首屏只取数据库快照；内容先出现，再在浏览器空闲时核对实盘文件。
-    await reload({ verifyFiles: false })
+    // 冷启动用数据库快照快速展示；返回番剧库时直接展示已核验缓存，再后台更新。
+    if (!verifiedCache) await reload({ verifyFiles: false })
   } catch { /* 页面显示 loadError */ }
   finally { loading.value = false }
+  if (!mounted) return
   scheduleVerifiedReload()
   try {
     const s = await api.get('/api/import/library-scan/status')
@@ -198,6 +213,7 @@ onMounted(async () => {
 })
 onUnmounted(() => {
   mounted = false
+  window.removeEventListener('mikannet:backup-restored', onBackupRestored)
   clearTimeout(scanTimer)
   clearTimeout(autoTimer)
   clearTimeout(verifyTimer)

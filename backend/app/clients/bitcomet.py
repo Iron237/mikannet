@@ -167,10 +167,12 @@ class BitCometClient:
         if tid is None:
             return []
         summ = self._post("/api/task/summary/get", {"task_id": tid}).get("task_detail", {})
-        save_folder = (summ.get("save_folder") or "").replace("\\", "/").rstrip("/")
+        save_folder = summ.get("save_folder") or ""
         # save_folder 是该任务实际存放目录(= 下载根[/内容子目录]);相对下载根的部分即文件名前缀
-        broot = settings.bitcomet_download_root.replace("\\", "/").rstrip("/")
-        rel = save_folder[len(broot):].lstrip("/") if save_folder.startswith(broot) else ""
+        from app.services.download_paths import relative_under
+        rel = relative_under(save_folder, settings.bitcomet_download_root)
+        if rel is None:
+            raise RuntimeError("BitComet 保存目录不在当前下载根内，无法核对文件清单")
         prefix = rel + "/" if rel else ""
         r = self._post("/api/task/files/get", {"task_id": tid})
         return [{"name": prefix + f.get("name", ""), "size": f.get("size")}

@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api } from '../api'
+import { needsAttention, pollSummary } from '../subscriptionStatus'
 import EditSubscriptionModal from '../components/EditSubscriptionModal.vue'
 import LocalImportModal from '../components/LocalImportModal.vue'
 import SubscribeWizard from '../components/SubscribeWizard.vue'
@@ -28,17 +29,24 @@ const allError = ref('')
 let allTimer = null
 const selected = ref(new Set())
 const delConfirm = ref(null)     // { ids: [...] } 待确认删除
-const delFiles = ref(false)
 const busy = ref(false)
 const loading = ref(true)
 const loadError = ref('')
 const showInternal = ref(false)
-const checking = ref(0)
+const checking = ref(new Set())
+const filter = ref('all')
+const query = ref('')
 const actionMsg = ref('')
 let pollTimer = null
 let mounted = true
 
-const actionable = computed(() => subs.value.filter(s => s.source === 'rss'))
+const visible = computed(() => {
+  const term = query.value.trim().toLocaleLowerCase()
+  return subs.value.filter(s => (filter.value !== 'attention' || needsAttention(s))
+    && [s.bangumi_title, s.subgroup_name, s.mikan_subgroup_id].some(
+      value => String(value ?? '').toLocaleLowerCase().includes(term)))
+})
+const actionable = computed(() => visible.value.filter(s => s.source === 'rss'))
 const allSelected = computed(() =>
   actionable.value.length > 0 && actionable.value.every(s => selected.value.has(s.id)))
 
@@ -70,30 +78,35 @@ async function toggleInternal() {
 }
 
 async function pollOne(sub) {
-  checking.value = sub.id
+  if (checking.value.has(sub.id)) return
+  checking.value.add(sub.id)
   actionMsg.value = ''
   try {
     const r = await api.post(`/api/subscriptions/${sub.id}/poll`, {})
-    actionMsg.value = r.error ? `检查失败:${r.error}`
-      : `已检查「${sub.bangumi_title}」,接受 ${r.accepted ?? 0} 个,恢复 ${r.revived ?? 0} 个`
+    actionMsg.value = `「${sub.bangumi_title}」${pollSummary(r)}`
     await load()
   } catch (e) { actionMsg.value = e.message }
-  finally { checking.value = 0 }
+  finally { checking.value.delete(sub.id) }
 }
 
 async function toggle(sub) {
-  await api.patch(`/api/subscriptions/${sub.id}`, { enabled: !sub.enabled })
-  await load()
+  try {
+    await api.patch(`/api/subscriptions/${sub.id}`, { enabled: !sub.enabled })
+    await load()
+  } catch (e) { actionMsg.value = e.message }
 }
 
 async function doDelete() {
   busy.value = true
   try {
-    await api.post('/api/subscriptions/batch-delete',
-      { ids: delConfirm.value.ids, delete_files: delFiles.value })
-    delConfirm.value = null; delFiles.value = false; clearSel()
+    const r = await api.post('/api/subscriptions/batch-delete',
+      { ids: delConfirm.value.ids, delete_files: !!delConfirm.value.deleteFiles })
+    delConfirm.value = null
+    selected.value = new Set(r.failed)
+    actionMsg.value = r.failed.length ? `已删除 ${r.done.length} 个订阅，${r.failed.length} 个未成功` : ''
     await load()
-  } finally { busy.value = false }
+  } catch (e) { actionMsg.value = e.message }
+  finally { busy.value = false }
 }
 
 async function startImportAll() {
@@ -151,7 +164,7 @@ onUnmounted(() => { mounted = false; clearTimeout(pollTimer); clearTimeout(allTi
       <button class="btn sm" :class="{ primary: showInternal }" @click="toggleInternal">
         <Icon name="database" :size="13" /> {{ showInternal ? '隐藏系统记录' : '显示系统记录' }}
       </button>
-      <button v-if="subs.length" class="btn sm" @click="allSelected ? clearSel() : selectAll()">
+      <button v-if="actionable.length" class="btn sm" @click="allSelected ? clearSel() : selectAll()">
         {{ allSelected ? '取消全选' : '全选' }}
       </button>
       <button v-if="subs.length" class="btn sm" :disabled="!selected.size" @click="clearSel">清空选择</button>
@@ -161,7 +174,15 @@ onUnmounted(() => { mounted = false; clearTimeout(pollTimer); clearTimeout(allTi
       <button class="btn primary" @click="showWizard = true"><Icon name="plus" :size="14" /> 添加订阅</button>
     </div>
 
-    <p v-if="actionMsg" class="action-msg">{{ actionMsg }}</p>
+    <p role="status" class="action-msg">{{ actionMsg }}</p>
+    <div v-if="subs.length" class="sub-filters">
+      <input v-model="query" class="input" type="search" aria-label="搜索番剧或字幕组"
+             placeholder="搜索番剧或字幕组" @input="clearSel" />
+      <select v-model="filter" class="input" aria-label="检查状态" @change="clearSel">
+        <option value="all">全部状态</option>
+        <option value="attention">需要处理（{{ subs.filter(needsAttention).length }}）</option>
+      </select>
+    </div>
 
     <div v-if="selected.size" class="batch-bar card">
       <strong>已选 {{ selected.size }} 个订阅</strong>
@@ -182,13 +203,14 @@ onUnmounted(() => { mounted = false; clearTimeout(pollTimer); clearTimeout(allTi
       还没有订阅 — 点击右上角「添加订阅」搜索蜜柑番剧
     </div>
 
-    <div v-for="s in subs" :key="s.id" class="card sub-row" :class="{ sel: isSel(s.id) }">
+    <p v-else-if="!visible.length" class="muted">没有符合条件的订阅。</p>
+    <div v-for="s in visible" :key="s.id" class="card sub-row" :class="{ sel: isSel(s.id) }">
       <div class="row">
         <input v-if="s.source === 'rss'" type="checkbox" class="ck"
                :checked="isSel(s.id)" @change="toggleSel(s.id)" />
         <span v-else class="internal-lock" title="系统内部记录不可批量操作"><Icon name="database" :size="13" /></span>
-        <span v-if="s.source === 'rss'" class="health" :class="s.last_poll_ok ? 'ok' : 'bad'"
-              :title="s.last_poll_error || 'RSS 正常'">●</span>
+        <span v-if="s.source === 'rss'" aria-hidden="true" class="health"
+              :class="{ bad: needsAttention(s), ok: s.last_checked_at && !needsAttention(s) }">●</span>
         <Icon v-else :name="s.source === 'auto' ? 'zap' : 'folder'" :size="15" class="muted" />
         <div class="sub-main">
           <div style="font-weight: 600;">
@@ -202,6 +224,11 @@ onUnmounted(() => { mounted = false; clearTimeout(pollTimer); clearTimeout(allTi
               <span v-if="s.exclude_keywords.length"> · 排除: {{ s.exclude_keywords.join(' / ') }}</span>
               <span> · {{ s.exclude_batch ? '排除合集' : '允许合集' }}</span>
               <span> · {{ s.backfill ? '补齐历史' : '只追新' }}</span>
+              <div v-if="!s.last_poll_ok" class="poll-error">检查失败 · {{ s.last_poll_error }}</div>
+              <div v-else-if="s.last_poll_summary" :class="{ 'poll-error': s.last_poll_summary.failed }">
+                {{ pollSummary(s.last_poll_summary) }}
+              </div>
+              <div v-else-if="!s.last_checked_at">{{ s.enabled ? '等待首次检查' : '已停用' }}</div>
             </template>
             <template v-else>
               {{ s.source === 'auto' ? '自动补全与升级的内部任务容器' : '本地导入的文件容器' }}
@@ -211,10 +238,10 @@ onUnmounted(() => { mounted = false; clearTimeout(pollTimer); clearTimeout(allTi
         <div class="spacer" />
         <template v-if="s.source === 'rss'">
           <span class="muted" style="font-size: 12px;" v-if="s.last_checked_at">
-            上次检查 {{ new Date(s.last_checked_at + 'Z').toLocaleString('zh-CN') }}
+            上次成功检查 {{ new Date(s.last_checked_at + 'Z').toLocaleString('zh-CN') }}
           </span>
-          <button class="btn sm" :disabled="checking === s.id" @click="pollOne(s)">
-            <Icon name="refresh" :size="13" /> {{ checking === s.id ? '检查中…' : '立即检查' }}
+          <button class="btn sm" :disabled="!s.enabled || checking.has(s.id)" @click="pollOne(s)">
+            <Icon name="refresh" :size="13" /> {{ checking.has(s.id) ? '检查中…' : '立即检查' }}
           </button>
           <button class="btn sm" @click="editing = s"><Icon name="edit" :size="13" /> 编辑规则</button>
           <button class="btn sm" :class="{ primary: s.enabled }" @click="toggle(s)">
@@ -227,18 +254,18 @@ onUnmounted(() => { mounted = false; clearTimeout(pollTimer); clearTimeout(allTi
       </div>
     </div>
 
-    <div v-if="delConfirm" class="modal-mask" @click.self="delConfirm = null">
+    <div v-if="delConfirm" class="modal-mask" @click.self="!busy && (delConfirm = null)">
       <div class="modal" style="width: 440px;">
         <h3 style="margin-bottom: 10px;">删除 {{ delConfirm.ids.length }} 个订阅</h3>
         <p class="muted" style="font-size: 12.5px;">
           将移除订阅及其下载任务记录(番剧与剧集保留)。
         </p>
         <label class="row" style="margin: 16px 0; cursor: pointer;">
-          <input type="checkbox" v-model="delFiles" />
+          <input type="checkbox" v-model="delConfirm.deleteFiles" />
           同时删除已下载的文件(不可恢复)
         </label>
         <div class="row" style="justify-content: flex-end;">
-          <button class="btn" @click="delConfirm = null">取消</button>
+          <button class="btn" :disabled="busy" @click="delConfirm = null">取消</button>
           <button class="btn danger" :disabled="busy" @click="doDelete">确认删除</button>
         </div>
       </div>
@@ -293,7 +320,8 @@ onUnmounted(() => { mounted = false; clearTimeout(pollTimer); clearTimeout(allTi
       </div>
     </div>
 
-    <SubscribeWizard v-if="showWizard" @close="showWizard = false; load()" />
+    <SubscribeWizard v-if="showWizard" @created="actionMsg = '已订阅《' + $event.bangumi_title + '》'"
+                     @close="showWizard = false; load()" />
     <EditSubscriptionModal v-if="editing" :sub="editing" @close="editing = null; load()" />
     <LocalImportModal v-if="showLocalImport" @close="showLocalImport = false; load()" />
 
@@ -339,6 +367,11 @@ onUnmounted(() => { mounted = false; clearTimeout(pollTimer); clearTimeout(allTi
 .health { font-size: 10px; }
 .health.ok { color: var(--green); }
 .health.bad { color: var(--red); }
+.poll-error { color: var(--red); overflow-wrap: anywhere; }
+.sub-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.sub-filters input { width: min(100%, 20rem); }
+.sub-filters select { width: auto; }
+.action-msg:empty { margin: 0; }
 .b-link { color: var(--text); text-decoration: none; }
 .b-link:hover { color: var(--accent); }
 .batch-bar {

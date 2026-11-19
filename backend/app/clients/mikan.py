@@ -170,6 +170,8 @@ class MikanClient:
 
     def _parse_feed(self, xml: str) -> list[RssItem]:
         feed = feedparser.parse(xml)
+        if not feed.version or feed.bozo:
+            raise ValueError("蜜柑返回的内容不是可读取的 RSS，请检查源地址后重试")
         items: list[RssItem] = []
         for e in feed.entries:
             torrent_url = next((l["href"] for l in e.get("links", [])

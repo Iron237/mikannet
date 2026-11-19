@@ -5,10 +5,11 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from datetime import date, datetime, timezone
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.clients.downloader import downloader
 from app.clients.mikan import RssItem, mikan_client
@@ -228,14 +229,15 @@ MANUAL_SKIP_REASON = "手动删除"
 DEAD_SKIP_REASON = "坏种自动清理"   # 坏种被移除后标记,不再复活(否则会循环重下死种)
 
 
-def reevaluate_skipped(db: Session, sub: Subscription) -> int:
+def _retry_skipped(db: Session, sub: Subscription, baseline: set[str]) -> Iterator[Torrent]:
     """过滤规则变更/坏种换源后,重新评估本订阅被淘汰的条目(手动删除、坏种的不复活)。"""
     rows = db.execute(select(Torrent).where(
         Torrent.subscription_id == sub.id,
         Torrent.status == TorrentStatus.SKIPPED,
         Torrent.error_message.notin_([MANUAL_SKIP_REASON, DEAD_SKIP_REASON]))).scalars().all()
-    revived = 0
     for t in rows:
+        if t.guid in baseline:
+            continue
         parsed = ParsedTitle.from_dict(t.parsed_json or {})
         if t.guid in (sub.blocked_guids or []):
             continue
@@ -254,30 +256,72 @@ def reevaluate_skipped(db: Session, sub: Subscription) -> int:
                 db.add(TorrentEpisode(torrent_id=t.id, episode_id=ep.id))
         db.flush()
         _submit(db, sub, t)
-        revived += 1
-    return revived
+        yield t
+
+
+def reevaluate_skipped(db: Session, sub: Subscription) -> int:
+    if not sub.enabled or sub.bangumi.auto_download_disabled:
+        return 0
+    baseline = set(sub.follow_baseline_guids or ()) if not sub.backfill else set()
+    return sum(1 for _ in _retry_skipped(db, sub, baseline))
+
+
+def _utc_naive(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _follow_baseline(sub: Subscription, items: list[RssItem]) -> set[str]:
+    if sub.follow_baseline_guids is None:
+        # 新订阅记录第一次成功拉取时的条目，包括没有发布时间的源。
+        # 已运行的旧订阅有检查时间，升级时保留这之后发布的新条目。
+        cutoff = sub.last_checked_at
+        sub.follow_baseline_guids = sorted({
+            item.guid for item in items
+            if cutoff is None or item.published_at is None
+            or _utc_naive(item.published_at) <= _utc_naive(cutoff)
+        })
+    return set(sub.follow_baseline_guids)
+
+
+def _skip_reason(sub: Subscription) -> str | None:
+    if not sub.enabled:
+        return "已停用，跳过"
+    if sub.bangumi.auto_download_disabled:
+        return "该番剧已停止自动获取"
+    if sub.mikan_subgroup_id in ("auto", "local"):
+        return "系统来源无需检查 RSS"
+    return None
 
 
 def poll_subscription(db: Session, sub: Subscription, backfill: bool | None = None,
                       items: list[RssItem] | None = None) -> dict:
-    """轮询一个订阅。backfill=False 时只看比 last_checked_at 新的条目(只追新)。
-    items 可由调用方预先并发取回(poll_all)。"""
-    if not sub.enabled:
-        return {"subscription": sub.id, "note": "已停用,跳过"}
+    """只追新按首次成功拉取的快照排除历史；items 可由调度器批量预取。"""
+    if reason := _skip_reason(sub):
+        return {"subscription": sub.id, "note": reason}
     do_backfill = sub.backfill if backfill is None else backfill
     if items is None:
         items = mikan_client.fetch_rss(sub.bangumi.mikan_bangumi_id, sub.mikan_subgroup_id)
-    if not do_backfill and sub.last_checked_at is None:
-        # 只追新的首轮:记录现状,全部跳过(只为后续轮询建立基线把 guid 入库会污染留痕,直接不入库)
-        cutoff = max((i.published_at for i in items if i.published_at), default=None)
-        sub.last_checked_at = cutoff or datetime.now(timezone.utc)
-        db.flush()
-        return {"subscription": sub.id, "seen": len(items), "accepted": 0, "skipped": 0,
-                "note": "只追新基线已建立"}
+    first = not do_backfill and sub.follow_baseline_guids is None and sub.last_checked_at is None
+    baseline = set() if do_backfill else _follow_baseline(sub, items)
+    revived = failed = 0
+    for torrent in _retry_skipped(db, sub, baseline):
+        revived += 1
+        if torrent.status == TorrentStatus.SUBMIT_FAILED:
+            failed += 1
 
-    revived = reevaluate_skipped(db, sub)   # 规则可能已变,先复活符合条件的留痕条目
+    candidates = [item for item in items if item.guid not in baseline]
+    # 蜜柑每次都回传该组全部历史。用 GUID 唯一索引分批排除已处理条目，
+    # 几十个旧条目的普通轮询仅需一次查重。新条目仍走 process_item 的写前检查。
+    known = set()
+    for offset in range(0, len(candidates), 500):
+        guids = [item.guid for item in candidates[offset:offset + 500]]
+        known.update(db.scalars(select(Torrent.guid).where(Torrent.guid.in_(guids))))
     accepted = skipped = 0
-    for item in items:
+    for item in candidates:
+        if item.guid in known:
+            continue
         t = process_item(db, sub, item)
         if t is None:
             continue
@@ -285,16 +329,38 @@ def poll_subscription(db: Session, sub: Subscription, backfill: bool | None = No
             skipped += 1
         else:
             accepted += 1
+            if t.status == TorrentStatus.SUBMIT_FAILED:
+                failed += 1
     sub.last_checked_at = datetime.now(timezone.utc)
+    summary = {"seen": len(items), "accepted": accepted, "skipped": skipped,
+               "revived": revived, "submitted": accepted + revived - failed, "failed": failed,
+               "history": len(items) - len(candidates)}
+    if first:
+        summary["note"] = "只追新基线已建立"
+    sub.last_poll_summary = summary
     db.flush()
-    return {"subscription": sub.id, "seen": len(items), "accepted": accepted,
-            "skipped": skipped, "revived": revived}
+    return {"subscription": sub.id, **summary}
 
 
-def safe_poll(db: Session, sub: Subscription, **kwargs) -> dict:
-    """带 RSS 健康记录的轮询。"""
+def _apply_feed(db: Session, sid: int, source: tuple[int | None, str], feed: list[RssItem] | Exception,
+                backfill: bool | None = None) -> dict:
+    # 取回源后才串行写库。先取得 SQLite 写权再重读订阅：手动检查和定时检查
+    # 即便同时取到同一条目，也只有第一轮会将它交给下载器。
+    conn = db.connection()
+    if conn.dialect.name == "sqlite" and not conn.connection.driver_connection.in_transaction:
+        conn.exec_driver_sql("BEGIN IMMEDIATE")
+    db.flush()
+    sub = db.get(Subscription, sid, populate_existing=True,
+                 options=[joinedload(Subscription.bangumi)])
+    if sub is None or (sub.bangumi.mikan_bangumi_id, sub.mikan_subgroup_id) != source:
+        return {"subscription": sid, "note": "订阅来源已变化，跳过旧结果"}
+    if reason := _skip_reason(sub):
+        return {"subscription": sid, "note": reason}
     try:
-        result = poll_subscription(db, sub, **kwargs)
+        if isinstance(feed, Exception):
+            raise feed
+        with db.begin_nested():
+            result = poll_subscription(db, sub, backfill=backfill, items=feed)
         sub.last_poll_ok = True
         sub.last_poll_error = None
         db.flush()
@@ -307,20 +373,33 @@ def safe_poll(db: Session, sub: Subscription, **kwargs) -> dict:
         return {"subscription": sub.id, "error": str(e)}
 
 
+def safe_poll(db: Session, sub: Subscription, *, items: list[RssItem] | None = None,
+              backfill: bool | None = None) -> dict:
+    if reason := _skip_reason(sub):
+        return {"subscription": sub.id, "note": reason}
+    source = (sub.bangumi.mikan_bangumi_id, sub.mikan_subgroup_id)
+    if items is None:
+        try:
+            items = mikan_client.fetch_rss(*source)
+        except Exception as exc:
+            return _apply_feed(db, sub.id, source, exc, backfill)
+    return _apply_feed(db, sub.id, source, items, backfill)
+
+
 def poll_all(db: Session) -> list[dict]:
     """并发拉取 RSS(网络阶段并行,数据库阶段串行 — SQLite 单写者)。"""
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    subs = db.execute(select(Subscription).where(Subscription.enabled)).scalars().all()
+    subs = db.scalars(select(Subscription).options(joinedload(Subscription.bangumi))
+                      .where(Subscription.enabled)).all()
     # 排除本地导入/自动补全等容器伪订阅(无单一 RSS 源);
     # “是否拥有原盘”只是收藏属性,仅显式停止自动获取的番剧才跳过。
-    subs = [s for s in subs if s.mikan_subgroup_id not in ("local", "auto")
-            and not s.bangumi.auto_download_disabled]
+    subs = [s for s in subs if not _skip_reason(s)]
 
-    fetched: dict[int, list | Exception] = {}
+    sources = {s.id: (s.bangumi.mikan_bangumi_id, s.mikan_subgroup_id) for s in subs}
+    fetched: dict[int, list[RssItem] | Exception] = {}
     with ThreadPoolExecutor(max_workers=8) as pool:
-        futs = {pool.submit(mikan_client.fetch_rss,
-                            s.bangumi.mikan_bangumi_id, s.mikan_subgroup_id): s.id
-                for s in subs}
+        futs = {pool.submit(mikan_client.fetch_rss, *source): sid
+                for sid, source in sources.items()}
         for f in as_completed(futs):
             sid = futs[f]
             try:
@@ -329,13 +408,8 @@ def poll_all(db: Session) -> list[dict]:
                 fetched[sid] = e
 
     results = []
-    for sub in subs:
-        r = fetched.get(sub.id)
-        if isinstance(r, Exception):
-            sub.last_poll_ok = False
-            sub.last_poll_error = str(r)[:500]
-            db.flush()
-            results.append({"subscription": sub.id, "error": str(r)})
-        else:
-            results.append(safe_poll(db, sub, items=r))
+    for sid, source in sources.items():
+        results.append(_apply_feed(db, sid, source, fetched[sid]))
+        # 每个订阅独立落盘，下载器提交下一部番时不持有上一部的 SQLite 写锁。
+        db.commit()
     return results

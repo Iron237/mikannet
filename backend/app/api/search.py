@@ -131,6 +131,7 @@ def bangumi_detail(mikan_bangumi_id: int, db: Session = Depends(get_db)):
         raise HTTPException(502, f"Mikan 番剧页获取失败:{e}") from e
     local = db.execute(select(Bangumi).where(
         Bangumi.mikan_bangumi_id == mikan_bangumi_id)).scalar_one_or_none()
+    subscriptions = {s.mikan_subgroup_id: s for s in local.subscriptions} if local else {}
     return {
         "mikan_bangumi_id": d.mikan_bangumi_id,
         "title": d.title,
@@ -140,6 +141,9 @@ def bangumi_detail(mikan_bangumi_id: int, db: Session = Depends(get_db)):
         "air_date": d.air_date_str,
         "subgroups": [{
             "subgroup_id": g.subgroup_id, "name": g.name,
+            "subscribed": g.subgroup_id in subscriptions,
+            "subscription_enabled": (subscriptions[g.subgroup_id].enabled
+                                     if g.subgroup_id in subscriptions else None),
             "torrent_count": len(g.torrents),
             "caps": _group_caps([t.title for t in g.torrents]),
             "recent_titles": [t.title for t in g.torrents[:5]],   # 兼容旧前端

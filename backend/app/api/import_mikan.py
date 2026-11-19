@@ -20,11 +20,9 @@ _state = {"running": False, "done": 0, "total": 0, "created": [], "errors": 0}
 
 
 def _import_job(rss_url: str, backfill: bool) -> None:
-    import re
-
-    from app.api.subscriptions import _safe_dirname
+    from app.services.download_paths import subscription_save_path
     from app.services.metadata_service import enrich_bangumi
-    from app.services.rss_engine import poll_subscription
+    from app.services.rss_engine import safe_poll
 
     _state.update(running=True, done=0, total=0, created=[], errors=0)
     try:
@@ -69,12 +67,13 @@ def _import_job(rss_url: str, backfill: bool) -> None:
                     bangumi_id=bangumi.id, mikan_subgroup_id=subgroup_id,
                     subgroup_name=subgroup_name, backfill=backfill,
                     exclude_batch=bangumi.airing_status.value == "airing",
-                    save_path=f"{settings.download_root}/{_safe_dirname(bangumi.title)}",
+                    save_path=subscription_save_path(bangumi.title),
                 )
                 db.add(sub)
                 db.flush()
                 _state["created"].append(f"{bangumi.title} × {subgroup_name or subgroup_id}")
-                poll_subscription(db, sub)   # 立即首轮(backfill=False 时只建基线)
+                if "error" in safe_poll(db, sub):
+                    _state["errors"] += 1
         log.info("导入完成:新建 %s 个订阅", len(_state["created"]))
     except Exception:  # noqa: BLE001
         log.exception("导入任务异常")
@@ -170,13 +169,12 @@ def local_scan_status():
 @router.post("/local/run")
 def local_run(payload: dict):
     """执行导入:移动文件 + 元数据 + ffprobe 入库。payload: {"groups": [scan 返回的分组]}"""
-    from app.services.local_import import start_import, state
+    from app.services.local_import import start_import
     groups = payload.get("groups") or []
     if not groups:
         raise HTTPException(400, "没有要导入的分组")
-    if state["running"]:
+    if not start_import(groups):
         raise HTTPException(409, "已有导入任务进行中")
-    start_import(groups)
     return {"started": True, "total": len(groups)}
 
 

@@ -6,12 +6,27 @@
 from __future__ import annotations
 
 import logging
+import re
+from pathlib import Path
 
 from sqlalchemy import select
 
 from app.config import settings
 
 log = logging.getLogger(__name__)
+
+
+def subscription_save_path(title: str) -> str:
+    dirname = re.sub(r'[<>:"/\\|?*]', " ", title).strip() or "未命名番剧"
+    return f"{settings.download_root}/{dirname}"
+
+
+def media_file_exists(relative_path: str | Path) -> bool:
+    """实时核对库中的视频文件；挂载发生 I/O 错误时不能视为已有资源。"""
+    try:
+        return (settings.download_root_local / relative_path).is_file()
+    except OSError:
+        return False
 
 
 def _norm(path: str) -> str:
@@ -29,7 +44,7 @@ def relative_under(path: str, root: str) -> str | None:
         return None
     if value.casefold() == base.casefold():
         return ""
-    prefix = base + "/"
+    prefix = base if base == "/" else base + "/"
     if value.casefold().startswith(prefix.casefold()):
         return value[len(prefix):]
     return None

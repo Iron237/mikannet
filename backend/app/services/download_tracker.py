@@ -233,6 +233,8 @@ async def tracker_loop(stop_event: asyncio.Event) -> None:
             if active:
                 interval = ACTIVE_INTERVAL
         except Exception as e:  # noqa: BLE001 — qB 临时不可达不退出循环
+            if ws_manager.has_clients:
+                await ws_manager.broadcast({"type": "tracker-error"})
             log.warning("tracker 轮询失败: %s", e)
             interval = IDLE_INTERVAL
         try:

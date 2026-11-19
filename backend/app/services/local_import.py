@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+import ctypes
+import errno
 import logging
 import os
 import re
@@ -14,6 +16,7 @@ import shutil
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 import anitopy
 from sqlalchemy import select
@@ -27,6 +30,7 @@ from app.services import media_probe
 log = logging.getLogger(__name__)
 
 LOCAL_SUBGROUP_ID = "local"
+_import_lock = threading.Lock()
 state = {"running": False, "phase": "", "done": 0, "total": 0,
          "imported": [], "errors": []}
 # 扫描进度(异步,前端轮询):走目录 → 逐组匹配蜜柑
@@ -184,18 +188,56 @@ def _is_skipped(p: Path, skips: list[str]) -> bool:
     return any(s.startswith(r) for r in skips)
 
 
-def _safe_move(src: Path, dest: Path) -> None:
-    """跨 CIFS 挂载点移动:先试 rename(同卷秒级),否则只流式复制字节(不 copystat,
-    避开 CIFS 上 copystat 拷时间戳/权限/xattr 触发的 Errno 5 I/O error)再删源。"""
-    try:
-        os.replace(str(src), str(dest))   # 同挂载点:秒级 rename
+def _rename_new(src: Path, dest: Path) -> None:
+    """原子发布到新名字。Windows rename 和 Linux RENAME_NOREPLACE 均不会覆盖同名文件。"""
+    if os.name == "nt":
+        os.rename(src, dest)
         return
-    except OSError:
-        pass
-    with open(src, "rb") as fin, open(dest, "wb") as fout:
-        shutil.copyfileobj(fin, fout, 4 * 1024 * 1024)
+    rename = getattr(ctypes.CDLL(None, use_errno=True), "renameat2", None)
+    if rename is not None:
+        # AT_FDCWD=-100，RENAME_NOREPLACE=1。两端路径均相对当前工作目录或为绝对路径。
+        if rename(-100, os.fsencode(src), -100, os.fsencode(dest), 1) == 0:
+            return
+        err = ctypes.get_errno()
+        if err not in (errno.ENOSYS, errno.EINVAL, errno.EOPNOTSUPP):
+            raise OSError(err, os.strerror(err), str(dest))
+    # 老文件系统可用同卷硬链接完成无覆盖发布。两者均不支持时让调用方保留源文件。
+    os.link(src, dest)
+    src.unlink()
+
+
+def _safe_move(src: Path, dest: Path) -> None:
+    """同卷直接改名，跨卷完整写入隐藏临时文件，再发布并删除源。"""
     try:
-        os.remove(src)
+        _rename_new(src, dest)
+        return
+    except OSError as e:
+        if e.errno != errno.EXDEV and getattr(e, "winerror", None) != 17:
+            raise
+    with src.open("rb") as fin:
+        initial = os.fstat(fin.fileno())
+        staged = dest.parent / f".mikannet-import-{uuid4().hex}.part"
+        # 由目标目录默认 ACL / 进程 umask 决定新媒体权限。独占创建成功后才接管清理。
+        output = staged.open("xb")
+        try:
+            with output as fout:
+                shutil.copyfileobj(fin, fout, 4 * 1024 * 1024)
+                fout.flush()
+                os.fsync(fout.fileno())
+                current = src.stat()
+                if (not os.path.samestat(initial, current)
+                        or initial.st_mtime_ns != current.st_mtime_ns
+                        or initial.st_size != current.st_size
+                        or fout.tell() != initial.st_size):
+                    raise OSError("复制期间源文件发生变化")
+            _rename_new(staged, dest)
+        finally:
+            staged.unlink(missing_ok=True)
+    try:
+        current = src.stat()
+        if (os.path.samestat(initial, current) and current.st_mtime_ns == initial.st_mtime_ns
+                and current.st_size == initial.st_size):
+            src.unlink()
     except OSError as e:  # noqa: BLE001 — 删源失败不致命(目标已就位)
         log.warning("导入:删除源文件失败 %s: %s", src, e)
 
@@ -229,7 +271,7 @@ def _import_group(group: dict) -> str:
             db.add(sub)
             db.flush()
 
-        guid = f"local:{subject_id}:{datetime.now(timezone.utc):%Y%m%d%H%M%S}"
+        guid = f"local:{subject_id}:{uuid4().hex}"
         # 官方开播日之前导入的内容必然是先行(上季度网络先行放送等)→ 自动归先行流,
         # 开播后 RSS 追的正式版与之并存(详情页两阶段切换),完结判定不受先行内容干扰
         from app.services.phase import before_official_air
@@ -242,7 +284,7 @@ def _import_group(group: dict) -> str:
         db.add(torrent)
         db.flush()
 
-        # 目标目录:若源在 NAS 挂载下、且该挂载含 mikannet 目标 → 走同挂载(_safe_move 的 os.replace
+        # 目标目录:若源在 NAS 挂载下、且该挂载含 mikannet 目标 → 走同挂载(_safe_move 的无覆盖改名
         # 会触发 NAS 服务器端 rename,零网络传输);否则(本机盘源)落 download_root_local(字节复制)。
         nas_root = _nas_target_root()
         src_on_nas = bool(group["files"]) and \
@@ -269,8 +311,7 @@ def _import_group(group: dict) -> str:
                 continue
             dest = dest_dir / src.name
             try:
-                if not dest.exists():
-                    _safe_move(src, dest)
+                _safe_move(src, dest)
             except Exception as e:  # noqa: BLE001 — 单文件移动失败不拖垮整组
                 log.warning("导入:移动失败 %s: %s", src, e)
                 failed += 1
@@ -306,6 +347,9 @@ def _import_group(group: dict) -> str:
                 log.warning("导入探测失败 %s: %s", dest, e)
             ok += 1
             db.flush()
+        if not ok:
+            db.delete(torrent)
+            return f"{bangumi.title}: 0 个文件" + (f"({failed} 个失败)" if failed else "")
         # 导入后重算受影响集的 active(同集若已有 RSS/其它来源文件,保证唯一最优,防多 active)
         from app.services.postprocess import _apply_version_switch
         for ep_id in touched_eps:
@@ -335,5 +379,14 @@ def run_import(groups: list[dict]) -> None:
         state.update(running=False, phase="完成")
 
 
-def start_import(groups: list[dict]) -> None:
-    threading.Thread(target=run_import, args=(groups,), daemon=True).start()
+def start_import(groups: list[dict]) -> bool:
+    with _import_lock:
+        if state["running"]:
+            return False
+        state.update(running=True, phase="导入中", done=0, total=len(groups), imported=[], errors=[])
+        try:
+            threading.Thread(target=run_import, args=(groups,), daemon=True).start()
+        except RuntimeError:
+            state["running"] = False
+            raise
+        return True

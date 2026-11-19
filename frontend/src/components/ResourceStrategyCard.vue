@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api, fmtSize } from '../api'
+import { pollSummary } from '../subscriptionStatus'
 import Icon from './Icon.vue'
 
 const props = defineProps({
@@ -42,7 +43,7 @@ function fmtTime(iso) {
 }
 function fmtRange(nums) {
   if (!nums?.length) return '无'
-  const a = [...nums].sort((x, y) => x - y)
+  const a = nums.toSorted((x, y) => x - y)
   const out = []
   let s = a[0], p = a[0]
   for (const n of a.slice(1).concat([NaN])) {
@@ -139,8 +140,7 @@ async function pollSubscription(sub) {
   busy.value = `sub-${sub.id}`; msg.value = ''
   try {
     const r = await api.post(`/api/subscriptions/${sub.id}/poll`, {})
-    await refreshAfter(r.error ? `检查失败:${r.error}`
-      : `已检查 ${sub.subgroup_name || sub.mikan_subgroup_id}:接受 ${r.accepted ?? 0},恢复 ${r.revived ?? 0}`)
+    await refreshAfter(`${sub.subgroup_name || sub.mikan_subgroup_id} · ${pollSummary(r)}`)
   } catch (e) { msg.value = e.message }
   finally { busy.value = '' }
 }

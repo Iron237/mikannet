@@ -47,6 +47,142 @@ def item(guid, title):
                    size=100, published_at=datetime(2026, 1, 1))
 
 
+def test_follow_only_remembers_entries_across_sessions(db, sub):
+    sub.backfill = False
+    old = item("old", "[组] 测试 - 01")
+    old.published_at = None
+    fresh = item("new", "[组] 测试 - 02")
+    fresh.published_at = None
+    sid = sub.id
+    assert rss_engine.safe_poll(db, sub, items=[old])["history"] == 1
+    db.commit()
+    db.expunge_all()
+    sub = db.get(Subscription, sid)
+    result = rss_engine.safe_poll(db, sub, items=[fresh, old])
+    assert (result["history"], result["submitted"]) == (1, 1)
+    assert rss_engine.safe_poll(db, sub, items=[old, fresh])["submitted"] == 0
+    assert [t.guid for t in db.query(Torrent)] == ["new"]
+    # 用户显式改为补齐历史时，首轮已有的条目也可下载。
+    sub.backfill = True
+    assert rss_engine.safe_poll(db, sub, items=[old, fresh])["submitted"] == 1
+
+
+def test_legacy_follow_only_preserves_new_arrivals(db, sub):
+    sub.backfill = False
+    sub.last_checked_at = datetime(2026, 1, 2)
+    old = item("old", "[组] 测试 - 01")
+    new = item("new", "[组] 测试 - 02")
+    new.published_at = datetime(2026, 1, 3)
+    result = rss_engine.safe_poll(db, sub, items=[new, old])
+    assert (result["history"], result["submitted"]) == (1, 1)
+    assert sub.follow_baseline_guids == ["old"]
+
+
+def test_bad_feed_then_valid_empty_baseline(db, sub, monkeypatch):
+    sub.backfill = False
+    client = rss_engine.mikan_client
+    def invalid(*args):
+        return client._parse_feed("<html><body>unavailable</body></html>")
+    monkeypatch.setattr(client, "fetch_rss", invalid)
+    assert "error" in rss_engine.safe_poll(db, sub)
+    assert sub.last_checked_at is None and sub.follow_baseline_guids is None
+    empty = client._parse_feed('<rss version="2.0"><channel><title>T</title></channel></rss>')
+    assert rss_engine.safe_poll(db, sub, items=empty)["seen"] == 0
+    assert sub.follow_baseline_guids == []
+    assert rss_engine.safe_poll(db, sub, items=[item("new", "[组] 测试 - 01")])["submitted"] == 1
+
+
+def test_poll_reports_submit_failure_and_keeps_last_successful_check(db, sub, monkeypatch):
+    def offline(*args, **kwargs):
+        raise ConnectionError("offline")
+    monkeypatch.setattr(rss_engine.downloader, "add_torrent", offline)
+    result = rss_engine.safe_poll(db, sub, items=[item("new", "[组] 测试 - 01")])
+    assert (result["submitted"], result["failed"]) == (0, 1)
+    assert sub.last_poll_ok and sub.last_poll_summary["failed"] == 1
+    monkeypatch.setattr(rss_engine.mikan_client, "fetch_rss", offline)
+    assert "error" in rss_engine.safe_poll(db, sub)
+    assert not sub.last_poll_ok and sub.last_poll_summary["failed"] == 1
+
+
+def test_poll_respects_global_pause_and_outer_transaction(db, sub, monkeypatch):
+    sub.bangumi.auto_download_disabled = True
+    sub.last_poll_ok = False
+    db.commit()
+    monkeypatch.setattr(rss_engine.mikan_client, "fetch_rss",
+                        lambda *_: pytest.fail("暂停时不应该拉取 RSS"))
+    assert "note" in rss_engine.safe_poll(db, sub)
+    assert not sub.last_poll_ok and sub.last_poll_summary is None
+    sub.bangumi.auto_download_disabled = False
+    db.commit()
+    rss_engine.safe_poll(db, sub, items=[])
+    db.rollback()
+    assert sub.last_poll_summary is None
+
+
+def test_repeat_poll_batches_guid_lookups(db, sub):
+    from sqlalchemy import event
+
+    entries = [item(f"known-{i}", f"测试番剧 - {i}") for i in range(80)]
+    db.add_all(Torrent(subscription=sub, guid=it.guid, title_raw=it.title,
+                       torrent_url=it.torrent_url, status=TorrentStatus.ARCHIVED)
+               for it in entries)
+    db.commit()
+    lookups = []
+    def observe(conn, cursor, statement, params, ctx, many):
+        if "WHERE torrent.guid" in statement:
+            lookups.append(statement)
+    event.listen(db.bind, "before_cursor_execute", observe)
+    try:
+        result = rss_engine.poll_subscription(db, sub, items=entries)
+    finally:
+        event.remove(db.bind, "before_cursor_execute", observe)
+    assert result["submitted"] == 0
+    assert len(lookups) == 1
+
+
+def test_overlapping_checks_submit_once_and_discard_replaced_source(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'poll.sqlite'}")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(engine)
+    with sessions.begin() as db:
+        sub = Subscription(bangumi=Bangumi(title="并发验收", mikan_bangumi_id=5),
+                           mikan_subgroup_id="1", save_path="/downloads")
+        db.add(sub)
+        db.flush()
+        sid = sub.id
+    ready = Barrier(2)
+    sends = []
+    def fetch(*args):
+        ready.wait(timeout=10)
+        return [item("same", "[组] 测试 - 01")]
+    def submit(data, save_path):
+        sends.append(save_path)
+        return "hash-1"
+    monkeypatch.setattr(rss_engine.mikan_client, "fetch_rss", fetch)
+    monkeypatch.setattr(rss_engine.downloader, "add_torrent", submit)
+    monkeypatch.setattr("app.services.events.emit", lambda *_: None)
+    def check():
+        with sessions.begin() as db:
+            return rss_engine.safe_poll(db, db.get(Subscription, sid))
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first, second = pool.submit(check), pool.submit(check)
+            assert sorted([first.result()["submitted"], second.result()["submitted"]]) == [0, 1]
+        assert sends == ["/downloads"]
+        def replace_while_fetching(*args):
+            with sessions.begin() as db:
+                db.get(Subscription, sid).mikan_subgroup_id = "2"
+            return [item("stale", "[组] 测试 - 02")]
+        monkeypatch.setattr(rss_engine.mikan_client, "fetch_rss", replace_while_fetching)
+        assert "跳过旧结果" in check()["note"]
+        assert sends == ["/downloads"]
+    finally:
+        engine.dispose()
+
+
 def test_accept_and_dedup(db, sub):
     t1 = rss_engine.process_item(db, sub, item("g1", "[字幕组] 测试番剧 - 08 [1080p]"))
     assert t1.status == TorrentStatus.DOWNLOADING
