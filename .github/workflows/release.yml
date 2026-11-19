@@ -34,6 +34,11 @@ jobs:
           pip install -e ".[dev]"
           python -m pytest -q
 
+      - name: MCP 路由契约与客户端联调
+        run: |
+          python -m pip install -e ./agent-mcp
+          python -m pytest -q agent-mcp/tests
+
       - name: 计算 base_rev(依赖 + apt 清单哈希)
         id: baserev
         run: echo "base_rev=$(python scripts/compute_base_rev.py)" >> "$GITHUB_OUTPUT"

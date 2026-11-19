@@ -24,6 +24,10 @@ jobs:
       - name: 跑测试
         working-directory: backend
         run: python -m pytest -q
+      - name: MCP 路由契约与客户端联调
+        run: |
+          python -m pip install -e ./agent-mcp
+          python -m pytest -q agent-mcp/tests
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

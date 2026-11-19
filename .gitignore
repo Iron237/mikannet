@@ -40,6 +40,7 @@ import/
 ab-trial/
 # 临时探针/调试脚本
 _*.py
+!agent-mcp/mikannet_mcp/__init__.py
 # 蜜柑登录 cookie(敏感,绝不提交)
 mikan cookie.json
 *cookie*.json

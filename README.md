@@ -68,6 +68,10 @@ docker compose up -d --build
 - **完整更新需挂 `docker.sock`**:`/var/run/docker.sock` 挂进 app = **宿主 root 等价权限**(与既有 `SYS_ADMIN` 同级)。正式部署模板默认包含该挂载、`/compose` 和动态镜像变量；部署脚本启动后会强制预检。若主动移除这些权限，设置页会在更新前明确阻止完整更新，而不是进入后台后失败。
 - **回滚**:纯代码失败自动回滚;完整失败为手动——把 `.env` 的 `MIKANNET_IMAGE_REF` 改回上一个可用 tag 后 `docker compose up -d`(步骤见 ADR-0005)。
 
+## Agent 自动化管理
+
+Mikannet 提供独立的 stdio MCP 服务。Agent 可连接现有实例，管理订阅与下载、查询字幕组推荐、检查媒体库、处理单集弹幕并调整偏好。只读监控可使用 `--read-only`。参见 [MCP 接入与工具说明](agent-mcp/README.md)。
+
 ## 架构速览
 
 ```

@@ -17,11 +17,15 @@ cd ../frontend
 npm ci
 npm run build
 cd ..
+python -m pip install -e "./backend[dev]" -e ./agent-mcp
+python -m pytest -q agent-mcp/tests
 python scripts/check_public_repo.py
 git diff --check
 ```
 
 确认源码许可证选择已明确；仓库若保持公开，没有许可证文件意味着他人默认没有复制、修改或分发授权。
+
+确认本次功能和 REST 变化已同步到 MCP 工具、契约测试与接入文档；人工管理的例外已按仓库 AGENTS.md 登记。MCP 安装在 Agent 主机上，发版后需从同一版本源码更新适配器。
 
 ## 3. 创建 Release
 

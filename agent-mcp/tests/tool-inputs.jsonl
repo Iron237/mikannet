@@ -1,0 +1,49 @@
+{"fields": {"body": {"additionalProperties": false, "minProperties": 1, "properties": {"preferred": {"type": "boolean"}}, "required": [], "type": "object"}, "file_id": {"type": "integer"}}, "required": ["file_id"], "tool": "activate_file"}
+{"fields": {"body": {"additionalProperties": false, "minProperties": 1, "properties": {"mikan_bangumi_id": {"minimum": 1, "type": "integer"}, "title": {"type": "string"}}, "required": ["mikan_bangumi_id"], "type": "object"}}, "required": ["body"], "tool": "add_library_anime"}
+{"fields": {"bangumi_id": {"type": "integer"}}, "required": ["bangumi_id"], "tool": "anime_series"}
+{"fields": {"bangumi_id": {"type": "integer"}, "log_id": {"type": "integer"}}, "required": ["bangumi_id", "log_id"], "tool": "approve_scan"}
+{"fields": {"body": {"additionalProperties": false, "minProperties": 1, "properties": {"episode_number": {"minimum": 0, "type": "number"}, "type": {"enum": ["regular", "special", "credits", "trailer", "other"]}}, "required": [], "type": "object"}, "file_id": {"type": "integer"}}, "required": ["file_id", "body"], "tool": "assign_file"}
+{"fields": {"file_id": {"type": "integer"}}, "required": ["file_id"], "tool": "auto_danmaku"}
+{"fields": {}, "required": [], "tool": "bd_scan_status"}
+{"fields": {"prerelease": {"anyOf": [{"type": "boolean"}, {"type": "null"}]}}, "required": [], "tool": "check_update"}
+{"fields": {"body": {"additionalProperties": false, "properties": {"backfill": {"default": true, "type": "boolean"}, "bangumi_title": {"anyOf": [{"type": "string"}, {"type": "null"}]}, "blocked_guids": {"default": [], "items": {"type": "string"}, "type": "array"}, "exclude_batch": {"anyOf": [{"type": "boolean"}, {"type": "null"}]}, "exclude_keywords": {"default": [], "items": {"type": "string"}, "type": "array"}, "include_keywords": {"default": [], "items": {"type": "string"}, "type": "array"}, "mikan_bangumi_id": {"type": "integer"}, "mikan_subgroup_id": {"type": "string"}, "pinned_guids": {"default": [], "items": {"type": "string"}, "type": "array"}, "save_path": {"anyOf": [{"type": "string"}, {"type": "null"}]}, "subgroup_name": {"anyOf": [{"type": "string"}, {"type": "null"}]}}, "required": ["mikan_bangumi_id", "mikan_subgroup_id"], "type": "object"}}, "required": ["body"], "tool": "create_subscription"}
+{"fields": {}, "required": [], "tool": "discover_calendar"}
+{"fields": {"bangumi_id": {"type": "integer"}, "phase": {"anyOf": [{"type": "string"}, {"type": "null"}]}}, "required": ["bangumi_id"], "tool": "get_anime"}
+{"fields": {"release_id": {"type": "integer"}}, "required": ["release_id"], "tool": "get_bd_release"}
+{"fields": {}, "required": [], "tool": "get_preferences"}
+{"fields": {}, "required": [], "tool": "library_calendar"}
+{"fields": {"verify_files": {"default": true, "type": "boolean"}}, "required": [], "tool": "library_issues"}
+{"fields": {}, "required": [], "tool": "library_scan_status"}
+{"fields": {}, "required": [], "tool": "list_bd_releases"}
+{"fields": {"status": {"anyOf": [{"enum": ["pending", "downloading", "submit_failed", "download_error", "completed", "archived", "skipped"], "type": "string"}, {"type": "null"}]}}, "required": [], "tool": "list_downloads"}
+{"fields": {"verify_files": {"default": true, "type": "boolean"}}, "required": [], "tool": "list_library"}
+{"fields": {"include_internal": {"default": false, "type": "boolean"}}, "required": [], "tool": "list_subscriptions"}
+{"fields": {"file_id": {"type": "integer"}}, "required": ["file_id"], "tool": "match_danmaku"}
+{"fields": {"task_id": {"type": "integer"}}, "required": ["task_id"], "tool": "pause_download"}
+{"fields": {"sub_id": {"type": "integer"}}, "required": ["sub_id"], "tool": "poll_subscription"}
+{"fields": {"bangumi_id": {"type": "integer"}, "exclude": {"default": "", "type": "string"}, "exclude_batch": {"default": false, "type": "boolean"}, "include": {"default": "", "type": "string"}, "subgroup_id": {"type": "string"}}, "required": ["bangumi_id", "subgroup_id"], "tool": "preview_subscription"}
+{"fields": {"mikan_bangumi_id": {"type": "integer"}}, "required": ["mikan_bangumi_id"], "tool": "recommend_subgroups"}
+{"fields": {"bangumi_id": {"type": "integer"}}, "required": ["bangumi_id"], "tool": "refresh_metadata"}
+{"fields": {"delete_files": {"default": false, "type": "boolean"}, "task_id": {"type": "integer"}}, "required": ["task_id"], "tool": "remove_download"}
+{"fields": {"delete_files": {"default": false, "type": "boolean"}, "sub_id": {"type": "integer"}}, "required": ["sub_id"], "tool": "remove_subscription"}
+{"fields": {"body": {"additionalProperties": false, "minProperties": 1, "properties": {"mikan_subgroup_id": {"minLength": 1, "type": "string"}, "subgroup_name": {"type": "string"}}, "required": ["mikan_subgroup_id"], "type": "object"}, "sub_id": {"type": "integer"}}, "required": ["sub_id", "body"], "tool": "replace_subscription_source"}
+{"fields": {"file_id": {"type": "integer"}}, "required": ["file_id"], "tool": "reprobe_file"}
+{"fields": {"bangumi_id": {"type": "integer"}}, "required": ["bangumi_id"], "tool": "resource_strategy"}
+{"fields": {"task_id": {"type": "integer"}}, "required": ["task_id"], "tool": "resume_download"}
+{"fields": {"task_id": {"type": "integer"}}, "required": ["task_id"], "tool": "retry_postprocess"}
+{"fields": {"body": {"additionalProperties": false, "properties": {"episode_id": {"exclusiveMinimum": 0.0, "maximum": 9.223372036854776e+18, "type": "integer"}, "shift": {"default": 0, "type": "number"}}, "required": ["episode_id"], "type": "object"}, "file_id": {"type": "integer"}}, "required": ["file_id", "body"], "tool": "save_danmaku"}
+{"fields": {"bangumi_id": {"type": "integer"}, "body": {"additionalProperties": false, "minProperties": 1, "properties": {"mode": {"enum": ["review", "fill_only", "fill_upgrade"]}}, "required": ["mode"], "type": "object"}}, "required": ["bangumi_id", "body"], "tool": "scan_anime"}
+{"fields": {}, "required": [], "tool": "scan_bd"}
+{"fields": {"bangumi_id": {"type": "integer"}, "limit": {"default": 20, "type": "integer"}}, "required": ["bangumi_id"], "tool": "scan_history"}
+{"fields": {}, "required": [], "tool": "scan_library"}
+{"fields": {}, "required": [], "tool": "scan_status"}
+{"fields": {"keyword": {"type": "string"}}, "required": ["keyword"], "tool": "search_anime"}
+{"fields": {"anime": {"maxLength": 160, "minLength": 2, "type": "string"}, "episode": {"default": "", "pattern": "^(?:[CSO]?[1-9][0-9]{0,4})?$", "type": "string"}, "file_id": {"type": "integer"}}, "required": ["file_id", "anime"], "tool": "search_danmaku"}
+{"fields": {"bangumi_id": {"anyOf": [{"type": "integer"}, {"type": "null"}]}, "keyword": {"default": "", "type": "string"}, "source": {"type": "string"}}, "required": ["source"], "tool": "search_releases"}
+{"fields": {"body": {"additionalProperties": false, "minProperties": 1, "properties": {"auto_dl_interval_min": {"minimum": 0, "type": "integer"}, "auto_dl_prefer_bd": {"type": "boolean"}, "auto_dl_resolution": {"enum": ["720p", "1080p", "2160p"]}, "auto_dl_sub_lang": {"enum": ["简中", "繁中", "不限"]}, "danmaku_auto_download": {"type": "boolean"}, "poll_interval_min": {"minimum": 1, "type": "integer"}}, "required": [], "type": "object"}}, "required": ["body"], "tool": "set_preferences"}
+{"fields": {}, "required": [], "tool": "system_health"}
+{"fields": {}, "required": [], "tool": "system_version"}
+{"fields": {}, "required": [], "tool": "unassigned_files"}
+{"fields": {"bangumi_id": {"type": "integer"}, "body": {"additionalProperties": false, "minProperties": 1, "properties": {"auto_best": {"type": "boolean"}, "auto_download_disabled": {"type": "boolean"}, "auto_mode": {"enum": ["review", "fill_only", "fill_upgrade"]}, "ep_start": {"minimum": 1, "type": "integer"}, "season_number": {"minimum": 1, "type": "integer"}}, "required": [], "type": "object"}}, "required": ["bangumi_id", "body"], "tool": "update_anime_policy"}
+{"fields": {}, "required": [], "tool": "update_status"}
+{"fields": {"body": {"additionalProperties": false, "minProperties": 1, "properties": {"backfill": {"type": "boolean"}, "blocked_guids": {"items": {"type": "string"}, "type": "array"}, "enabled": {"type": "boolean"}, "episode_offset": {"type": "integer"}, "exclude_batch": {"type": "boolean"}, "exclude_keywords": {"items": {"type": "string"}, "type": "array"}, "include_keywords": {"items": {"type": "string"}, "type": "array"}, "pinned_guids": {"items": {"type": "string"}, "type": "array"}, "save_path": {"type": "string"}, "subgroup_name": {"type": "string"}}, "required": [], "type": "object"}, "sub_id": {"type": "integer"}}, "required": ["sub_id", "body"], "tool": "update_subscription"}

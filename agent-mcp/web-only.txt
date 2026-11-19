@@ -1,0 +1,71 @@
+# 已有单项 MCP 工具或查询工具；这些入口面向批处理、实时 UI 或探针。
+POST /api/subscriptions/batch-delete
+POST /api/tasks/sync
+POST /api/tasks/batch
+GET /api/system/healthz
+POST /api/system/poll
+POST /api/bangumi/auto-scan
+GET /api/bangumi/{bangumi_id}/auto-status
+POST /api/bangumi/batch-delete
+POST /api/bangumi/refresh-metadata-all
+GET /api/bangumi/refresh-metadata-all/status
+
+# 部署与维护：更新进程、重挂存储、迁移备份、设置通知凭据及外部账户。
+GET /api/system/update/readiness
+POST /api/system/update/apply
+GET /api/setup/status
+GET /api/setup/storage
+POST /api/setup/storage
+POST /api/setup/storage/test
+POST /api/setup/storage/remount
+POST /api/setup/finish
+GET /api/backup/export
+POST /api/backup/preview
+POST /api/backup/import
+GET /api/notifications
+PUT /api/notifications/{channel}
+POST /api/notifications/{channel}/test
+POST /api/discover/import-watching
+POST /api/import/mikan
+GET /api/import/mikan/status
+POST /api/import/mikan-all
+GET /api/import/mikan-all/status
+
+# 人工媒体整理：重命名、移动、删除实体，改绑元数据及 BD 导入向导。
+DELETE /api/bangumi/{bangumi_id}
+POST /api/bangumi/{bangumi_id}/reorganize
+POST /api/bangumi/{bangumi_id}/mark-phase
+POST /api/bangumi/{bangumi_id}/rebind
+POST /api/bangumi/{bangumi_id}/sync-resources
+GET /api/bangumi/{bangumi_id}/anidb-candidates
+POST /api/bangumi/{bangumi_id}/bind-anidb
+POST /api/bangumi/{bangumi_id}/sync-anidb
+POST /api/bangumi/calendar/refresh
+PATCH /api/bd/releases/{release_id}
+DELETE /api/bd/releases/{release_id}
+GET /api/bd/releases/{release_id}/candidates
+POST /api/bd/releases/{release_id}/import
+POST /api/files/{file_id}/unassign
+DELETE /api/files/{file_id}
+POST /api/import/local/scan
+GET /api/import/local/scan/status
+POST /api/import/local/run
+GET /api/import/local/status
+
+# 浏览器文件操作、二进制、宿主机启动、原始日志与外部 URL 抓取。
+GET /api/files/browse
+GET /api/files/content
+POST /api/files/mkdir
+GET /api/files/{file_id}/stream
+POST /api/search/scrape
+GET /api/search/cover
+GET /api/launch/status
+GET /api/launch/handler.bat
+GET /api/launch/validate
+GET /api/launch/picker
+POST /api/launch/selection
+GET /api/launch/selection/{request_id}
+GET /api/logs
+GET /api/logs/dir
+GET /api/logs/archives
+GET /api/logs/archives/{name}
